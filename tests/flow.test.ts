@@ -1,4 +1,4 @@
-// REVISION: flow-v129-quiet-exit
+// REVISION: flow-v130-volume
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -21,6 +21,7 @@ import { coverage, frameSvg, gridPixels, SVG_LIMIT } from '../hooks/svg'
 import { Cells, isTall } from '../hooks/cells'
 import { SceneDriver } from '../hooks/scene'
 import { BED_EVERY_MS, BED_FADE_MS, BED_MIN_MS, BED_MS, BURST_MAX, MAX_PLAYS, MOODS, PLAYER_DRAIN_MS, PLAYER_LEAD_MS, type BedTake, bedGap, bedPlays, bedStep, burst, EVENTS, eventPlay, gather, LAYERS } from '../hooks/sound'
+import { DEFAULT_VOLUME, MAX_GAIN, master, VOLUME_DB, volumeGain } from '../hooks/sound'
 import { SOUND_FILES } from '../hooks/sound-files'
 import { PixelScene, type Dials, type Painter } from '../hooks/pixel-scene'
 
@@ -50,6 +51,8 @@ type Captured = {
   config: [string, unknown][]
   invalidates?: number
   plays?: string[]
+  /** Each clip played: its file (none for one synthesized here) and its gain. */
+  played?: { asset?: string; gain?: number }[]
   toasts?: string[]
   /** What `$.ui.log` was given, and where to. */
   logs?: { text: string; to?: string }[]
@@ -82,6 +85,7 @@ function engine(
   on('audio.play', (_, e) => {
     const clip = e.clip as { base64?: string; asset?: string }
     ;(captured.plays ??= []).push(`${e.shouldLoop ? 'loop' : 'once'}:${(clip.base64 ?? '').length}:${clip.asset ?? (clip.base64 ?? '').slice(-24)}`)
+    ;(captured.played ??= []).push({ asset: clip.asset, gain: e.gain })
     if (clip.asset && refuse?.(clip.asset)) return { deny: 'refused: 4 plays are going at once' }
     return { value: undefined }
   })
@@ -587,6 +591,199 @@ test('settings: /flow sound on | off | (toggle), shown in the status', () => {
   expect(helpText()).toContain('/flow sound')
 })
 
+test('settings: /flow sound 1-10 turns it on at that volume; 0 turns it off, keeping the volume for next time', () => {
+  expect(parseFlowArgs('sound 4')).toEqual({ kind: 'sound', sound: 'on', volume: 4 })
+  expect(parseFlowArgs('sound 10')).toEqual({ kind: 'sound', sound: 'on', volume: 10 })
+  expect(parseFlowArgs('sound 0')).toEqual({ kind: 'sound', sound: 'off' })
+  for (const bad of ['sound 11', 'sound -1', 'sound 4.5', 'sound on 4', 'sound 4 on', 'volume', 'volume 11', 'volume loud']) expect(parseFlowArgs(bad).kind).toBe('error')
+  // `/flow volume 4` is `/flow sound 4`.
+  expect(parseFlowArgs('volume 4')).toEqual(parseFlowArgs('sound 4'))
+  expect(parseFlowArgs('volume 0')).toEqual({ kind: 'sound', sound: 'off' })
+  const off = readConfig(undefined)
+  expect(off.volume).toBe(DEFAULT_VOLUME)
+  expect(changesFor(parseFlowArgs('sound 4'), off)).toEqual({ sound: 'on', volume: 4 })
+  const four = { ...off, sound: 'on' as const, volume: 4 }
+  expect(changesFor(parseFlowArgs('sound 0'), four)).toEqual({ sound: 'off' })
+  // Toggled back on, it plays at the volume it had.
+  expect(changesFor(parseFlowArgs('sound'), { ...four, sound: 'off' })).toEqual({ sound: 'on' })
+  const clock = { hour: 12, minute: 0 }
+  expect(statusText(four, 3, 'normal', clock)).toContain('sound on at 4/10')
+  expect(statusText({ ...four, sound: 'off' }, 3, 'normal', clock)).not.toContain('sound on')
+  expect(changedText(parseFlowArgs('sound 4'), four, "Claude's", clock)).toBe('sound on at 4/10 (7 plays as tuned)')
+  expect(changedText(parseFlowArgs('sound 7'), { ...four, volume: 7 }, "Claude's", clock)).toBe('sound on at 7/10, as tuned')
+  expect(changedText(parseFlowArgs('sound 9'), { ...four, volume: 9 }, "Claude's", clock)).toContain('the loudest already play near full')
+  expect(changedText(parseFlowArgs('sound'), four, "Claude's", clock)).toContain('`/flow sound 1-10` sets the volume')
+  expect(changedText(parseFlowArgs('sound 0'), { ...four, sound: 'off' }, "Claude's", clock)).toBe('sound off')
+  expect(helpText()).toContain('/flow sound 1-10')
+  // Stored: a whole number from 1 to 10, else the default.
+  expect(readConfig({ volume: 3 }).volume).toBe(3)
+  for (const bad of [0, 11, 4.5, -2, 'loud', null]) expect(readConfig({ volume: bad }).volume).toBe(DEFAULT_VOLUME)
+})
+
+test('soundscapes: the volume is 3 dB a step below the default, and above it a lift that tapers to none at the cap: no play ever past 1.4', () => {
+  const dB = (x: number) => 20 * Math.log10(x)
+  const near = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThan(1e-6)
+  expect(VOLUME_DB).toHaveLength(10)
+  expect(VOLUME_DB[DEFAULT_VOLUME - 1]).toBe(0)
+  for (let g = 0.01; g <= MAX_GAIN; g += 0.01) {
+    // The default plays as tuned; below it, every play is turned down alike.
+    near(volumeGain(g, DEFAULT_VOLUME), g)
+    for (let v = 1; v < DEFAULT_VOLUME; v++) near(dB(volumeGain(g, v) / g), -3 * (DEFAULT_VOLUME - v))
+    // Each step up is louder (or, at the cap, as loud).
+    for (let v = 2; v <= 10; v++) expect(volumeGain(g, v)).toBeGreaterThanOrEqual(volumeGain(g, v - 1))
+  }
+  // Above the default: a quiet play gets the step's whole lift, a louder one less, one at the cap none...
+  near(dB(volumeGain(0.2, 10) / 0.2), 6)
+  expect(dB(volumeGain(0.7, 10) / 0.7)).toBeLessThan(6)
+  expect(dB(volumeGain(0.7, 10) / 0.7)).toBeGreaterThan(2)
+  expect(volumeGain(MAX_GAIN, 10)).toBe(MAX_GAIN)
+  // ...and a louder play stays the louder (a busier moment still sounds busier), none past the cap.
+  for (let v = 1; v <= 10; v++) {
+    let last = 0
+    for (let g = 0; g <= 4; g += 0.005) {
+      const out = volumeGain(g, v)
+      expect(out).toBeLessThanOrEqual(MAX_GAIN)
+      expect(out).toBeGreaterThanOrEqual(last)
+      last = out
+    }
+  }
+  // Every scene's beds, event clips and bursts, at every level and volume.
+  const amb = { roar: 1, wind: 1, burner: 1, sea: 1 }
+  for (const scene of STYLES)
+    for (let level = 0; level <= 10; level++)
+      for (let volume = 1; volume <= 10; volume++) {
+        for (const p of bedPlays({ scene, level, tint: 'normal', night: false, amb }, level) ?? []) expect(volumeGain(p.gain, volume)).toBeLessThanOrEqual(1.4)
+        for (const kind of Object.keys(EVENTS) as (keyof typeof EVENTS)[])
+          expect(volumeGain(eventPlay({ kind, v: 1 }, level, scene, level)!.gain, volume)).toBeLessThanOrEqual(1.4)
+        expect(volumeGain(master(scene, level), volume)).toBeLessThanOrEqual(1.4)
+      }
+  // Out of range: clamped, never NaN.
+  expect(volumeGain(1, 0)).toBe(volumeGain(1, 1))
+  expect(volumeGain(1, 99)).toBe(volumeGain(1, 10))
+  expect(volumeGain(1, Number.NaN)).toBe(1)
+})
+
+test('soundscapes: a new volume crossfades a fresh bed take in within seconds (turned down, the old one goes sooner)', () => {
+  const takes: (BedTake | undefined)[] = []
+  const mood = (volume: number) => ({ scene: 'engine', level: 9, tint: 'normal' as const, night: false, amb: {}, volume })
+  const first = bedStep(takes, mood(DEFAULT_VOLUME), 0, 1)
+  expect(first.play.length).toBe(1)
+  // Nothing new while the volume holds (the take isn't due)...
+  for (let ms = 70; ms < 5000; ms += 70) expect(bedStep(takes, mood(DEFAULT_VOLUME), ms, 2).play).toEqual([])
+  // ...then a new volume: a fresh take at once, the old one stopped a third of the crossfade in (it's the louder).
+  const quieter = bedStep(takes, mood(3), 5000, 3)
+  expect(quieter.play.length).toBe(1)
+  expect(bedStep(takes, mood(3), 5000 + BED_FADE_MS / 3, 4).stop).toEqual([first.play[0]!.id])
+  // Turned up: the old one stays through the whole crossfade.
+  const louder = bedStep(takes, mood(9), 10_000, 5)
+  expect(louder.play.length).toBe(1)
+  expect(bedStep(takes, mood(9), 10_000 + BED_FADE_MS / 3, 6).stop).toEqual([])
+  expect(bedStep(takes, mood(9), 10_000 + BED_FADE_MS, 7).stop).toEqual([quieter.play[0]!.id])
+})
+
+test('the volume scales every clip as it plays, the bed and the bursts alike; a new one is heard within seconds', { options: { mode: 'manual', level: 9, sound: 'on', style: 'fire' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  // The fire's bed, and its sparks' bursts (synthesized here: no file), as tuned.
+  const bed = bedPlays({ scene: 'fire', level: 9, tint: 'normal', night: false, amb: {} }, 1)![0]!.gain
+  const sparks = master('fire', 9)
+  const near = (a: number | undefined, b: number) => expect(Math.abs((a ?? Number.NaN) - b)).toBeLessThan(1e-9)
+  const heard = async (ms: number) => {
+    const from = (seen.played ?? []).length
+    await clock.advance(ms)
+    const p = (seen.played ?? []).slice(from)
+    return { beds: p.filter(x => x.asset?.includes('/bed-')), bursts: p.filter(x => x.asset === undefined) }
+  }
+  let h = await heard(4000)
+  expect(h.beds.length).toBeGreaterThan(0)
+  expect(h.bursts.length).toBeGreaterThan(0)
+  for (const p of h.beds) near(p.gain, bed)
+  for (const p of h.bursts) near(p.gain, sparks)
+  // Turned down 9 dB: the sparks at once, the bed as a fresh take crossfades in.
+  expect((await flow($, 'sound 4')).split('\n')[0]).toBe('sound on at 4/10 (7 plays as tuned)')
+  h = await heard(4000)
+  expect(h.beds.length).toBeGreaterThan(0)
+  expect(h.bursts.length).toBeGreaterThan(0)
+  for (const p of h.beds) near(p.gain, bed * 10 ** (-9 / 20))
+  for (const p of h.bursts) near(p.gain, sparks * 10 ** (-9 / 20))
+  // Turned up past the default: louder than as tuned, but never past 1.4.
+  await flow($, 'sound 10')
+  h = await heard(4000)
+  expect(h.beds.length).toBeGreaterThan(0)
+  for (const p of [...h.beds, ...h.bursts]) expect(p.gain!).toBeLessThanOrEqual(1.4)
+  for (const p of h.beds) near(p.gain, volumeGain(bed, 10))
+  for (const p of h.bursts) {
+    near(p.gain, volumeGain(sparks, 10))
+    expect(p.gain!).toBeGreaterThan(sparks)
+  }
+  await ui.unmount()
+})
+
+test("the volume from /config scales event clips too (the engine's chuffs)", { options: { mode: 'manual', level: 9, sound: 'on', style: 'engine', volume: 4 } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  await start($)
+  expect((await flow($)).split('\n')[0]).toContain('sound on at 4/10')
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(6000)
+  const chuffs = (seen.played ?? []).filter(p => p.asset?.includes('events/chuff'))
+  expect(chuffs.length).toBeGreaterThan(0)
+  // As tuned, a chuff plays between its smallest and biggest gains; at 4, each 9 dB under.
+  const [lo, hi] = [0, 1].map(v => EVENTS.chuff!.gain(v) * master('engine', 9) * 10 ** (-9 / 20))
+  for (const p of chuffs) {
+    expect(p.gain!).toBeGreaterThanOrEqual(lo! - 1e-9)
+    expect(p.gain!).toBeLessThanOrEqual(hi! + 1e-9)
+  }
+  await ui.unmount()
+})
+
+test("sessions: the volume is a session's own: /flow sound 4 in one leaves another as it was; save and reset cover it", async ($, on) => {
+  mock.clock(on)
+  const store = memoryStore(on)
+  const seen = engine(on, { blits: [], config: [], rows: {} })
+  seen.session = 'a'
+  await start($)
+  const four = await flow($, 'sound 4')
+  expect(four.split('\n')[0]).toBe('sound on at 4/10 (7 plays as tuned)')
+  expect(four).toContain('just this session')
+  expect(store.get(sessionKey('a'))).toMatchObject({ own: { sound: 'on', volume: 4 } })
+  expect(seen.config).toEqual([]) // the default, /config, untouched
+  // B, on the same store and /config: the default, then a volume of its own; A's stays as it was.
+  seen.session = 'b'
+  await start($)
+  expect((await flow($)).split('\n')[0]).not.toContain('sound on')
+  expect((await flow($, 'volume 9')).split('\n')[0]).toContain('sound on at 9/10')
+  expect(store.get(sessionKey('a'))).toMatchObject({ own: { sound: 'on', volume: 4 } })
+  seen.session = 'a'
+  await start($)
+  const a = await flow($)
+  expect(a.split('\n')[0]).toMatch(/sound on at 4\/10$/)
+  expect(a).toContain('just this session (your default: sound off, volume 7/10)')
+  // Off and on again: back at 4.
+  expect((await flow($, 'sound 0')).split('\n')[0]).toBe('sound off')
+  expect((await flow($, 'sound')).split('\n')[0]).toContain('sound on at 4/10')
+  // Saved, it's /config's row, the volume new sessions start with...
+  expect((await flow($, 'save')).split('\n\n')[0]).toBe('saved as your default: new sessions start with sound on, volume 4/10')
+  expect(seen.config).toContainEqual(['flow.volume', 4])
+  seen.session = 'c'
+  await start($)
+  expect((await flow($)).split('\n')[0]).toMatch(/sound on at 4\/10$/)
+  // ...while B keeps its own, until it's reset to the default.
+  seen.session = 'b'
+  await start($)
+  expect((await flow($)).split('\n')[0]).toMatch(/sound on at 9\/10$/)
+  expect((await flow($, 'reset')).split('\n\n')[0]).toBe('back to your default: volume 4/10')
+  expect((await flow($)).split('\n')[0]).toMatch(/sound on at 4\/10$/)
+  // A stored volume out of range isn't one.
+  expect(readOwn({ volume: 11 })).toEqual({})
+  expect(readOwn({ volume: '4' })).toEqual({})
+  expect(readOwn({ volume: 4 })).toEqual({ volume: 4 })
+})
+
 test('soundscapes: a bed renews as its take fades, never with the take before, and follows the level at once', () => {
   const takes: (BedTake | undefined)[] = []
   const mood = (level: number) => ({ scene: 'avalon', level, tint: 'normal' as const, night: false, amb: {} })
@@ -920,7 +1117,7 @@ test('sound off (the default): nothing plays', async ($, on) => {
 })
 
 test('config values are validated, falling back to defaults', async () => {
-  expect(readConfig(undefined)).toEqual({ mode: 'auto', style: 'fire', idle: 1, level: 8, layout: 'band', time: 'clock', sound: 'off' })
+  expect(readConfig(undefined)).toEqual({ mode: 'auto', style: 'fire', idle: 1, level: 8, layout: 'band', time: 'clock', sound: 'off', volume: 7 })
   expect(readConfig({ mode: 'manual', style: 'ember', idle: 'dark', level: 3 })).toEqual({
     mode: 'manual',
     style: 'fire',
@@ -929,6 +1126,7 @@ test('config values are validated, falling back to defaults', async () => {
     layout: 'band',
     time: 'clock',
     sound: 'off',
+    volume: 7,
   })
   expect(readConfig({ idle: 'pilot' }).idle).toBe(1) // the old name for glow
   expect(readConfig({ idle: 'glow' })).toEqual({
@@ -939,6 +1137,7 @@ test('config values are validated, falling back to defaults', async () => {
     layout: 'band',
     time: 'clock',
     sound: 'off',
+    volume: 7,
   })
   expect(readConfig({ mode: 'loud', style: 'hearth', idle: 'x', level: 5.5 })).toEqual(readConfig(undefined))
   expect(readConfig({ level: 42 }).level).toBe(8)
@@ -1695,7 +1894,7 @@ test('sessions: /flow changes only the session it runs in; each resumes with its
   // B resumed: its own.
   seen.session = 'b'
   await start($)
-  expect((await flow($)).split('\n')[0]).toMatch(/^bubbles, .*sound on$/)
+  expect((await flow($)).split('\n')[0]).toMatch(/^bubbles, .*sound on at 7\/10$/)
   // A brand new session: the defaults, with nothing of its own.
   seen.session = 'c'
   await start($)
@@ -1776,7 +1975,7 @@ test('sessions: a /config change made in the session is the default, and that ro
   await set({ key: 'flow.style', value: 'ski', previous: 'fire', provider: { plugin: 'flow', tier: 'user' }, origin: { kind: 'composer' } })
   expect(store.get(sessionKey('session-a'))).toEqual({ own: { sound: 'on' }, at: 0 })
   const status = await flow($)
-  expect(status.split('\n')[0]).toMatch(/^ski, .*sound on$/)
+  expect(status.split('\n')[0]).toMatch(/^ski, .*sound on at 7\/10$/)
   expect(status).toContain('your default: sound off')
 })
 
@@ -1967,7 +2166,7 @@ test('sessions: the defaults changing under a running session (another one\'s sa
   // A new session starts on the defaults as they are.
   seen.session = 'b'
   await start($)
-  expect((await flow($)).split('\n')[0]).toMatch(/^surf, .*sound on$/)
+  expect((await flow($)).split('\n')[0]).toMatch(/^surf, .*sound on at 7\/10$/)
   // Saved from the first again: /config takes all it shows, so new sessions start just so.
   seen.session = 'a'
   await start($)
@@ -2028,6 +2227,42 @@ test('pi: two sessions on one flow.json: B saves, then A changes and saves exact
   await old.open(undefined)
   await old.change({ style: 'ski' }, undefined)
   expect(json.style).toBe('ski')
+})
+
+test("pi: the volume is a session's own too: /flow sound 4 in one leaves the other, and flow.json, as they were", async () => {
+  let json: Record<string, unknown> = {}
+  const file = {
+    load: async () => readConfig(json),
+    save: async (changes: Own) => {
+      json = { ...json, ...storedOwn(changes) }
+    },
+  }
+  const sessionOf = (): SessionEntries & { entries: PiSessionEntry[] } => {
+    const entries: PiSessionEntry[] = []
+    return { entries, branch: () => entries, keep: data => void entries.push({ type: 'custom', id: String(entries.length), customType: 'flow', data }) }
+  }
+  const sa = sessionOf()
+  const sb = sessionOf()
+  const a = new PiSettings(readConfig(undefined), file)
+  const b = new PiSettings(readConfig(undefined), file)
+  await a.open(sa)
+  await b.open(sb)
+  expect(await a.change(changesFor(parseFlowArgs('sound 4'), a.cfg) ?? {}, sa)).toContain('just this session')
+  expect(a.cfg).toMatchObject({ sound: 'on', volume: 4 })
+  expect(ownInSession(sa.entries)).toEqual({ sound: 'on', volume: 4 })
+  expect(b.cfg).toMatchObject({ sound: 'off', volume: 7 })
+  expect(json).toEqual({})
+  // Resumed: its own volume back.
+  const a2 = new PiSettings(readConfig(undefined), file)
+  await a2.open(sa)
+  expect(a2.cfg.volume).toBe(4)
+  // Saved: flow.json's; B shows what it showed (its own now) until it's reset.
+  expect((await a.save(sa)).text).toBe('saved as your default: new sessions start with sound on, volume 4/10')
+  expect(json).toMatchObject({ sound: 'on', volume: 4 })
+  await b.refresh(sb)
+  expect(b.cfg).toMatchObject({ sound: 'off', volume: 7 })
+  expect(b.reset(sb)).toBe('back to your default: sound on, volume 4/10')
+  expect(b.cfg).toMatchObject({ sound: 'on', volume: 4 })
 })
 
 test('sessions: what a session shows that the defaults no longer hold becomes its own; what it set, or shows as the default, stays as it was', () => {

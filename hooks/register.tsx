@@ -1,4 +1,4 @@
-// REVISION: flow-v127-quiet-exit
+// REVISION: flow-v128-volume
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -16,7 +16,7 @@
 // and a nearly-full context as blue (each scene shows these its own way).
 //
 // Settings are per session. The `userConfig` rows in /config (mode, style,
-// idle, level, layout, time, sound) are the defaults every session starts
+// idle, level, layout, time, sound, volume) are the defaults every session starts
 // from; `/flow` changes only the session it runs in, at once (a /config
 // write would reload the module and restart the scene), and keeps the change
 // in the store under the session's id, so a reload or a resume brings it
@@ -74,10 +74,10 @@ import {
 } from './sessions'
 import { styleNamed } from './styles'
 import { frameSvg } from './svg'
-import { type BedTake, bedStep, burst, gather, MAX_PLAYS, unit, eventPlay, master, type SoundEvent } from './sound'
+import { type BedTake, bedStep, burst, gather, MAX_PLAYS, unit, eventPlay, master, type SoundEvent, volumeGain } from './sound'
 
 
-const FLOW_REVISION = 'flow-v127-quiet-exit'
+const FLOW_REVISION = 'flow-v128-volume'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -98,8 +98,6 @@ const BLIT_STALE_TICKS = 15
 const MAX_ROWS = 5
 /** A desktop site redraws at most 10 times a second (`$.ui.invalidate`'s limit there). */
 const DESKTOP_MS = 100
-/** How loud the soundscape plays (linear gain, 0 to 4). */
-const SOUND_GAIN = 1
 /**
  * Small events are gathered this long (ms) and played together, each at its
  * moment: each clip holds one of the player's few plays for its length and
@@ -745,8 +743,9 @@ export const register: Register = (on, options) => {
           // take) the planner has stopped that take (it took its entry out of `takes`).
           const gen = sound.gen
           let retrying = false
+          // (Every clip at the sound's volume, as it is when it starts: never past the gain a clip clips at.)
           void $.audio
-            .play(clip, { gain: Math.min(4, SOUND_GAIN * gain), signal: stop.signal })
+            .play(clip, { gain: volumeGain(gain, cfg.volume), signal: stop.signal })
             .catch((err: unknown) => {
               if (!String(err).includes('at once') || tries >= 4 || stop.signal.aborted) return
               retrying = true
@@ -789,7 +788,8 @@ export const register: Register = (on, options) => {
           stopSound()
           sound.scene = cfg.style
         }
-        const mood = { scene: cfg.style, level, tint: driver.tint(), night: driver.isNight(), amb: shownScene.ambience?.() ?? {} }
+        // (The volume too: a change crossfades a fresh take in rather than wait for the next.)
+        const mood = { scene: cfg.style, level, tint: driver.tint(), night: driver.isNight(), amb: shownScene.ambience?.() ?? {}, volume: cfg.volume }
         const beds = bedStep(sound.bed, mood, sound.clock, sound.seed++)
         for (const id of beds.stop) {
           sound.takes.get(id)?.abort()

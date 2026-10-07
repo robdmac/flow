@@ -93,7 +93,7 @@ A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes se
 
 `/flow` changes things at once, in the session you run it in. Each session keeps its own scene and settings, so two sessions side by side can show different scenes, and resuming one (`claude --resume`, `claude --continue`, or opening it again in the Claude desktop app) brings its settings back. A `/clear` keeps the scene you had.
 
-A new session starts on your defaults: the rows in `/config` (*Scene mode*, *Scene*, *Scene while idle*, *Manual level*, *Scene layout*, *Day or night*, *Sound*). `/flow save` makes the current session's settings your default, and `/flow reset` puts a session back on it. Changing a row in `/config` changes the default and the session you're in. A session already running keeps what it shows when the default changes elsewhere (another session's `/flow save`, say), and `/flow` on its own says when the session differs from your default, and how. `/flow save` saves exactly what the session shows.
+A new session starts on your defaults: the rows in `/config` (*Scene mode*, *Scene*, *Scene while idle*, *Manual level*, *Scene layout*, *Day or night*, *Sound*, *Sound volume*). `/flow save` makes the current session's settings your default, and `/flow reset` puts a session back on it. Changing a row in `/config` changes the default and the session you're in. A session already running keeps what it shows when the default changes elsewhere (another session's `/flow save`, say), and `/flow` on its own says when the session differs from your default, and how. `/flow save` saves exactly what the session shows.
 
 | Command | Effect |
 |---|---|
@@ -107,6 +107,7 @@ A new session starts on your defaults: the rows in `/config` (*Scene mode*, *Sce
 | `/flow 1`–`10` / `off` | hold a fixed level, or switch it off |
 | `/flow idle glow` / `dark` | in auto mode while idle: a low glow (the default), or nothing (the band gives its rows back) |
 | `/flow sound` | toggle a soundscape for the scene, swelling with the work (macOS; off by default); `/flow sound on` / `off` to set it |
+| `/flow sound 1`–`10` | the soundscape's volume, turning it on (7 is the default; each step below it 3 dB quieter); `/flow sound 0` turns it off. `/flow volume 1`–`10` does the same |
 | `/flow band` / `spine` | a 5-row band above the prompt (the default; also `horizontal`, `bar` or `flat`), or a tall pane docked beside the transcript (also `portrait`, `vertical` or `side`) |
 | `/flow save` | make this session's settings your default, the one new sessions start with (it writes them to `/config`) |
 | `/flow reset` | put this session back on your default |
@@ -119,7 +120,9 @@ A new session starts on your defaults: the rows in `/config` (*Scene mode*, *Sce
 
 The background is long takes that blend one into the next at random moments, so nothing comes round on a beat, and a fresh one crossfades in whenever the level or the scene changes (a rocket on the pad, climbing, in orbit, coming home). On top of it you hear what happens on screen, as it happens: bubbles bursting, rocks blowing up on the shield, sparks, a wave breaking, each ski turn, the hammer, the train's horn as it pulls away and before each level crossing, and the rockets' ignition, staging, the booster's sonic boom, the catch, parachutes and splashdown. Every scene follows the same loudness from level 1 (quiet) to 10.
 
-It plays only while the scene is on screen, and stops with the session. Claude Code plays the clips with `afplay`, so it's macOS only; elsewhere the setting does nothing. It's set per session like everything else, so you can have it on in one session and not another; several sessions with it on each play their own.
+`/flow sound 1` to `10` turns it on at that volume in the session you run it in (*Sound volume* in `/config` is the volume new sessions start with, and `/flow save` makes this session's it). 7, the default, is the loudness the scenes were tuned to; each step below it is 3 dB quieter, so 1 is 18 dB down. Above 7 there's little room left: the loudest sounds already play near full scale, and any louder they'd distort. So 8, 9 and 10 lift the quieter sounds by up to 2, 4 and 6 dB, the louder ones by less and the loudest not at all, and a busier moment still sounds busier than a calm one. `/flow sound 0` turns it off, and `/flow sound` turns it back on at the volume it had.
+
+It plays only while the scene is on screen, and stops with the session. Claude Code plays the clips with `afplay`, so it's macOS only; elsewhere the setting does nothing. It's set per session like everything else, so you can have it on in one session and not another, or quieter in one; several sessions with it on each play their own.
 
 ## Turning it off
 

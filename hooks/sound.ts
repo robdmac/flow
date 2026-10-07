@@ -1,4 +1,4 @@
-// REVISION: flow-v123-train-faster
+// REVISION: flow-v124-volume
 //
 // Soundscapes. Claude Code's `$.audio.play` plays a clip (macOS `afplay`) at a
 // gain set when it starts; it can't loop smoothly or change a clip as it
@@ -16,6 +16,8 @@
 //   catch, splashdown) plays its clip at once (`EVENTS`); small, dense ones
 //   (a bubble bursting, a spark) are synthesized here and gathered a quarter
 //   second at a time into one clip (`burst`), each at its moment.
+// - The volume: the sound setting (`/flow sound 1-10`) scales every play as it
+//   starts (`volumeGain`), never past the gain at which a clip clips.
 //
 // Pure: no engine imports, unit-tested directly.
 
@@ -107,8 +109,8 @@ export type Ambience = {
   curl?: number
 }
 
-/** Everything a clip is drawn from. */
-export type SoundMood = { scene: string; level: number; tint: Tint; night: boolean; amb: Ambience }
+/** Everything a clip is drawn from, and the sound setting's volume (1..10, DEFAULT_VOLUME when absent): a bed starts a fresh take when it changes. */
+export type SoundMood = { scene: string; level: number; tint: Tint; night: boolean; amb: Ambience; volume?: number }
 
 /** A clip being drawn: samples, and the tools the recipes mix with. */
 class Mix {
@@ -258,6 +260,42 @@ const MASTER: Record<string, (s: number) => number> = {
 /** A scene's master volume at a level (0..10). */
 export function master(scene: string, level: number): number {
   return (MASTER[scene] ?? (() => 1))(Math.max(0, Math.min(1, level / 10)))
+}
+
+/** The most a play's gain may be: clips peak at -2 to -3 dBFS and afplay's gain multiplies, so past this it clips. */
+export const MAX_GAIN = 1.4
+
+/** The sound setting's volume (1..10) that plays at the loudness curve above, as it was tuned. */
+export const DEFAULT_VOLUME = 7
+
+/**
+ * Each volume's step from that loudness, in dB (index: volume - 1): 3 dB a step
+ * below the default, down to -18 at 1; up to +6 at 10 above it, though the
+ * loudest plays have little or no headroom left (see `volumeGain`).
+ */
+export const VOLUME_DB: readonly number[] = [-18, -15, -12, -9, -6, -3, 0, 2, 4, 6]
+
+/**
+ * Above the default, a play this far (dB) or more below MAX_GAIN gets a step's
+ * whole lift; nearer, less. (No less than the top step: else a loud play
+ * lifted could overtake a louder one.)
+ */
+const LIFT_DB = 12
+
+/**
+ * A play's gain at the sound setting's volume (1..10), never past MAX_GAIN.
+ * At the default, the gain as it is (capped). Below it, every play turned down
+ * alike. Above it, a play well below MAX_GAIN lifted by the step's whole dB, a
+ * louder one by less, tapering to none at MAX_GAIN: the range compressed
+ * rather than cut flat at the cap, so a busier moment still plays louder than
+ * a calmer one, and nothing clips.
+ */
+export function volumeGain(gain: number, volume: number): number {
+  const g = Math.max(0, Math.min(MAX_GAIN, gain))
+  const v = Number.isFinite(volume) ? Math.max(1, Math.min(10, Math.round(volume))) : DEFAULT_VOLUME
+  const db = VOLUME_DB[v - 1]!
+  const lift = db <= 0 || g === 0 ? db : db * Math.min(1, (20 * Math.log10(MAX_GAIN / g)) / LIFT_DB)
+  return Math.min(MAX_GAIN, g * 10 ** (lift / 20))
 }
 
 /** Each scene's bed, as layers of clips. */
@@ -469,17 +507,19 @@ export function bedGap(seed: number): number {
   return BED_MIN_MS + ((h >>> 8) % (BED_EVERY_MS - BED_MIN_MS + 1))
 }
 
-/** A bed's take playing now: its clip and gain, when it started, when the next is due, the take it's replacing (stopped `hold` ms in: once this one has faded in, or sooner when the old one is the louder), and from when it plays alone. */
-export type BedTake = { id: number; asset: string; gain: number; at: number; due: number; retire?: number; hold: number; alone: number }
+/** A bed's take playing now: its clip and gain, when it started, when the next is due, the take it's replacing (stopped `hold` ms in: once this one has faded in, or sooner when the old one is the louder), from when it plays alone, and the volume it plays at. */
+export type BedTake = { id: number; asset: string; gain: number; at: number; due: number; retire?: number; hold: number; alone: number; volume: number }
 
 /**
  * One frame of a scene's bed: which takes to start (`play`, each with an id
  * for stopping it later) and which to stop. `takes` is the caller's, kept
  * between frames (one slot a layer). A layer renews as its take fades; it
- * starts afresh when its gain has moved by more than 3 dB (at most once a
- * crossfade), the old take stopped when the new one is in (sooner when the
- * level fell, so it falls promptly); it stops when it
- * falls silent (a rocket's engines cutting off, the burner's valve closing).
+ * starts afresh when its gain has moved by more than 3 dB or the volume
+ * setting has changed (at most once a crossfade), the old take stopped when
+ * the new one is in (sooner when it's the quieter, so the bed falls
+ * promptly); it stops when it falls silent (a rocket's engines cutting off,
+ * the burner's valve closing). Its gains are before the volume, which the
+ * player applies to every clip (`volumeGain`).
  */
 export function bedStep(
   takes: (BedTake | undefined)[],
@@ -489,6 +529,7 @@ export function bedStep(
 ): { play: (Play & { id: number })[]; stop: number[] } {
   const play: (Play & { id: number })[] = []
   const stop: number[] = []
+  const volume = mood.volume ?? DEFAULT_VOLUME
   for (let i = 0; i < bedLayers(mood.scene); i++) {
     const t = takes[i]
     if (t?.retire !== undefined && clock - t.at >= t.hold) {
@@ -504,14 +545,14 @@ export function bedStep(
     const due = !t || clock >= t.due
     const mix = (asset: string) => asset.replace(/\d\.m4a$/, '')
     // (Only once the take before has gone, so the bed never holds more than two of the player's few plays.)
-    const moved = !!t && clock >= t.alone && clock - t.at >= BED_FADE_MS && (mix(want.asset) !== mix(t.asset) || want.gain > t.gain * 1.4 || want.gain < t.gain / 1.4)
+    const moved = !!t && clock >= t.alone && clock - t.at >= BED_FADE_MS && (mix(want.asset) !== mix(t.asset) || want.gain > t.gain * 1.4 || want.gain < t.gain / 1.4 || volume !== t.volume)
     if (!due && !moved) continue
     const id = seed * 32 + i
     const from = t && !moved ? t.due : clock
-    const hold = moved && want.gain < t!.gain ? BED_FADE_MS / 3 : BED_FADE_MS
+    const hold = moved && volumeGain(want.gain, volume) < volumeGain(t!.gain, t!.volume) ? BED_FADE_MS / 3 : BED_FADE_MS
     // (A take holds its place in the player till afplay exits: stopped, a moment after; played out, its drain after.)
     const alone = moved ? clock + hold + 100 : t ? t.at + BED_MS + PLAYER_DRAIN_MS : clock
-    takes[i] = { id, asset: want.asset, gain: want.gain, at: clock, due: Math.max(clock + BED_MIN_MS, from + bedGap(id)), retire: moved ? t!.id : undefined, hold, alone }
+    takes[i] = { id, asset: want.asset, gain: want.gain, at: clock, due: Math.max(clock + BED_MIN_MS, from + bedGap(id)), retire: moved ? t!.id : undefined, hold, alone, volume }
     play.push({ ...want, id })
   }
   return { play, stop }
