@@ -1,16 +1,23 @@
-// REVISION: flow-v81-scene-tools
+// REVISION: flow-v125-waiting
 //
 // Shared by preview and check: build a scene at a size and a setting, warm it
 // up, and count what Claude Code's Raster cares about. Not part of the mod.
 
+import { WAIT_LEVEL } from '../hooks/activity'
 import { hasNight, makeScene, SCENES, STYLES, type SceneName, type Tint } from '../hooks/styles'
 import type { Cells } from '../hooks/cells'
 
 export const TINTS: Tint[] = ['normal', 'smoke', 'blue']
+/** Every look a scene shows over its level: each tint, and waiting on the person. */
+export const LOOKS: { name: string; tint: Tint; waiting?: boolean }[] = [...TINTS.map(tint => ({ name: tint, tint })), { name: 'waiting', tint: 'normal', waiting: true }]
 export const BAND = { name: 'band', columns: 120, rows: 5 }
 export const SPINE = { name: 'spine', columns: 22, rows: 40 }
 
-export type Setting = { level: number; night: boolean; tint: Tint }
+/** Waiting: built at the level, then held for the person as auto mode does (the level down to 2, the look eased in). */
+export type Setting = { level: number; night: boolean; tint: Tint; waiting?: boolean }
+
+/** Frames a waiting scene is stepped once the wait begins: the look in, and settled (the train drawn up and standing). */
+const WAIT_FRAMES = 200
 
 /** The scenes named on the command line (all of them when none are), or exit with the names it knows. */
 export function scenesFrom(argv: string[]): SceneName[] {
@@ -36,6 +43,11 @@ export function build(scene: SceneName, columns: number, rows: number, s: Settin
   f.night = s.night
   f.ensure(columns, rows)
   for (let i = 0; i < warm; i++) f.step()
+  if (s.waiting) {
+    f.waiting = true
+    f.strength = Math.min(s.level, WAIT_LEVEL)
+    for (let i = 0; i < WAIT_FRAMES; i++) f.step()
+  }
   return f
 }
 

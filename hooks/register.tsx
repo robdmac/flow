@@ -1,4 +1,4 @@
-// REVISION: flow-v128-volume
+// REVISION: flow-v129-waiting
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -14,6 +14,9 @@
 // other tool (an MCP server's) spark a little, subagents add to
 // the scene and stoke it, a failed command or a compaction shows as smoke,
 // and a nearly-full context as blue (each scene shows these its own way).
+// While Claude waits on you (a permission dialog, its question, a plan to
+// approve) the scene settles, holds and breathes in sepia (waiting.ts), and
+// with sound on a soft chime marks the wait's start.
 //
 // Settings are per session. The `userConfig` rows in /config (mode, style,
 // idle, level, layout, time, sound, volume) are the defaults every session starts
@@ -74,10 +77,10 @@ import {
 } from './sessions'
 import { styleNamed } from './styles'
 import { frameSvg } from './svg'
-import { type BedTake, bedStep, burst, gather, MAX_PLAYS, unit, eventPlay, master, type SoundEvent, volumeGain } from './sound'
+import { type BedTake, bedStep, burst, chimePlay, chimeStep, gather, MAX_PLAYS, newChimeState, unit, eventPlay, master, type SoundEvent, volumeGain } from './sound'
 
 
-const FLOW_REVISION = 'flow-v128-volume'
+const FLOW_REVISION = 'flow-v129-waiting'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -569,6 +572,8 @@ export const register: Register = (on, options) => {
     nextOf: new Map<string, number>(),
     /** Bumped whenever the soundscape stops (a new scene, sound off, hidden): what was scheduled before is stale. */
     gen: 0,
+    /** When the waits on the person began and ended, and the last chime (chimeStep keeps it). */
+    chime: newChimeState(),
     /** The event clips playing, oldest first (the first to give way when the player is full). */
     events: [] as AbortController[],
     seed: 1,
@@ -717,6 +722,8 @@ export const register: Register = (on, options) => {
       // into the next, and what happens on screen heard as it happens.
       sound.clock += elapsed
       const heard = !sound.over && cfg.sound === 'on' && (site || desk) && driver.isShown()
+      // A wait on the person beginning: a soft chime (once a wait; not for one right behind another).
+      const chime = chimeStep(sound.chime, driver.waiting(), sound.clock)
       const shownScene = site ? driver.scene : desk ? desktopDriver.scene : undefined
       const events: SoundEvent[] = []
       for (const sc of [driver.scene, desktopDriver.scene]) {
@@ -796,6 +803,10 @@ export const register: Register = (on, options) => {
           sound.takes.delete(id)
         }
         for (const p of beds.play) play({ asset: p.asset }, p.gain, p.id)
+        if (chime) {
+          const c = chimePlay(sound.seed++)
+          play({ asset: c.asset }, c.gain)
+        }
         if (sound.clock >= sound.nextBurst) {
           // Each event at its moment in the window since the last burst.
           const from = Math.max(sound.lastBurst, sound.clock - 2 * SOUND_BURST_MS)
@@ -960,7 +971,8 @@ export const register: Register = (on, options) => {
 
     activity.toolsInFlight++
     const id = e.tool_use_id
-    if (id && PERSON_TOOLS.has(e.tool)) activity.waitingOn(id)
+    // Claude's question, a plan to approve: put to the person from the start.
+    if (id && PERSON_TOOLS.has(e.tool)) activity.waitingOn(id, true, e.tool, e.agentId)
     try {
       const result = await next(e)
       if (e.tool === 'Bash' && 'isError' in result && result.isError) activity.failed()
@@ -968,17 +980,30 @@ export const register: Register = (on, options) => {
     } finally {
       activity.toolsInFlight--
       // (Answered, or over: a permission ask from tool.check ends here too.)
-      if (id) activity.answered(id)
+      if (id) activity.answered(id, e.tool)
     }
   })
 
   on('tool.check', async ($, e, next) => {
     const verdict = await next(e)
-    // An ask is put to the person (in the default mode; auto's classifier decides alone): the turn's clock
-    // waits until the call is over. (There's no word of when they answer, so a command they approve runs
-    // uncounted too: it errs on the side of a lower level, never a higher one.)
-    if (verdict.decision === 'ask' && e.tool_use_id) activity.waitingOn(e.tool_use_id)
+    // An ask goes to the mode's decider: the turn's clock waits until the call is over (or shows it's
+    // running). It's put to the person only if a dialog shows (classic.PermissionRequest, below): auto
+    // mode's classifier decides most alone, and that's no wait on you.
+    if (verdict.decision === 'ask' && e.tool_use_id) activity.waitingOn(e.tool_use_id, false, e.tool, e.agentId)
     return verdict
+  })
+
+  on('classic.PermissionRequest', async ($, e, next) => {
+    const result = await next(e)
+    // No hook answered for them: the dialog shows, and the scene settles and breathes until it's answered.
+    if (!result.decision && result.block === undefined) activity.prompted(e.tool_name, e.agent_id)
+    return result
+  })
+
+  on('ui.render', { component: 'ToolProgress' }, ($, e, next) => {
+    // A call showing progress is running (a long command's background hint): whatever it waited on is answered.
+    activity.answered(e.props.tool_use_id)
+    return next(e)
   })
 
   on('session.compact', async ($, e, next) => {
@@ -1003,6 +1028,8 @@ export const register: Register = (on, options) => {
     // is written to /config (only `/flow save` does that).
     if (e.reason !== 'clear' && e.reason !== 'resume') sound.over = true
     stopSound()
+    // What it waited on you for was its own: none carries over to the session the process moves to.
+    activity.forgetWaits()
     // The defaults may have changed since the last look (another session's
     // save): what this one showed is kept for a resume.
     try {

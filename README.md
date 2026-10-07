@@ -86,8 +86,11 @@ Balloon, falcon, starship, surf, ski and train also have a **night** version: st
 | running subagents | busier with each one (with diminishing returns); some scenes add company: more balloons, surfers or skiers, a wider fire, more lights on the launch tower, trains running alongside |
 | hitting a failed command, or compacting | smoke for a moment: smoky flame tips, sooty steam, a grey sky, a wipeout, a rocket's plume sputtering grey, black smoke pouring from the train's diesel |
 | near a full context (≥85%) | blue: a blue-white flame, a storm, dusk on the slopes, a blue gas flame, rain driving past the train |
+| waiting on you: a permission to grant, its question, a plan to approve | settles to a calm 2 and holds, the whole scene turned a warm sepia that breathes slowly, about every 4 s: the fire banks to a bed of glowing coals, the stars stop, the colony ship comes to rest, the balloon hovers with its pilot light glowing, the engine runs down and lets off steam, a rocket holds its stage with amber lights up the tower, the surfer sits up waiting for a wave, the skier stops, the bubbles slow, the train draws up at a red signal or a platform, its headlight and the signal glowing with each breath. With sound on, a soft chime as the wait begins |
 
 A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes several subagents editing in parallel, or a long turn: it climbs a level every 30 s it keeps going.
+
+Waiting on you shows only while a dialog is actually up for you: a permission ask that auto mode's classifier settles by itself, or that a hook answers, isn't one. It ends when you answer (once the call is over, or as soon as a long command shows it's running). Like the tints, it shows in auto mode only, and only in the session that waits.
 
 ## The command
 
@@ -122,6 +125,8 @@ The background is long takes that blend one into the next at random moments, so 
 
 `/flow sound 1` to `10` turns it on at that volume in the session you run it in (*Sound volume* in `/config` is the volume new sessions start with, and `/flow save` makes this session's it). 7, the default, is the loudness the scenes were tuned to; each step below it is 3 dB quieter, so 1 is 18 dB down. Above 7 there's little room left: the loudest sounds already play near full scale, and any louder they'd distort. So 8, 9 and 10 lift the quieter sounds by up to 2, 4 and 6 dB, the louder ones by less and the loudest not at all, and a busier moment still sounds busier than a calm one. `/flow sound 0` turns it off, and `/flow sound` turns it back on at the volume it had.
 
+When Claude starts waiting on you (a permission, its question, a plan to approve), a soft chime: two struck tubes rising a fourth, about as loud as a scene at 6. Once a wait, and not for one right behind another (within 20 s): you're there already. It's part of the soundscape, so it follows the session's sound setting: `/flow sound` turns it on and off with the rest. For an alert without the ambience, there's Claude Code's own notification setting in `/config`.
+
 It plays only while the scene is on screen, and stops with the session. Claude Code plays the clips with `afplay`, so it's macOS only; elsewhere the setting does nothing. It's set per session like everything else, so you can have it on in one session and not another, or quieter in one; several sessions with it on each play their own.
 
 ## Turning it off
@@ -141,6 +146,8 @@ The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's edito
 | `tool_result` with `isError` | a failed command shows as smoke |
 | `session_compact` | so does a compaction |
 | `ctx.getContextUsage()` | a nearly-full context shows as blue |
+
+pi tells an extension nothing of a wait on you, so there the scenes never show one.
 
 As in Claude Code, each session keeps its own settings, kept in the session itself (an entry the model never sees), so resuming or forking it brings them back. `~/.pi/agent/flow.json` holds the defaults new sessions start with; `/flow save` writes it. To try it without installing: `pi --extension ./pi/index.ts`.
 
@@ -168,12 +175,12 @@ CI ([ci.yml](.github/workflows/ci.yml)) runs these and `npm run check` on every 
 ```sh
 npm install
 npm run new-scene -- aurora --blurb "curtains of light that ripple faster with the work" --night
-npm run preview -- aurora    # see it here at levels 1, 5 and 10, as a band and a spine, with each tint
+npm run preview -- aurora    # see it here at levels 1, 5 and 10, as a band and a spine, with each tint and waiting
 claude --plugin-dir .        # then /flow aurora
 npm run check                # colour pairs and timing, before you open a pull request
 ```
 
-`new-scene` writes `hooks/aurora.ts`: a scene that already moves with the level, shows the tints and (with `--night`) has a night. Edit its `paint()`: it gets a grid of pixels (2 × 2 a terminal cell) and the dials (the level, eased; the frame count; night; the tint; whether it's the tall spine). [AGENTS.md](AGENTS.md) has the rules a scene keeps to.
+`new-scene` writes `hooks/aurora.ts`: a scene that already moves with the level, shows the tints, breathes while Claude waits on you and (with `--night`) has a night. Edit its `paint()`: it gets a grid of pixels (2 × 2 a terminal cell) and the dials (the level, eased; the frame count; night; the tint; how far into a wait on you; whether it's the tall spine). [AGENTS.md](AGENTS.md) has the rules a scene keeps to.
 
 Every hook file carries a `// REVISION:` marker. On startup the mod writes the loaded revision, the local time and the UTC offset to the debug log (`claude --debug`).
 

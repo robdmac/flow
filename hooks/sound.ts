@@ -1,4 +1,4 @@
-// REVISION: flow-v124-volume
+// REVISION: flow-v125-chime
 //
 // Soundscapes. Claude Code's `$.audio.play` plays a clip (macOS `afplay`) at a
 // gain set when it starts; it can't loop smoothly or change a clip as it
@@ -18,6 +18,10 @@
 //   second at a time into one clip (`burst`), each at its moment.
 // - The volume: the sound setting (`/flow sound 1-10`) scales every play as it
 //   starts (`volumeGain`), never past the gain at which a clip clips.
+// - The chime: when Claude starts waiting on the person (a permission, a
+//   question, a plan), two soft struck tubes rising a fourth (`CHIME`), once
+//   a wait and not for one right behind another (`chimeStep`), the same in
+//   every scene.
 //
 // Pure: no engine imports, unit-tested directly.
 
@@ -556,6 +560,51 @@ export function bedStep(
     play.push({ ...want, id })
   }
   return { play, stop }
+}
+
+/**
+ * The chime as Claude starts waiting on the person: its clip (three takes, each
+ * struck a little differently) and gain. Not by the scene's master: it's one
+ * clip for every scene, about as loud as a scene at 6 (well over a bed's calm 2,
+ * gently: a cue, not an alarm).
+ */
+export const CHIME = { clip: 'events/chime', variants: 3, gain: 0.26 }
+/** A wait chimes this far in (one answered at once never does), and not within this long of the last wait or chime. */
+export const CHIME_DELAY_MS = 600
+export const CHIME_QUIET_MS = 20_000
+
+/** What the chime remembers: when the wait now began (-1: none), when the last one ended, whether this one's settled, the last chime. */
+export type ChimeState = { since: number; ended: number; done: boolean; last: number }
+
+export function newChimeState(): ChimeState {
+  return { since: -1, ended: -Infinity, done: false, last: -Infinity }
+}
+
+/**
+ * One frame of the chime (`clock` in ms): whether to play it now. A wait
+ * chimes once, CHIME_DELAY_MS in, unless the last wait ended (or a chime
+ * played) less than CHIME_QUIET_MS before it began: back-to-back asks find
+ * you there already.
+ */
+export function chimeStep(s: ChimeState, waiting: boolean, clock: number): boolean {
+  if (!waiting) {
+    if (s.since >= 0) s.ended = clock
+    s.since = -1
+    return false
+  }
+  if (s.since < 0) {
+    s.since = clock
+    s.done = clock - s.ended < CHIME_QUIET_MS || clock - s.last < CHIME_QUIET_MS
+  }
+  if (s.done || clock - s.since < CHIME_DELAY_MS) return false
+  s.done = true
+  s.last = clock
+  return true
+}
+
+/** The chime's clip: one of its takes. */
+export function chimePlay(seed: number): Play {
+  return { asset: asset(CHIME.clip, CHIME.variants, seed), gain: CHIME.gain }
 }
 
 /** An event's clip at the scene's volume, or undefined when it's synthesized (gathered into a `burst`). */

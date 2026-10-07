@@ -1,10 +1,10 @@
-// REVISION: flow-v130-volume
+// REVISION: flow-v131-waiting
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { AsciiFire, colorFor, params } from '../hooks/fire'
-import { effortFloor, Activity, linesWritten } from '../hooks/activity'
+import { effortFloor, Activity, linesWritten, WAIT_LEVEL } from '../hooks/activity'
 import { firstTips, nextTip, readTips, changedText, changesFor, helpText, isNightAt, ownHint, parseFlowArgs, readConfig, resetText, savedText, staleRows, statusText } from '../hooks/settings'
 import { differences, type Own, ownAfterSwitch, pinShown, readOwn, readRecord, SESSION_KEPT_MS, SESSIONS_KEPT, sessionKey, staleSessions, storedOwn, storedRecord, withOwn } from '../hooks/sessions'
 import { gridToAnsi } from '../pi/ansi'
@@ -15,13 +15,14 @@ import { Balloon, skyColor } from '../hooks/balloon'
 import { Falcon } from '../hooks/rocket'
 import { Colony } from '../hooks/colony'
 import { Train } from '../hooks/train'
-import { makeScene, nextStyle, SCENES, STYLES, styleNamed } from '../hooks/styles'
+import { makeScene, nextStyle, SCENES, STYLES, styleNamed, type SceneName } from '../hooks/styles'
 import { migrateOverrides, openSession, runScene, type SceneCtx } from '../hooks/register'
 import { coverage, frameSvg, gridPixels, SVG_LIMIT } from '../hooks/svg'
 import { Cells, isTall } from '../hooks/cells'
 import { SceneDriver } from '../hooks/scene'
-import { BED_EVERY_MS, BED_FADE_MS, BED_MIN_MS, BED_MS, BURST_MAX, MAX_PLAYS, MOODS, PLAYER_DRAIN_MS, PLAYER_LEAD_MS, type BedTake, bedGap, bedPlays, bedStep, burst, EVENTS, eventPlay, gather, LAYERS } from '../hooks/sound'
+import { BED_EVERY_MS, BED_FADE_MS, BED_MIN_MS, BED_MS, BURST_MAX, CHIME_DELAY_MS, CHIME_QUIET_MS, MAX_PLAYS, MOODS, PLAYER_DRAIN_MS, PLAYER_LEAD_MS, type BedTake, bedGap, bedPlays, bedStep, burst, chimePlay, chimeStep, EVENTS, eventPlay, gather, LAYERS, newChimeState } from '../hooks/sound'
 import { DEFAULT_VOLUME, MAX_GAIN, master, VOLUME_DB, volumeGain } from '../hooks/sound'
+import { BREATH_FRAMES, breath, easeWait, waitTone } from '../hooks/waiting'
 import { SOUND_FILES } from '../hooks/sound-files'
 import { PixelScene, type Dials, type Painter } from '../hooks/pixel-scene'
 
@@ -2369,4 +2370,360 @@ test('train: subagents run alongside, drawing up from out of sight, and fall bac
     for (let i = 0; i < 600; i++) t.step()
     expect(t.company).toBe(0)
   }
+})
+// ── Waiting on the person ────────────────────────────────────────────────
+
+test('waiting on the person: a question shows at once; a permission ask only once its dialog is up (auto mode settles most alone)', () => {
+  const h = new Activity()
+  h.turnStarted()
+  h.modelStep('high')
+  h.heat = 3
+  const working = h.strength(1)
+  expect(working).toBeGreaterThan(WAIT_LEVEL)
+  // A permission ask: the turn's clock stops, but no one's asked yet (the classifier may settle it).
+  h.waitingOn('toolu_1', false, 'Bash')
+  expect(h.isWaiting).toBe(true)
+  expect(h.isAwaitingPerson).toBe(false)
+  expect(h.strength(1)).toBe(working)
+  // Its dialog shows: now it waits on the person, and the level settles.
+  h.prompted('Bash')
+  expect(h.isAwaitingPerson).toBe(true)
+  expect(h.strength(1)).toBe(WAIT_LEVEL)
+  h.answered('toolu_1', 'Bash')
+  expect(h.isAwaitingPerson).toBe(false)
+  expect(h.strength(1)).toBe(working)
+  // Claude's question is put to the person from the start; the turn ending forgets it.
+  h.waitingOn('toolu_2', true, 'AskUserQuestion')
+  expect(h.isAwaitingPerson).toBe(true)
+  h.turnEnded()
+  expect(h.isAwaitingPerson).toBe(false)
+})
+
+test("waiting on the person: a dialog takes its own loop's ask first, and one seen with no ask before it lasts till a call of its tool ends", () => {
+  const h = new Activity()
+  h.turnStarted()
+  h.waitingOn('main', false, 'Bash')
+  h.waitingOn('sub', false, 'Bash', 'agent-1')
+  h.prompted('Bash', 'agent-1')
+  h.answered('main', 'Bash')
+  expect(h.isAwaitingPerson).toBe(true) // the subagent's call still waits on its dialog
+  h.answered('sub', 'Bash')
+  expect(h.isAwaitingPerson).toBe(false)
+  h.prompted('WebFetch')
+  expect(h.isAwaitingPerson).toBe(true)
+  h.answered('toolu_9', 'WebFetch')
+  expect(h.isAwaitingPerson).toBe(false)
+})
+
+test('the driver shows waiting in auto mode only (as it does the tints), settling the level to 2', () => {
+  const a = new Activity()
+  const d = new SceneDriver(readConfig({ style: 'surf' }), a)
+  a.turnStarted()
+  a.heat = 4
+  a.waitingOn('toolu_q', true, 'AskUserQuestion')
+  expect(d.waiting()).toBe(true)
+  expect(d.dial().waiting).toBe(true)
+  expect(d.level()).toBe(WAIT_LEVEL)
+  d.apply({ mode: 'manual', level: 7 })
+  expect(d.dial().waiting).toBe(false)
+  expect(d.level()).toBe(7)
+})
+
+test("the waiting look: eases in over about a second, breathes every ~4 s, keeps the terminal's own color, maps colors one to one", () => {
+  let k = 0
+  let frames = 0
+  while (k < 1) {
+    k = easeWait(k, true)
+    frames++
+  }
+  expect(frames).toBeGreaterThan(10)
+  expect(frames).toBeLessThan(25)
+  expect(easeWait(1, false)).toBeGreaterThan(0.9) // out again, gently
+  expect(Math.abs(breath(0))).toBeLessThan(1e-9) // out
+  expect(Math.abs(breath(BREATH_FRAMES / 2) - 1)).toBeLessThan(1e-9) // in, half a breath on
+  for (let t = -BREATH_FRAMES; t < 2 * BREATH_FRAMES; t++) expect(breath(t) >= 0 && breath(t) <= 1).toBe(true)
+  const g = new Cells(4, 1)
+  g.set(0, 0x2588, 0x2f7fd0, 0xa9daf4) // sky
+  g.set(1, 0x2588, 0xeef4fb) // snow, over the terminal's own background
+  g.blank(2)
+  g.set(3, 0x2588, 0x2f7fd0, 0xa9daf4) // the same pair again
+  waitTone(g, 1, BREATH_FRAMES / 2)
+  expect(g.background(1)).toBe(DEFAULT)
+  expect(g.foreground(2)).toBe(DEFAULT)
+  expect([g.foreground(3), g.background(3)]).toEqual([g.foreground(0), g.background(0)])
+  for (const c of [g.foreground(0), g.background(0), g.foreground(1)]) expect((c >> 16) & 255).toBeGreaterThan(c & 255) // sepia: warm
+  const none = new Cells(1, 1)
+  none.set(0, 0x2588, 0x123456)
+  waitTone(none, 0, 3)
+  expect(none.foreground(0)).toBe(0x123456)
+})
+
+/** Mean warmth (red less blue) and brightness of a frame's painted colors. */
+function tone(g: Cells): { warm: number; light: number } {
+  let n = 0
+  let warm = 0
+  let light = 0
+  for (let i = 0; i < g.columns * g.rows; i++)
+    for (const c of [g.foreground(i), g.background(i)]) {
+      if (c === DEFAULT) continue
+      warm += ((c >> 16) & 255) - (c & 255)
+      light += ((c >> 16) & 255) * 0.3 + ((c >> 8) & 255) * 0.59 + (c & 255) * 0.11
+      n++
+    }
+  return { warm: n ? warm / n : 0, light: n ? light / n : 0 }
+}
+
+test('every scene shows waiting on the person, by day and night, in the band and the spine: warm and breathing, unlike smoke or blue', () => {
+  for (const def of SCENES)
+    for (const [columns, rows] of [
+      [90, 5],
+      [16, 40],
+    ] as const)
+      for (const night of def.night ? [false, true] : [false]) {
+        // From work at 6 down to the calm 2: plainly, with each tint, or waiting on the person.
+        const settle = (tint: 'normal' | 'smoke' | 'blue', waiting: boolean) => {
+          const f = makeScene(def.name, 5)
+          f.strength = 6
+          f.tint = tint
+          f.night = night
+          f.ensure(columns, rows)
+          for (let i = 0; i < 60; i++) f.step()
+          f.waiting = waiting
+          f.strength = WAIT_LEVEL
+          for (let i = 0; i < 30; i++) f.step()
+          return f
+        }
+        const plain = [settle('normal', false), settle('smoke', false), settle('blue', false)].map(f => f.grid())
+        const f = settle('normal', true)
+        const breathing: { warm: number; light: number }[] = []
+        let coals = 0
+        for (let i = 0; i < BREATH_FRAMES; i += 4) {
+          for (let k = 0; k < 4; k++) f.step()
+          const g = f.grid()
+          breathing.push(tone(g))
+          if (def.name === 'fire') {
+            let lit = 0
+            for (let x = 0; x < columns; x++) if (g.codePoint((rows - 1) * columns + x) !== 0x20) lit++
+            coals = Math.max(coals, lit / columns)
+          }
+        }
+        const where = `${def.name} ${columns}×${rows}${night ? ' night' : ''}`
+        const light = breathing.map(b => b.light)
+        // It breathes: brighter and dimmer by a good part over each breath.
+        expect({ where, breath: (Math.max(...light) - Math.min(...light)) / Math.max(...light) > 0.12 }).toEqual({ where, breath: true })
+        if (def.name === 'fire') {
+          // The fire banks: a bed of coals right along the bottom (it's warm already: no sepia).
+          expect({ where, coals: coals > 0.9 }).toEqual({ where, coals: true })
+          continue
+        }
+        const warmest = Math.max(...breathing.map(b => b.warm))
+        for (const [n, g] of plain.entries()) expect({ where, n, warmer: warmest > tone(g).warm + 15 }).toEqual({ where, n, warmer: true })
+      }
+})
+
+test('waiting holds each scene where it is: the balloon hovers, a rocket keeps its stage, the skier stops, the engine and the stars come to rest, the surfer sits up', () => {
+  const balloon = new Balloon(3)
+  balloon.ensure(60, 5)
+  balloon.strength = 8
+  for (let i = 0; i < 400; i++) balloon.step()
+  const high = balloon.altitude
+  balloon.waiting = true
+  balloon.strength = WAIT_LEVEL
+  for (let i = 0; i < 300; i++) balloon.step()
+  expect(balloon.altitude).toBeGreaterThan(high * 0.85) // it eases to a hover, it doesn't come down
+  balloon.waiting = false
+  for (let i = 0; i < 400; i++) balloon.step()
+  expect(balloon.altitude).toBeLessThan(high * 0.5) // the wait over, it follows the level again
+
+  const flying = new Falcon(3)
+  flying.ensure(60, 5)
+  flying.strength = 6
+  flying.step() // a fresh start resumes as asked
+  flying.waiting = true
+  for (let i = 0; i < 100; i++) {
+    flying.strength = WAIT_LEVEL
+    flying.step()
+  }
+  expect(flying.strength).toBe(6) // held, not brought home
+  const parked = new Falcon(3)
+  parked.ensure(60, 5)
+  parked.strength = 1
+  parked.step()
+  parked.waiting = true
+  for (let i = 0; i < 100; i++) {
+    parked.strength = WAIT_LEVEL
+    parked.step()
+  }
+  expect(parked.strength).toBe(1) // nor launched off the pad
+
+  const at = (name: SceneName, frames: number) => {
+    const f = makeScene(name, 3)
+    f.ensure(90, 5)
+    f.strength = 7
+    for (let i = 0; i < 120; i++) f.step()
+    f.waiting = true
+    f.strength = WAIT_LEVEL
+    for (let i = 0; i < frames; i++) f.step()
+    return f
+  }
+  expect(at('ski', 120).ambience!().wind).toBeLessThan(0.01)
+  const engine = at('engine', 200) as unknown as { omega: number }
+  expect(engine.omega).toBeLessThan(0.002)
+  const warp = at('warp', 60) as unknown as { stars: { z: number }[]; step(): void }
+  const z = warp.stars.map(s => s.z)
+  warp.step()
+  expect(warp.stars.map(s => s.z)).toEqual(z)
+  const surf = at('surf', 200) as unknown as { pose(): string }
+  expect(surf.pose()).toBe('sit')
+})
+
+test('the chime: once a wait, a moment in; not for a wait right behind another; again after a quiet spell', () => {
+  const s = newChimeState()
+  let now = 0
+  const run = (waiting: boolean, ms: number) => {
+    let n = 0
+    for (let t = 0; t < ms; t += 70) {
+      now += 70
+      if (chimeStep(s, waiting, now)) n++
+    }
+    return n
+  }
+  expect(run(false, 2000)).toBe(0)
+  expect(run(true, CHIME_DELAY_MS - 150)).toBe(0) // not at once: a wait answered straight off never chimes
+  expect(run(true, 5000)).toBe(1) // once
+  expect(run(false, 3000)).toBe(0)
+  expect(run(true, 5000)).toBe(0) // right behind the last: you're there already
+  expect(run(false, CHIME_QUIET_MS + 1000)).toBe(0)
+  expect(run(true, 5000)).toBe(1)
+  const files = new Set(SOUND_FILES)
+  for (let seed = 0; seed < 12; seed++) {
+    const p = chimePlay(seed)
+    expect(files.has(p.asset)).toBe(true)
+    expect(p.gain).toBeLessThanOrEqual(1.4)
+  }
+})
+
+test("sound on: a soft chime as Claude's question waits on you, once; none for another right behind it", { options: { sound: 'on', style: 'bubbles' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  let answer: (() => void) | undefined
+  on('tool.call', () => new Promise(r => (answer = () => r({ result: {} as never }))))
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const chimes = () => (seen.plays ?? []).filter(p => p.includes('events/chime')).length
+  await clock.advance(2000)
+  expect(chimes()).toBe(0)
+  const first = $.tool.call({ tool: 'AskUserQuestion', questions: [] } as never)
+  await clock.advance(2000)
+  expect(chimes()).toBe(1)
+  await clock.advance(4000)
+  expect(chimes()).toBe(1) // once a wait
+  answer!()
+  await first
+  await clock.advance(2000)
+  const second = $.tool.call({ tool: 'AskUserQuestion', questions: [] } as never)
+  await clock.advance(3000)
+  expect(chimes()).toBe(1)
+  answer!()
+  await second
+  await ui.unmount()
+})
+
+test('a permission dialog (not an ask auto mode settles alone) is what waits on you: it chimes, and ends with its call', { options: { sound: 'on', style: 'bubbles' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  let finish: (() => void) | undefined
+  on('tool.call', () => new Promise(r => (finish = () => r({ result: {} as never }))))
+  // No settings hook answers it for the person: the dialog shows.
+  on('classic.PermissionRequest', () => ({}))
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const chimes = () => (seen.plays ?? []).filter(p => p.includes('events/chime')).length
+  const call = $.tool.call({ tool: 'Bash', command: 'make' } as never)
+  await clock.advance(2000)
+  expect(chimes()).toBe(0) // a command running is no wait on you
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'make' } } as never)
+  await clock.advance(2000)
+  expect(chimes()).toBe(1)
+  finish!()
+  await call
+  // Its wait ended with the call: a dialog a while later is a new wait, and chimes again.
+  await clock.advance(CHIME_QUIET_MS + 2000)
+  const next = $.tool.call({ tool: 'Bash', command: 'make test' } as never)
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'make test' } } as never)
+  await clock.advance(2000)
+  expect(chimes()).toBe(2)
+  finish!()
+  await next
+  await ui.unmount()
+})
+
+test("sessions: a wait is its own session's: the chime follows that session's sound, and a wait left open as the process moves on isn't carried over", async ($, on) => {
+  const clock = mock.clock(on)
+  memoryStore(on, { [sessionKey('b')]: storedRecord({ sound: 'on' }, 0) })
+  const seen = engine(on)
+  const answers: (() => void)[] = []
+  on('tool.call', () => new Promise(r => answers.push(() => r({ result: {} as never }))))
+  seen.session = 'a'
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const chimes = () => (seen.plays ?? []).filter(p => p.includes('events/chime')).length
+  // Session a (sound off, the default): its question waits, unheard.
+  const open = $.tool.call({ tool: 'AskUserQuestion', questions: [] } as never)
+  await clock.advance(2000)
+  expect(chimes()).toBe(0)
+  // The process moves on to b (a resume from inside), a's question never answered: nothing waits in b.
+  await endSession($, 'resume', 'a')
+  seen.session = 'b'
+  await clock.advance(CHIME_QUIET_MS + 2000)
+  expect((await flow($)).split('\n')[0]).toMatch(/sound on$/) // b's own settings
+  expect(chimes()).toBe(0)
+  // b's own question: b's sound is on and the wait is new, so it chimes.
+  const asked = $.tool.call({ tool: 'AskUserQuestion', questions: [] } as never)
+  await clock.advance(2000)
+  expect(chimes()).toBe(1)
+  for (const answer of answers) answer()
+  await Promise.all([open, asked])
+  await ui.unmount()
+})
+
+test('train: waiting on the person, it draws up at a red signal or a platform and stands, its lamps shining through the sepia; answered, the horn and away', () => {
+  for (const [columns, rows] of [[120, 5], [22, 60]] as const)
+    for (const seed of [3, 8]) {
+      const t = makeScene('train', seed) as Train
+      const where = `${columns}×${rows} seed ${seed}`
+      const run = (frames: number, level: number, waiting: boolean) => {
+        t.strength = level
+        t.waiting = waiting
+        const kinds: string[] = []
+        for (let i = 0; i < frames; i++) {
+          t.step()
+          kinds.push(...t.sounds.map(e => e.kind))
+          t.sounds.length = 0
+        }
+        return kinds
+      }
+      t.ensure(columns, rows)
+      run(300, 6, false)
+      expect(t.standing).toBe(false)
+      // A wait: the level settles to 2, which would run on; waiting, it pulls up and stands.
+      run(900, WAIT_LEVEL, true)
+      expect({ where, standing: t.standing }).toEqual({ where, standing: true })
+      run(200, WAIT_LEVEL, true)
+      expect({ where, standing: t.standing }).toEqual({ where, standing: true })
+      // At a signal, its red lamp keeps its color in the sepia (a platform has no signal).
+      const held = (t as unknown as { held: number | undefined }).held
+      if (held !== undefined) {
+        const g = t.grid()
+        let red = 0
+        for (let i = 0; i < columns * rows; i++)
+          for (const c of [g.foreground(i), g.background(i)]) if (((c >> 16) & 255) > 160 && ((c >> 8) & 255) < 120 && (c & 255) < 120) red++
+        expect({ where, red: red > 0 }).toEqual({ where, red: true })
+      }
+      // Answered: the signal clears, the horn, and away.
+      expect(run(60, 5, false)).toContain('horn')
+      expect(t.standing).toBe(false)
+    }
 })

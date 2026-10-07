@@ -1,4 +1,4 @@
-// REVISION: flow-v61-names
+// REVISION: flow-v125-waiting
 //
 // A tiny Doom-fire–style cellular-automata fire, by Rob Macrae.
 //
@@ -159,6 +159,13 @@ export class AsciiFire {
     if (w === 0 || h < 2) return
     const [peak, baseSeed] = params(this.strength)
     const seedPct = peak === 0 ? 0 : Math.min(100, baseSeed + this.coverageBoost)
+    // A drop (to the calm 2 of waiting on the person, say) scales the heat
+    // already rising down with it: else it would all read as white-hot against
+    // the lower peak for a moment, a flash of the low levels' blue tips.
+    if (peak > 0 && peak < this.peak) {
+      const k = peak / this.peak
+      for (let i = 0; i < this.cells.length; i++) this.cells[i] = Math.round(this.cells[i]! * k)
+    }
     this.peak = Math.max(1, peak)
     if (peak === 0) {
       this.cells.fill(0)

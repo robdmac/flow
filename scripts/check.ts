@@ -1,4 +1,4 @@
-// REVISION: flow-v122-ci
+// REVISION: flow-v125-waiting
 //
 // What every scene must hold to (AGENTS.md), measured: plugin.json lists
 // the scenes in SCENES, hooks/sound-files.ts lists the clips in sounds/,
@@ -14,7 +14,7 @@ import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { SOUND_FILES } from '../hooks/sound-files'
 import { syncManifest } from './sync-manifest'
-import { build, nightsOf, pairs, scenesFrom, TINTS } from './scene-lab'
+import { build, LOOKS, nightsOf, pairs, scenesFrom } from './scene-lab'
 
 const MAX_PAIRS = 1024
 // CI's shared runners are slower and noisier than a laptop, so CI loosens the
@@ -58,14 +58,14 @@ for (const scene of scenesFrom(process.argv.slice(2))) {
   for (const [columns, rows] of SIZES) {
     for (const level of [1, 5, 10]) {
       for (const night of nightsOf(scene)) {
-        for (const tint of TINTS) {
-          const f = build(scene, columns, rows, { level, night, tint }, 60)
+        for (const look of LOOKS) {
+          const f = build(scene, columns, rows, { level, night, tint: look.tint, waiting: look.waiting }, 60)
           for (let i = 0; i < 20; i++) {
             f.step()
             const n = pairs(f.grid())
             if (n > most) {
               most = n
-              where = `${columns}×${rows} level ${level}${night ? ' night' : ''} ${tint}`
+              where = `${columns}×${rows} level ${level}${night ? ' night' : ''} ${look.name}`
             }
           }
         }

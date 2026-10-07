@@ -1,4 +1,4 @@
-// REVISION: flow-v123-train-faster
+// REVISION: flow-v125-waiting
 //
 // Train (the `train` scene): a passenger train through the countryside on
 // the same dials as the fire; the level is its speed. At 1 it waits at a red
@@ -15,6 +15,12 @@
 // grey sky; a nearly-full context brings a storm, rain driving past, the
 // lights on. By night the carriages' windows glow, the headlight lights the
 // line ahead, and the villages, stations and level crossings are lit.
+// While Claude waits on the person it draws up as it does when idle, at the
+// next red signal or alongside a platform, and stands there, the diesel
+// idling: its headlight's beam (by day too), the red signal it waits at and
+// the platform's lamps glow up and fade with each slow breath, the whole view
+// breathing in sepia (waiting.ts). Answered, the signal clears, the horn
+// sounds and it pulls away.
 //
 // The band is the train side-on from beside the line, the camera keeping
 // pace with it: everything else slides past at its depth's pace (the hills
@@ -29,6 +35,7 @@ import { defineScene } from './scene-def'
 import { clamp, grey, hash, hash1, mix, noise1 } from './pixels'
 import { MOON, moonCover, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR, STAR_DIM } from './night'
 import { hear, leadFrames, PLAYER_LEAD_MS, type Ambience, type SoundEvent } from './sound'
+import { breath } from './waiting'
 
 // ── Motion ───────────────────────────────────────────────────────────────
 
@@ -370,6 +377,9 @@ const NIGHT_SHADE = 0x0a1428
 const RED = 0xff2a1a
 const GREEN = 0x2aff6a
 const RED_OFF = 0x3a1010
+/** Waiting on the person: the red signal it stands at, glowing up (its lamp hot, a halo round it). */
+const RED_HOT = 0xffc8a8
+const RED_HALO = 0xff6a3a
 
 /** The countryside's colours (a storm or smoke washes them); the train's own wash less. */
 const LAND: (keyof Pal)[] = [
@@ -645,7 +655,8 @@ export class Train extends PixelScene {
     const want = clamp(this.strength, 0, 10)
     // Speeds are per 70 ms: a calm frame is longer, so the train keeps its real pace.
     const dt = PLAYER_LEAD_MS / leadFrames(this.strength, this.tint) / 70
-    const idle = want <= IDLE
+    // Waiting on the person, it draws up and stands, as when idle.
+    const idle = want <= IDLE || this.waiting
     if (!this.started) {
       this.started = true
       if (idle) {
@@ -886,6 +897,31 @@ export class Train extends PixelScene {
     return q(Math.max(d.night, this.kStorm * 0.8), 6)
   }
 
+  /** Waiting on the person, how far the lights are glowing up with the breath (0 when it isn't). */
+  private waitGlow(d: Dials): number {
+    return d.wait > 0 ? q(d.wait * (0.2 + 0.8 * breath(d.t)), 6) : 0
+  }
+
+  /**
+   * A signal's lamp at (x, y): red or green, a light (it shines through the
+   * waiting look's sepia), and the red one it waits at glowing with the breath.
+   */
+  private signalLamp(px: Painter, x: number, y: number, sg: number, glow: number): void {
+    if (!this.red(sg) || sg !== this.held || glow <= 0) {
+      px.lamp(x, y, this.red(sg) ? RED : GREEN)
+      return
+    }
+    // A halo round it (pixels twice as tall as wide), then the lamp itself, hot at the top of the breath.
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -2; dx <= 2; dx++) {
+        const r = Math.hypot(dx, dy * 2) / 2.6
+        if ((dx === 0 && dy === 0) || r >= 1 || x + dx < 0 || y + dy < 0 || x + dx >= px.w || y + dy >= px.h) continue
+        const a = q((1 - r) * glow * 0.85, 4)
+        if (a > 0) px.set(x + dx, y + dy, mix(px.get(x + dx, y + dy), RED_HALO, a))
+      }
+    px.lamp(x, y, mix(RED, RED_HOT, q(glow * 0.7, 4)))
+  }
+
   paint(px: Painter, d: Dials): void {
     if (px.w === 0 || px.h === 0) return
     this.layout(d)
@@ -913,6 +949,8 @@ export class Train extends PixelScene {
     const t = d.t
     const kn = q(d.night, 8)
     const light = this.lights(d)
+    // (Waiting on the person, the headlight's beam breathes, by day too.)
+    const beam = Math.max(light, this.waitGlow(d) * 0.8)
     const buf = px.px
     /** A layer's coordinate at column x (f: how fast it slides past): where its world sits under that column. */
     const at = (f: number, x: number) => Math.floor(nose * f + x - nx + 1)
@@ -1089,15 +1127,15 @@ export class Train extends PixelScene {
     // In front of the train: the platform and its lamps, a crossing's lights, a bridge's truss, the signals, the poles.
     this.inFront(px, d, P, at, light)
 
-    // The headlight's beam on the line ahead (by night, in a storm).
-    if (light > 0) {
+    // The headlight's beam on the line ahead (by night, in a storm; waiting on the person, breathing).
+    if (beam > 0) {
       const len = Math.min(56, W - nx)
       for (let dx = 0; dx < len; dx++) {
         const x = nx + dx
         const k = Math.pow(1 - dx / len, 1.6)
         for (let y = Math.max(0, yWin); y <= B; y++) {
           const spread = y >= yBog ? 1 : y === yLow ? 0.55 : 0.25
-          const a = q(k * spread * 0.75 * light, 5)
+          const a = q(k * spread * 0.75 * beam, 5)
           if (a > 0) buf[y * W + x] = mix(buf[y * W + x]!, P.beam, a)
         }
       }
@@ -1238,6 +1276,7 @@ export class Train extends PixelScene {
     const nose = this.pos
     const nx = this.noseX
     const t = d.t
+    const glow = this.waitGlow(d)
     for (let x = 0; x < W; x++) {
       const S = nose + x - nx + 1
       const z = Math.floor(S / ZONE)
@@ -1249,7 +1288,7 @@ export class Train extends PixelScene {
         buf[B * W + x] = P.platformFace
         if (Math.floor(local) % 48 === 24 && local > PLAT0 + 20 && local < PLAT1 - 20) {
           for (let y = Math.max(0, B - 5); y <= B - 2; y++) buf[y * W + x] = P.post
-          if (B - 6 >= 0) px.set(x, B - 6, mix(P.post, P.lamp, Math.max(0.35, light)), true)
+          if (B - 6 >= 0) px.lamp(x, B - 6, mix(P.post, P.lamp, Math.max(0.35, light, glow)))
         }
       }
       if (crosses(zone) && Math.floor(local) === CROSS + 8) {
@@ -1291,7 +1330,7 @@ export class Train extends PixelScene {
       const x = Math.round(nx - 1 + (sg - nose))
       if (x < 0 || x >= W) continue
       for (let y = Math.max(0, B - 5); y <= B; y++) buf[y * W + x] = P.post
-      if (B - 6 >= 0) px.set(x, B - 6, this.red(sg) ? RED : GREEN, true)
+      if (B - 6 >= 0) this.signalLamp(px, x, B - 6, sg, glow)
     }
     // Telegraph poles, nearest of all: at speed they smear.
     const blur = Math.max(1, this.v * F_POLE * 0.7)
@@ -1434,6 +1473,8 @@ export class Train extends PixelScene {
     const av = Math.floor(this.pos / 3)
     const kn = q(d.night, 8)
     const light = this.lights(d)
+    const glow = this.waitGlow(d)
+    const beam = Math.max(light, glow * 0.8)
     const t = d.t
     // Sleepers blur into the ballast at speed (rather than strobe), and so, faster, do the joints and the fields' rows.
     const sleeper = mix(P.sleeper, P.ballast, q((this.v / 3 - 0.3) / 0.5, 4))
@@ -1487,7 +1528,7 @@ export class Train extends PixelScene {
     for (const sg of sigs) {
       const y = ny - (Math.floor(sg / 3) - av)
       if (y < 0 || y >= H) continue
-      px.set(tx - 4, y, this.red(sg) ? RED : GREEN, true)
+      this.signalLamp(px, tx - 4, y, sg, glow)
       px.set(tx - 4, y + 1, P.post)
     }
     // Level crossings: the barriers down while a train's near, the cars waiting.
@@ -1549,13 +1590,13 @@ export class Train extends PixelScene {
       if (zoneOf(z) !== STATION || Math.floor((S - z * ZONE) / 3) !== foot) continue
       for (let x = Math.max(0, tx - 6); x <= Math.min(W - 1, tx + 12); x++) buf[y * W + x] = P.slate
     }
-    // The headlight's beam up the line (by night, in a storm).
-    if (light > 0) {
+    // The headlight's beam up the line (by night, in a storm; waiting on the person, breathing).
+    if (beam > 0) {
       for (let dy = 1; dy <= 16; dy++) {
         const y = ny - dy
         if (y < 0) break
         const half = 1 + dy * 0.2
-        const k = Math.pow(1 - dy / 17, 1.5) * 0.32 * light
+        const k = Math.pow(1 - dy / 17, 1.5) * 0.32 * beam
         for (let x = Math.floor(tx - 0.5 - half); x <= Math.ceil(tx - 0.5 + half); x++) {
           if (x < 0 || x >= W) continue
           const a = q(k * clamp(half + 0.5 - Math.abs(x + 0.5 - tx)), 5)

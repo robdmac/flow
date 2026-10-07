@@ -1,4 +1,4 @@
-// REVISION: flow-v105-held
+// REVISION: flow-v125-waiting
 //
 // Engine (the `engine` style): a Victorian steam engine room on the same dials
 // as the fire; the level is how hard it is being driven. At 1 it stands cold,
@@ -27,13 +27,16 @@
 // the steam; smoke makes the engine sputter, the chimney pour sooty black
 // smoke (even cold) and the lamps burn low; a nearly-full context turns the
 // firebox to a blue gas flame, the steam and gauges blue-white, and blinks a
-// blue lamp on the boiler.
+// blue lamp on the boiler. While Claude waits on the person the engine runs
+// down to a stop with steam up, the safety valve lifting with each slow
+// breath, the whole room breathing in sepia (waiting.ts).
 
 import { Cells, DEFAULT_COLOR, Rng, isTall } from './cells'
 import type { Tint } from './styles'
 import { BRAILLE, clamp01, dist, mix, QUAD } from './pixels'
 import { defineScene } from './scene-def'
 import { hear, type SoundEvent } from './sound'
+import { breath, easeWait, waitTone } from './waiting'
 
 /** Crank radians per frame at each level (0 = off, 1 = cold and still). */
 const SPEED = [0, 0, 0.035, 0.07, 0.11, 0.15, 0.2, 0.27, 0.36, 0.47, 0.6]
@@ -125,6 +128,10 @@ export class Engine {
   coverageBoost = 0
   sounds: SoundEvent[] = []
   tint: Tint = 'normal'
+  /** Claude waits on the person: the engine runs down and stands, steam up. */
+  waiting = false
+  /** How far into the wait's look (0..1), eased. */
+  private kWait = 0
   private columns = 0
   private rows = 0
   private out = new Cells(0, 0)
@@ -629,10 +636,13 @@ export class Engine {
     this.t++
     const level = Math.max(0, Math.min(10, Math.round(this.strength)))
     const smoke = this.tint === 'smoke'
+    const was = breath(this.t - 1)
+    this.kWait = easeWait(this.kWait, this.waiting)
     // A failed command makes the engine sputter: its target speed stumbles.
     if (smoke && this.rng.f() < 0.04) this.sputter = 6 + this.rng.f() * 10
     if (this.sputter > 0) this.sputter--
-    const target = SPEED[level]! * (this.sputter > 0 ? 0.45 : 1)
+    // Waiting on the person, it runs down to a stop.
+    const target = SPEED[level]! * (this.sputter > 0 ? 0.45 : 1) * (1 - this.kWait)
     this.omega += (target - this.omega) * 0.045
     if (Math.abs(target - this.omega) < 0.0005) this.omega = target
     this.angle += this.omega
@@ -660,6 +670,8 @@ export class Engine {
     if (smoke && level > 0 && this.rng.f() < 0.3) this.puff(this.chimX, this.chimY, 0.75 + this.rng.f() * 0.3, 1.5 + level * 0.08, Math.max(2, level))
     // Cold, the safety valve lets a faint wisp go now and then.
     if (level > 0 && level <= 3 && this.rng.f() < (level === 1 ? 0.06 : 0.03)) this.wisp(this.valveX, this.valveY)
+    // Standing for the person, steam up: the valve lifts as each breath comes in.
+    if (level > 0 && this.kWait > 0.5 && was < 0.6 && breath(this.t) >= 0.6) for (let k = 0; k < 3; k++) this.wisp(this.valveX, this.valveY)
     if (level >= 7 && this.rng.f() < (level - 6) * 0.15 && !smoke) this.chimneySpark(level)
     // Smokestacks and leaky valves.
     for (let i = 1; i < this.emitters.length; i++) {
@@ -885,6 +897,7 @@ export class Engine {
     this.drawSparks()
     this.compose()
     for (let i = 0; i < this.gauges.length; i++) this.drawGauge(this.gauges[i]!)
+    waitTone(out, this.kWait, this.t)
     return out
   }
 

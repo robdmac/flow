@@ -1,4 +1,4 @@
-// REVISION: flow-v122-train-sounds
+// REVISION: flow-v125-chime
 //
 // Written by scripts/make-sounds.ts: every clip in sounds/, and the gain that
 // puts each mood's mixed bed back to its layers' level (0: silent). Don't edit.
@@ -62,6 +62,9 @@ export const SOUND_FILES: readonly string[] = [
   'sounds/events/blast2.m4a',
   'sounds/events/blast3.m4a',
   'sounds/events/boom.m4a',
+  'sounds/events/chime1.m4a',
+  'sounds/events/chime2.m4a',
+  'sounds/events/chime3.m4a',
   'sounds/events/chuff1.m4a',
   'sounds/events/chuff2.m4a',
   'sounds/events/chuff3.m4a',
