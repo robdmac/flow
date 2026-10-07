@@ -1,4 +1,4 @@
-// REVISION: flow-v126-agents
+// REVISION: flow-v127-crew-room
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -1790,7 +1790,8 @@ abstract class LaunchSite extends SkyWorld {
       const reach = this.tall ? Math.max(8, Math.round(pw * 0.3)) : 16 + (m.slot === 2 ? 14 : 0)
       // (Clear of the split screen's other half.)
       const hx = Math.max(left + 2, Math.min(pw - 3, cx + side * reach))
-      const hy = this.tall ? cy + (m.slot - 1) * 8 : cy - 1 + (m.slot & 1) * 2
+      // (Its station kept on the grid: the rocket can stand at the very foot of a tall pane.)
+      const hy = Math.max(2, Math.min(bottom - 4, this.tall ? cy + (m.slot - 1) * 8 : cy - 1 + (m.slot & 1) * 2))
       // Resting it drops back low, engine off.
       const low = this.tall ? Math.min(bottom - 3, hy + 10) : bottom - 2
       let x = hx

@@ -1,4 +1,4 @@
-// REVISION: flow-v136-agents
+// REVISION: flow-v137-agents-waits
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -3082,21 +3082,70 @@ test('roster: a listed subagent works, goes quiet when nothing is heard, works a
   expect(r.dials()[0]!.state).toBe('idle')
 })
 
-test('roster: an ask put to the person makes it wait on you, until answered', () => {
+test('roster: a subagent waits on you only once a dialog is put to you; an ask the mode settles alone never shows', () => {
   const r = new Roster()
   r.listed([listed('a'), listed('b')])
-  r.waitingOn('a', 'tu1')
-  expect(r.dials().map(d => d.state)).toEqual(['waiting', 'working'])
+  const states = () => r.dials().map(d => d.state)
+  // tool.check's ask goes to the mode's decider: auto mode's classifier allows it, and the call runs and ends.
+  r.waitingOn('tu1', false, 'Bash', 'a')
+  expect(states()).toEqual(['working', 'working'])
+  r.answered('tu1', 'Bash', 'a')
+  expect(states()).toEqual(['working', 'working'])
+  // This time a dialog shows (classic.PermissionRequest, no hook answering it): it waits, however long.
+  r.waitingOn('tu2', false, 'Bash', 'a')
+  r.prompted('Bash', 'a')
+  expect(states()).toEqual(['waiting', 'working'])
   r.tick(QUIET_MS * 2)
-  expect(r.dials()[0]!.state).toBe('waiting') // however long it waits
-  r.answered('a', 'tu1')
-  expect(r.dials()[0]!.state).toBe('working')
-  // Refused, the call never runs to say so: its next model step settles it.
-  r.waitingOn('a', 'tu2')
-  r.heard('a') // (a tool of the same step starting is no answer)
-  expect(r.dials()[0]!.state).toBe('waiting')
+  expect(states()).toEqual(['waiting', 'idle'])
+  // Approved, the command shows its progress pill (ToolProgress carries only the call's id): it's running.
+  r.answered('tu2')
+  expect(states()).toEqual(['working', 'idle'])
+  // Claude's question, a plan to approve: put to you from the start, till the call ends.
+  r.waitingOn('tu3', true, 'AskUserQuestion', 'b')
+  expect(states()).toEqual(['working', 'waiting'])
+  r.answered('tu3', 'AskUserQuestion', 'b')
+  expect(states()).toEqual(['working', 'working'])
+  // A dialog with no ask before it waits under its tool's name till a call of it ends.
+  r.prompted('Edit', 'a')
+  expect(states()).toEqual(['waiting', 'working'])
+  r.answered('tu4', 'Edit', 'a')
+  expect(states()).toEqual(['working', 'working'])
+  // Refused, the call never runs to say so: its next model step settles it (a tool of the same step starting doesn't).
+  r.waitingOn('tu5', false, 'Bash', 'a')
+  r.prompted('Bash', 'a')
+  r.toolStarted('a')
+  expect(states()).toEqual(['waiting', 'working'])
   r.stepped('a')
-  expect(r.dials()[0]!.state).toBe('working')
+  expect(states()).toEqual(['working', 'working'])
+  // The main loop's own dialogs and questions are not a subagent's.
+  r.waitingOn('tu6', false, 'Bash')
+  r.prompted('Bash')
+  r.waitingOn('tu7', true, 'AskUserQuestion')
+  expect(states()).toEqual(['working', 'working'])
+})
+
+test("roster: what a subagent does before a poll names it counts once one does: a tool still running, a dialog up", () => {
+  const r = new Roster()
+  // Its first tool, and the other's permission dialog, before any poll has named them.
+  r.toolStarted('a')
+  r.waitingOn('tu1', false, 'Bash', 'b')
+  r.prompted('Bash', 'b')
+  r.tick(25_000)
+  r.listed([listed('a'), listed('b')])
+  expect(r.dials().map(d => [d.id, d.state])).toEqual([
+    ['a', 'working'], // 25 s with nothing heard, but its tool is still running
+    ['b', 'waiting'],
+  ])
+  r.toolEnded('a')
+  r.answered('tu1', 'Bash', 'b')
+  r.tick(QUIET_MS + 1)
+  expect(r.dials().map(d => d.state)).toEqual(['idle', 'idle'])
+  // A loop no poll names for long (the engine's own forks) is forgotten, its waits with it.
+  r.heard('fork')
+  r.waitingOn('tu2', true, 'AskUserQuestion', 'fork')
+  r.tick(40_000)
+  r.listed([listed('a'), listed('b'), listed('fork')])
+  expect(r.dials().find(d => d.id === 'fork')!.state).toBe('working') // named at last: a fresh start, no stale wait
 })
 
 test('roster: done when its run completes (or it stops being listed), kept a while for its companion to leave, then dropped', () => {
@@ -3187,6 +3236,25 @@ test('crew: an adapter that only counts subagents (coverage) still gets that man
   expect(c.mates).toEqual([])
 })
 
+test('crew: only places the layout can show are given; less room sends the rest back to wait, and each comes in as one frees', () => {
+  const c = new Crew(6, 10, 10)
+  const six = ['a', 'b', 'c', 'd', 'e', 'f']
+  const run = (done: string[], n: number) => {
+    for (let i = 0; i < n; i++) c.update(six.map(id => dial(id, done.includes(id) ? 'done' : 'working')))
+    return c.mates.map(m => `${m.id}${m.slot}`).sort()
+  }
+  c.room = 3 // a narrow spine
+  expect(run([], 20)).toEqual(['a0', 'b1', 'c2'])
+  // Three finish: the other three come in, into places the spine shows.
+  expect(run(['a', 'b', 'c'], 40)).toEqual(['d0', 'e1', 'f2'])
+  // The band has room for all of them; back to the spine, the ones it can't show wait again.
+  c.room = 6
+  expect(run(['a'], 30)).toEqual(['b3', 'c4', 'd0', 'e1', 'f2'])
+  c.room = 3
+  expect(run(['a'], 1)).toEqual(['d0', 'e1', 'f2'])
+  expect(run(['a', 'd'], 40)).toEqual(['b0', 'e1', 'f2'])
+})
+
 /** The scenes that give each subagent a companion of its own. */
 const CREW_SCENES = ['surf', 'ski', 'balloon', 'falcon', 'starship', 'engine'] as const
 
@@ -3219,6 +3287,54 @@ test('companion scenes: each agent gets one that arrives, is marked where it is,
       expect([at, run([dial('a', 'done')], 80)]).toEqual([at, []])
     }
   }
+})
+
+test('companion scenes: every companion given a place is on screen, in the band and the spine, however many agents run', () => {
+  const ids = ['a', 'b', 'c', 'd', 'e', 'f']
+  for (const style of CREW_SCENES) {
+    for (const [columns, rows] of [[250, 5], [80, 5], [22, 40], [13, 30]] as const) {
+      for (const level of [1, 5, 10]) {
+        const f = makeScene(style, 7)
+        const crew = (f as unknown as { crew: Crew }).crew
+        f.strength = level
+        f.ensure(columns, rows)
+        const at = `${style} at ${columns}×${rows} level ${level}`
+        const check = (done: string[]) => {
+          for (let i = 0; i < 90; i++) {
+            f.agents = ids.map(id => dial(id, done.includes(id) ? 'done' : 'working'))
+            f.step()
+          }
+          f.grid()
+          const marked = new Set((f.agentMarks?.() ?? []).map(m => m.id))
+          const shown = crew.mates.map(m => m.id)
+          expect([at, shown.length > 0, shown.filter(id => !marked.has(id))]).toEqual([at, true, []])
+        }
+        check([])
+        check(['a', 'b'])
+      }
+    }
+  }
+})
+
+test('engine: six agents in the spine show three lamps at a time; as those finish, the others light; band to spine and back', () => {
+  const f = makeScene('engine', 7)
+  f.strength = 5
+  const six = ['a', 'b', 'c', 'd', 'e', 'f']
+  const run = (done: string[], n: number) => {
+    for (let i = 0; i < n; i++) {
+      f.agents = six.map(id => dial(id, done.includes(id) ? 'done' : 'working'))
+      f.step()
+    }
+    f.grid()
+    return f.agentMarks!().map(m => m.id).sort()
+  }
+  f.ensure(22, 40)
+  expect(run([], 60)).toEqual(['a', 'b', 'c'])
+  expect(run(['a', 'b', 'c'], 80)).toEqual(['d', 'e', 'f'])
+  f.ensure(120, 5) // the band: room for six groups
+  expect(run(['a'], 60)).toEqual(['b', 'c', 'd', 'e', 'f'])
+  f.ensure(22, 40) // back to the spine: three show, the rest wait
+  expect(run(['a'], 60).length).toBe(3)
 })
 
 test('companion scenes: a working companion and a resting one look different', () => {
@@ -3264,6 +3380,12 @@ test('desktop: the pointer over a subagent\'s companion shows its task and what 
   const agents = [{ id: 'ag1', description: 'map the auth flow', type: 'Explore', status: 'running' }]
   on('agent.list', () => ({ value: agents as never }))
   on('tool.check', () => ({ decision: 'ask' }) as never)
+  // No settings hook answers a permission request for the person: the dialog shows.
+  on('classic.PermissionRequest', () => ({}))
+  on('ui.render', { component: 'ToolProgress' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return Text({ children: e.props.hint })
+  })
   await start($)
   const ui = await $.ui.mount({ plugin: 'flow', surface: 'desktop', ...BAND })
   const after = async (ms: number) => {
@@ -3285,9 +3407,25 @@ test('desktop: the pointer over a subagent\'s companion shows its task and what 
   drawn = await after(22_000)
   expect(drawn).toContain('· quiet')
 
+  // An ask goes to the mode's decider: auto mode's classifier may settle it alone, so it's no wait on you yet.
   await $.tool.check({ tool: 'Bash', input: { command: 'rm -rf build' }, tool_use_id: 'tu1', agentId: 'ag1' } as never)
   drawn = await after(500)
+  expect(drawn).toContain('· quiet')
+  // The dialog shows: now it waits on you.
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'rm -rf build' }, agent_id: 'ag1' } as never)
+  drawn = await after(500)
   expect(drawn).toContain('· waiting on you')
+  // Approved, the command runs and shows its progress pill: it's working again.
+  const pill = await $.ui.mount({
+    plugin: 'flow',
+    surface: 'terminal',
+    component: 'ToolProgress',
+    requestId: 'tu1',
+    props: { tool_use_id: 'tu1', kind: 'background_hint', hint: '(ctrl+b to run in background)' },
+  } as never)
+  drawn = await after(500)
+  expect(drawn).toContain('Explore: map the auth flow · working')
+  await pill.unmount()
 
   agents[0]!.status = 'completed'
   await after(8000)

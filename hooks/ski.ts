@@ -1,4 +1,4 @@
-// REVISION: flow-v126-agents
+// REVISION: flow-v127-crew-room
 //
 // A skier on a mountain, on the fire's dials: the level is the speed and the
 // steepness. At 1 the skier stands at the top of the run, poles planted,
@@ -593,9 +593,12 @@ export class Ski {
       if (tall) {
         const half = this.room()
         s.fx = this.pw / 2 + lat * half
-        // A companion comes down from above, and leaves off the bottom (or, failed, drops back up behind).
+        // A companion comes down from above, and leaves off the bottom (or, failed, drops back up behind). Its
+        // place is never above the summit: one placed uphill of the hero waits just under it at the start.
         const off = m ? this.away(m) * this.ph * 0.8 : 0
-        s.fy = this.d * SPINE + Math.round(this.ph * (this.spineAnchors[i]! - this.spineAnchors[0]!) + off)
+        let fy = this.d * SPINE + Math.round(this.ph * (this.spineAnchors[i]! - this.spineAnchors[0]!))
+        if (m) fy = Math.max(fy, 4 + 2 * m.slot)
+        s.fy = fy + Math.round(off)
       } else {
         let sx = this.anchorX(i)
         if (m) {

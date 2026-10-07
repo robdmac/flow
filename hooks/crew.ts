@@ -1,4 +1,4 @@
-// REVISION: flow-v120-agents
+// REVISION: flow-v125-crew-room
 //
 // A scene's companions: one for each running subagent (the `agents` dial,
 // agents.ts), so a glance tells you which are busy, which have gone quiet or
@@ -7,8 +7,11 @@
 // while it's quiet or waiting (`busy` 0; `waiting` too when it waits on the
 // person), and leaves when it's done (`here` easing back to 0), then frees
 // its place for the next. Each keeps one `slot` (its lane, its colors) the
-// whole time it's on screen; agents past a scene's `capacity` wait for a free
-// one. A scene keeps a Crew, calls `update` once a frame and draws its
+// whole time it's on screen. Only slots the layout can show are given (`room`:
+// a narrow spine fits fewer than the band); agents past it wait for one to
+// come free, and a layout with less room sends those it can't show back to
+// wait (they come in again, easing, as room comes). A scene keeps a Crew,
+// sets `room` for its layout, calls `update` once a frame and draws its
 // `mates` however it likes, noting where each is (`mark`) for desktop's hover
 // cards. An adapter that only counts subagents (`coverageBoost`, no list)
 // still gets companions: anonymous ones, that many, working.
@@ -75,6 +78,8 @@ export class Crew {
   readonly mates: Mate[] = []
   /** This frame's marks (see `mark`). */
   readonly marks: AgentMark[] = []
+  /** How many slots the scene's layout can show now (at most `capacity`): only these are given. */
+  room: number
 
   /**
    * @param capacity the most companions the scene has room for
@@ -85,7 +90,9 @@ export class Crew {
     readonly capacity: number,
     readonly arrive = 24,
     readonly leave = 36,
-  ) {}
+  ) {
+    this.room = capacity
+  }
 
   /** Once a frame: who's about now. `coverageBoost` stands in when an adapter gives no list. */
   update(agents: readonly AgentDial[] | undefined, coverageBoost = 0): void {
@@ -105,12 +112,17 @@ export class Crew {
       m.here = smooth(m.p)
       m.age++
     }
-    // Gone: its place is free for the next.
-    for (let i = this.mates.length - 1; i >= 0; i--) if (this.mates[i]!.leaving && this.mates[i]!.p <= 0) this.mates.splice(i, 1)
+    // Gone: its place is free for the next. One in a place this layout can't show (it has less room than
+    // the last) goes back to waiting for one it can.
+    const room = Math.max(0, Math.min(this.capacity, Math.floor(this.room)))
+    for (let i = this.mates.length - 1; i >= 0; i--) {
+      const m = this.mates[i]!
+      if ((m.leaving && m.p <= 0) || m.slot >= room) this.mates.splice(i, 1)
+    }
     // Newcomers, in the order they started, each in the lowest free place.
     for (const a of list) {
       if (a.state === 'done' || this.mates.some(m => m.id === a.id)) continue
-      const slot = this.freeSlot()
+      const slot = this.freeSlot(room)
       if (slot < 0) break
       this.mates.push({
         id: a.id,
@@ -129,8 +141,8 @@ export class Crew {
     }
   }
 
-  private freeSlot(): number {
-    for (let s = 0; s < this.capacity; s++) if (!this.mates.some(m => m.slot === s)) return s
+  private freeSlot(room: number): number {
+    for (let s = 0; s < room; s++) if (!this.mates.some(m => m.slot === s)) return s
     return -1
   }
 

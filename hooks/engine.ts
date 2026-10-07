@@ -1,4 +1,4 @@
-// REVISION: flow-v126-agents
+// REVISION: flow-v127-crew-room
 //
 // Engine (the `engine` style): a Victorian steam engine room on the same dials
 // as the fire; the level is how hard it is being driven. At 1 it stands cold,
@@ -647,6 +647,7 @@ export class Engine {
 
   step(): void {
     this.t++
+    this.crew.room = this.lampRoom()
     this.crew.update(this.agents, this.coverageBoost)
     const level = Math.max(0, Math.min(10, Math.round(this.strength)))
     const smoke = this.tint === 'smoke'
@@ -1467,22 +1468,32 @@ export class Engine {
     }
   }
 
+  /** The bed plate's run (quadrant pixels): beside the flywheel in the band, the whole floor in the spine. */
+  private bedSpan(): [x0: number, x1: number] {
+    const x1 = this.columns * 2 - 1
+    return [this.vertical ? 0 : Math.ceil(this.cx + this.radius) + 1, x1]
+  }
+
+  /** How many lamp groups this layout's bed plate has room for (each group three lamps in the band, one in the spine). */
+  private lampRoom(): number {
+    const [x0, x1] = this.bedSpan()
+    const lamps = this.vertical ? 1 : 3
+    return Math.max(0, Math.min(this.vertical ? LAMP_GROUPS_TALL : LAMP_GROUPS, Math.floor((x1 - x0) / (lamps * 4)) - 1))
+  }
+
   /**
    * The bed plate along the floor, and on it a group of lamps for each
    * subagent, in its slot's place: three in the band, one in the spine.
    */
   private drawBed(): void {
-    const wd = this.columns * 2
     const qy = this.rows * 2 - 1
-    let x0 = 0
-    const x1 = wd - 1
-    if (!this.vertical) x0 = Math.ceil(this.cx + this.radius) + 1
+    const [x0, x1] = this.bedSpan()
     this.qrect(x0, qy, x1, qy, C.ironDk)
     this.crew.clearMarks()
-    const groups = this.vertical ? LAMP_GROUPS_TALL : LAMP_GROUPS
+    const groups = this.lampRoom()
     const lamps = this.vertical ? 1 : 3
+    if (groups <= 0) return
     const step = (x1 - x0) / (groups + 1)
-    if (step < lamps * 4) return
     const on = this.tint === 'smoke' ? C.lampLow : this.tint === 'blue' ? C.lampBlue : C.lampOn
     for (const m of this.crew.mates) {
       if (m.slot >= groups) continue

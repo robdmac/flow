@@ -98,7 +98,7 @@ Waiting on you shows only while a dialog is actually up for you: a permission as
 
 In surf, ski, balloon, falcon, starship and engine, each running subagent has a companion of its own, in its own colors, so you can tell at a glance which are busy, which have gone quiet or are waiting on you, and when each finishes:
 
-| Scene | Arrives | Working | Quiet (nothing for 20 s) | Waiting on you | Done |
+| Scene | Arrives | Working | Quiet (nothing for 20 s) | Waiting on you (a permission dialog, its question) | Done |
 |---|---|---|---|---|---|
 | `surf` | paddles in from the edge | paddles hard, or rides a following wave | sits up on its board, bobbing | sits up waving an arm | paddles off out of sight |
 | `ski` | skis in from behind | carves S-turns, throwing spray | pulls over to the side, standing on its poles | waves a pole overhead | tucks and skis off ahead (failed: drops back) |

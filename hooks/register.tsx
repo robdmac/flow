@@ -1,4 +1,4 @@
-// REVISION: flow-v136-agents
+// REVISION: flow-v137-agents-waits
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -110,7 +110,7 @@ import {
 } from './picker'
 
 
-const FLOW_REVISION = 'flow-v136-agents'
+const FLOW_REVISION = 'flow-v137-agents-waits'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -1268,10 +1268,11 @@ export const register: Register = (on, options) => {
     const id = e.tool_use_id
     // Claude's question, a plan to approve: put to the person from the start.
     if (id && PERSON_TOOLS.has(e.tool)) activity.waitingOn(id, true, e.tool, e.agentId)
-    // A subagent's tool: it's working for as long as the tool runs (and waiting on you, for a question).
+    // A subagent's tool: it's working for as long as the tool runs (Claude's question, a plan to approve: put to
+    // the person from the start).
     if (agentId !== undefined) {
       activity.roster.toolStarted(agentId)
-      if (id && PERSON_TOOLS.has(e.tool)) activity.roster.waitingOn(agentId, id)
+      if (id && PERSON_TOOLS.has(e.tool)) activity.roster.waitingOn(id, true, e.tool, agentId)
     }
     try {
       const result = await next(e)
@@ -1283,7 +1284,7 @@ export const register: Register = (on, options) => {
       if (id) activity.answered(id, e.tool)
       if (agentId !== undefined) {
         activity.roster.toolEnded(agentId)
-        if (id) activity.roster.answered(agentId, id)
+        if (id) activity.roster.answered(id, e.tool, agentId)
       }
     }
   })
@@ -1295,8 +1296,9 @@ export const register: Register = (on, options) => {
     // mode's classifier decides most alone, and that's no wait on you.
     if (verdict.decision === 'ask' && e.tool_use_id) {
       activity.waitingOn(e.tool_use_id, false, e.tool, e.agentId)
-      // A subagent's ask: its companion waits on you too.
-      if (e.agentId !== undefined) activity.roster.waitingOn(e.agentId, e.tool_use_id)
+      // A subagent's ask goes to the mode's decider: its companion waits on you only if a dialog shows
+      // (classic.PermissionRequest, below); auto mode's classifier settles most alone.
+      activity.roster.waitingOn(e.tool_use_id, false, e.tool, e.agentId)
     }
     return verdict
   })
@@ -1304,13 +1306,18 @@ export const register: Register = (on, options) => {
   on('classic.PermissionRequest', async ($, e, next) => {
     const result = await next(e)
     // No hook answered for them: the dialog shows, and the scene settles and breathes until it's answered.
-    if (!result.decision && result.block === undefined) activity.prompted(e.tool_name, e.agent_id)
+    // A subagent's: its companion waits on you too.
+    if (!result.decision && result.block === undefined) {
+      activity.prompted(e.tool_name, e.agent_id)
+      activity.roster.prompted(e.tool_name, e.agent_id)
+    }
     return result
   })
 
   on('ui.render', { component: 'ToolProgress' }, ($, e, next) => {
     // A call showing progress is running (a long command's background hint): whatever it waited on is answered.
     activity.answered(e.props.tool_use_id)
+    activity.roster.answered(e.props.tool_use_id)
     return next(e)
   })
 

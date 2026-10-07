@@ -1,4 +1,4 @@
-// REVISION: flow-v126-agents
+// REVISION: flow-v127-agents
 //
 // Shared by preview and check: build a scene at a size and a setting, warm it
 // up (with subagents' companions in every state, if asked), and count what

@@ -1,4 +1,4 @@
-// REVISION: flow-v126-agents
+// REVISION: flow-v127-agents
 //
 // What every harness adapter (Claude Code's register.tsx, pi's pi/index.ts)
 // does the same way: one scene instance per style (so a switch resumes where

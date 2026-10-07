@@ -1,4 +1,4 @@
-// REVISION: flow-v126-agents
+// REVISION: flow-v127-crew-room
 //
 // Surf (the `surf` style): a surfer and the ocean on the same dials as the
 // fire; the level is the swell. At 1 the sea is glassy under a dawn sky and
@@ -412,6 +412,7 @@ export class Surf {
 
   step(): void {
     if (this.columns === 0) return
+    this.crew.room = this.crewRoom()
     this.crew.update(this.agents, this.coverageBoost)
     const level = this.level
     // A wave coming in: about every 12 s on a calm sea, every 5.5 s on a big one (as measured at real
@@ -912,16 +913,32 @@ export class Surf {
     this.sprite(pose, large, x + lean, by, facing, SUIT)
   }
 
-  /** A companion's place in the line-up (its slot's), or NaN where there's no room for it (a narrow spine). */
+  /**
+   * How many companions this layout has a place for: the spine's narrow sea
+   * fits only a few on the back of the wave (5 pixels apart, clear of the
+   * crest, which in the spine stays at 0.3 of the width); the band has a spot
+   * for every one.
+   */
+  private crewRoom(): number {
+    if (!isTall(this.columns, this.rows)) return CREW
+    return Math.max(0, Math.min(CREW, Math.floor((this.pw * 0.3 - 7) / 5) + 1))
+  }
+
+  /**
+   * A companion's place in the line-up (its slot's). In the band: out ahead
+   * of the wave, then (when that water runs out) behind the following swell,
+   * spaced to fit them all, however big the swell and narrow the band. In
+   * the spine: on the back of the wave (`crewRoom` gives only slots that fit).
+   */
   private lineup(slot: number): number {
-    if (this.vertical) {
-      // On the back of the wave, as many as fit clear of its crest.
-      const x = 3 + slot * 5
-      return x > this.cx - 4 ? Number.NaN : x
-    }
-    let x = this.cx + this.Wf * 1.6 + 10 + slot * 14 + hash(slot * 3 + 1) * 10
-    if (x > this.pw - 4) x = this.cx - this.Wb - 6 - (x - this.pw)
-    return x < 3 ? Number.NaN : x
+    if (this.vertical) return 3 + slot * 5
+    const ahead0 = this.cx + this.Wf * 1.6 + 10
+    const ahead = Math.max(0, this.pw - 4 - ahead0)
+    const behind0 = this.cx - this.Wb - 6
+    const behind = Math.max(0, behind0 - 3)
+    const step = Math.max(5, Math.min(14, (ahead + behind) / CREW))
+    const d = (slot + 0.3 + 0.4 * hash(slot * 3 + 1)) * step
+    return Math.max(3, d <= ahead ? ahead0 + d : behind0 - (d - ahead))
   }
 
   /** The edge nearer a place on the water: where a companion paddles in from, or off to. */
@@ -949,12 +966,7 @@ export class Surf {
    */
   private placeCrew(): void {
     for (const m of this.crew.mates) {
-      const home = this.lineup(m.slot)
-      if (Number.isNaN(home)) {
-        m.x = Number.NaN
-        continue
-      }
-      let target = home
+      let target = this.lineup(m.slot)
       if (!m.leaving && m.busy >= 0.5 && this.rides(m)) {
         target = this.fx[m.slot]! + (0.35 + 0.2 * Math.sin(this.phase * 0.8 + m.slot * 2.1)) * this.fW[m.slot]! * 0.7
       }

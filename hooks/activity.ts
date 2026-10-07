@@ -1,4 +1,4 @@
-// REVISION: flow-v126-agents
+// REVISION: flow-v127-agents
 //
 // How busy the agent is: the work → scene mapping for `/flow auto`. Events
 // add "heat" (the metaphor from when the only scene was a fire), the heat

@@ -1,14 +1,23 @@
-// REVISION: flow-v120-agents
+// REVISION: flow-v125-agents-waits
 //
 // Who is running: each subagent of the session, one at a time, as the scenes'
 // `agents` dial sees it. The adapter feeds the roster what it hears: its polls
 // of the running agents (`$.agent.list()`), each agent's own activity (a
 // model step, its streamed output, a tool call: the `agentId` on `turn.step`
-// and `tool.call`), a permission ask put to the person on its behalf
-// (`tool.check`), and its run completing (`turn.complete`). From that, every
-// frame, a dial per agent in the order they started: working, idle (gone
-// quiet: nothing streamed, no tool called or running for a while), waiting on
-// the person, or done (kept a few seconds after, so its companion can leave).
+// and `tool.call`), what it waits on the person for, and its run completing
+// (`turn.complete`). From that, every frame, a dial per agent in the order
+// they started: working, idle (gone quiet: nothing streamed, no tool called or
+// running for a while), waiting on the person, or done (kept a few seconds
+// after, so its companion can leave). What's heard from a loop before a poll
+// names it (a new subagent's first tool, an ask) is kept, and counts once it's
+// named.
+//
+// Waiting on the person is a dialog actually put to them, as the turn's own
+// wait is (activity.ts): a permission ask (`tool.check`'s `ask`) only once a
+// dialog shows (`classic.PermissionRequest` with no hook answering it: auto
+// mode's classifier settles most asks alone), Claude's question or a plan to
+// approve from the start; it ends when the call ends, shows it's running
+// (its progress pill), or the agent asks the model again.
 // Pure: no `$`, its own clock (the adapter ticks it), so it is unit-tested.
 
 /** What a companion in a scene is doing. */
@@ -43,15 +52,23 @@ export const QUIET_MS = 20_000
 export const DONE_MS = 6_000
 /** A poll still saying "running" this soon after its run completed is behind the news, not a resumed agent. */
 const STALE_MS = 3_000
-/** Activity from a loop no poll has named yet is kept this long (a new subagent, until the next poll names it). */
+/** What's heard from a loop no poll has named yet is kept this long (a new subagent, until the next poll names it), or while a tool of its runs. */
 const EARLY_MS = 30_000
+/** A dialog seen with no ask before it waits under its tool's name and loop: `prompt:Bash@<agent>`. */
+const PROMPT = 'prompt:'
 
 /** Statuses that mean it's still about (AgentStatus): not started yet, running, held, between turns. */
 const PRESENT = new Set(['pending', 'running', 'waiting', 'idle'])
 /** Statuses that mean it's held or between turns: not working, whatever it last did. */
 const RESTING = new Set(['waiting', 'idle'])
 
-type Entry = {
+/** A subagent's call waiting on the person: its tool and loop, and whether it has been put to them yet (the shape activity.ts keeps). */
+type Wait = { tool?: string; agent?: string; asked: boolean }
+
+/** What's been heard from a loop: when it last did anything, and its tools running now. */
+type Heard = { heardAt: number; tools: number }
+
+type Entry = Heard & {
   id: string
   task: string
   type: string
@@ -60,12 +77,6 @@ type Entry = {
   /** When its run ended (NaN while it runs). */
   endedAt: number
   ok: boolean
-  /** When it last did anything (a step, output, a tool call). */
-  heardAt: number
-  /** Its tools running now. */
-  tools: number
-  /** Its calls waiting on the person, by tool_use_id. */
-  asks: Set<string>
 }
 
 export class Roster {
@@ -73,26 +84,34 @@ export class Roster {
   private now = 0
   /** Every agent about, and those done but not yet gone, in the order they started. */
   private entries = new Map<string, Entry>()
-  /** When a loop no poll has named yet was last heard from. */
-  private early = new Map<string, number>()
+  /** What's been heard from loops no poll has named yet. */
+  private early = new Map<string, Heard>()
+  /** Subagents' calls waiting on the person, by tool_use_id, oldest first (whether or not a poll has named the agent yet). */
+  private waits = new Map<string, Wait>()
 
-  /** Move the clock on; agents done long enough are dropped. */
+  /** Move the clock on; agents done long enough are dropped, and what's heard from loops never named is forgotten. */
   tick(ms: number): void {
     this.now += ms
     for (const [id, e] of this.entries) if (this.now - e.endedAt > DONE_MS) this.entries.delete(id)
-    for (const [id, at] of this.early) if (this.now - at > EARLY_MS) this.early.delete(id)
+    for (const [id, h] of this.early) if (h.tools === 0 && this.now - h.heardAt > EARLY_MS) this.early.delete(id)
+    for (const [id, w] of this.waits) if (!this.entries.has(w.agent!) && !this.early.has(w.agent!)) this.waits.delete(id)
+  }
+
+  /** What's kept for a loop: its entry once a poll has named it, before that what's been heard from it. */
+  private heardOf(id: string): Heard {
+    const e = this.entries.get(id)
+    if (e) return e
+    let h = this.early.get(id)
+    if (!h) this.early.set(id, (h = { heardAt: this.now, tools: 0 }))
+    return h
   }
 
   /** An agent did something: a model step, streamed output, a tool call. */
   heard(id: string): void {
     const e = this.entries.get(id)
-    if (!e) {
-      this.early.set(id, this.now)
-      return
-    }
     // Heard from after its run ended: a message has resumed it, a new run.
-    if (!Number.isNaN(e.endedAt)) this.revive(e)
-    e.heardAt = this.now
+    if (e && !Number.isNaN(e.endedAt)) this.revive(e)
+    this.heardOf(id).heardAt = this.now
   }
 
   /**
@@ -102,35 +121,66 @@ export class Roster {
    */
   stepped(id: string): void {
     this.heard(id)
-    this.entries.get(id)?.asks.clear()
+    this.forgetWaits(id)
   }
 
   /** One of its tools started (it counts as working while one runs, however long). */
   toolStarted(id: string): void {
     this.heard(id)
-    const e = this.entries.get(id)
-    if (e) e.tools++
+    this.heardOf(id).tools++
   }
 
   /** One of its tools finished. */
   toolEnded(id: string): void {
-    const e = this.entries.get(id)
-    if (!e) return
-    e.tools = Math.max(0, e.tools - 1)
-    e.heardAt = this.now
+    const h = this.entries.get(id) ?? this.early.get(id)
+    if (!h) return
+    h.tools = Math.max(0, h.tools - 1)
+    h.heardAt = this.now
   }
 
-  /** One of its calls now waits on the person (a permission ask, a question). */
-  waitingOn(id: string, callId: string): void {
-    this.entries.get(id)?.asks.add(callId)
+  /**
+   * One of a subagent's calls waits on the person (`agent`: its loop; none,
+   * the main loop's, isn't the roster's). `asked`: it's put to them now
+   * (Claude's question, a plan to approve). A permission ask isn't yet: the
+   * mode may settle it alone, so it's only put to them once a dialog shows (`prompted`).
+   */
+  waitingOn(id: string, asked = true, tool?: string, agent?: string): void {
+    const w = this.waits.get(id)
+    agent ??= w?.agent
+    if (agent === undefined) return
+    if (!w) this.heardOf(agent)
+    this.waits.set(id, { tool: tool ?? w?.tool, agent, asked: asked || w?.asked === true })
   }
 
-  /** The call was answered (or is over). */
-  answered(id: string, callId: string): void {
-    const e = this.entries.get(id)
-    if (!e) return
-    e.asks.delete(callId)
-    e.heardAt = this.now
+  /**
+   * A permission dialog shows for a call of `tool` in loop `agent`: its
+   * oldest ask of the tool not yet put to the person now is. One with no ask
+   * before it waits under the tool's name until a call of it ends.
+   */
+  prompted(tool: string, agent?: string): void {
+    if (agent === undefined) return
+    for (const w of this.waits.values()) {
+      if (!w.asked && w.tool === tool && w.agent === agent) {
+        w.asked = true
+        return
+      }
+    }
+    this.heardOf(agent)
+    this.waits.set(`${PROMPT}${tool}@${agent}`, { tool, agent, asked: true })
+  }
+
+  /** The call is answered (or over, or running). */
+  answered(id: string, tool?: string, agent?: string): void {
+    const w = this.waits.get(id)
+    this.waits.delete(id)
+    agent ??= w?.agent
+    if (tool !== undefined && agent !== undefined) this.waits.delete(`${PROMPT}${tool}@${agent}`)
+    const h = agent === undefined ? undefined : (this.entries.get(agent) ?? this.early.get(agent))
+    if (h) h.heardAt = this.now
+  }
+
+  private forgetWaits(agent: string): void {
+    for (const [id, w] of this.waits) if (w.agent === agent) this.waits.delete(id)
   }
 
   /** Its run completed (`turn.complete` in its loop): `ok` when it answered, not on an error, an interrupt or a refusal. */
@@ -140,13 +190,15 @@ export class Roster {
     e.endedAt = this.now
     e.ok = ok
     e.tools = 0
-    e.asks.clear()
+    this.forgetWaits(id)
   }
 
   /**
    * A poll: every agent `$.agent.list()` gave, teammates already left out.
    * One first seen ended is never shown (it came and went unseen, or ended
-   * before a reload); one seen before and now ended, or no longer listed, is done.
+   * before a reload); one seen before and now ended, or no longer listed, is
+   * done. One heard from before it was named starts from what was heard: its
+   * tools still running, its waits.
    */
   listed(agents: readonly ListedAgent[]): void {
     const seen = new Set<string>()
@@ -155,7 +207,7 @@ export class Roster {
       let e = this.entries.get(a.id)
       if (PRESENT.has(a.status)) {
         if (!e) {
-          const heard = this.early.get(a.id)
+          const h = this.early.get(a.id)
           this.early.delete(a.id)
           e = {
             id: a.id,
@@ -165,9 +217,8 @@ export class Roster {
             startedAt: this.now,
             endedAt: Number.NaN,
             ok: true,
-            heardAt: heard ?? this.now,
-            tools: 0,
-            asks: new Set(),
+            heardAt: h?.heardAt ?? this.now,
+            tools: h?.tools ?? 0,
           }
           this.entries.set(a.id, e)
         } else if (!Number.isNaN(e.endedAt)) {
@@ -204,6 +255,12 @@ export class Roster {
     return n
   }
 
+  /** Whether one of the agent's calls is put to the person now (a dialog is up for them). */
+  private isAwaitingPerson(agent: string): boolean {
+    for (const w of this.waits.values()) if (w.asked && w.agent === agent) return true
+    return false
+  }
+
   /** The dial: every agent about or just done, in the order they started. */
   dials(): AgentDial[] {
     const out: AgentDial[] = []
@@ -211,7 +268,7 @@ export class Roster {
       const done = !Number.isNaN(e.endedAt)
       const state: AgentState = done
         ? 'done'
-        : e.asks.size > 0
+        : this.isAwaitingPerson(e.id)
           ? 'waiting'
           : RESTING.has(e.status)
             ? 'idle'
