@@ -1,4 +1,4 @@
-// REVISION: flow-v135-someone-there
+// REVISION: flow-v136-agents
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -17,6 +17,10 @@
 // While Claude waits on you (a permission dialog, its question, a plan to
 // approve) the scene settles, holds and breathes in sepia (waiting.ts), and
 // with sound on a soft chime marks the wait's start.
+// Each subagent is followed on its own too (agents.ts: polled, and heard
+// from by its `agentId`): the scenes with companions give it one that
+// arrives, works, rests and leaves with it, and on desktop the pointer over
+// a companion shows that agent's task (a hover card: no hook runs for it).
 //
 // Settings are per session. The `userConfig` rows in /config (mode, style,
 // idle, level, layout, time, sound, volume) are the defaults every session starts
@@ -39,10 +43,12 @@
 // does, this session alone), Esc to close.
 
 import { atom, update } from 'claude-code'
-import type { CommandRunInput, CommandRunResult, EngineInterface, Register, RenderElement, Timer } from 'claude-code'
+import type { BoxProps, CommandRunInput, CommandRunResult, ElementConstructor, EngineInterface, Register, RenderElement, TextProps, Timer } from 'claude-code'
 
 import { Balloon } from './balloon'
 import { Activity, linesWritten } from './activity'
+import { agentLine, type AgentDial } from './agents'
+import type { AgentMark } from './crew'
 import { FRAME_MS, SceneDriver } from './scene'
 import {
   changedText,
@@ -104,7 +110,7 @@ import {
 } from './picker'
 
 
-const FLOW_REVISION = 'flow-v135-someone-there'
+const FLOW_REVISION = 'flow-v136-agents'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -399,6 +405,58 @@ async function spineIsUp($: EngineInterface): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+/** Desktop's hover card colors: a dark card, light text, over any scene. */
+const CARD_BG = '#1d2026'
+const CARD_FG = '#e8eaee'
+
+/**
+ * Desktop: over each companion a keyed Box the size of it, and in it, hidden,
+ * a card with its agent's task and what it's doing, revealed while the
+ * pointer is on the companion (a hover reveal: the surface applies it, no
+ * hook runs). The card sits on the band's top row (its bottom row, for a
+ * companion up there), or just above the companion in a tall pane, wrapping
+ * to the pane's width.
+ */
+function agentCards(
+  els: { Box: ElementConstructor<BoxProps>; Text: ElementConstructor<TextProps> },
+  marks: readonly AgentMark[],
+  dials: readonly AgentDial[],
+  columns: number,
+  rows: number,
+) {
+  const { Box, Text } = els
+  const tall = rows > 8
+  return marks.flatMap(m => {
+    const d = dials.find(a => a.id === m.id)
+    if (!d) return []
+    const line = agentLine(d)
+    const width = Math.max(1, Math.min(columns, line.length + 2))
+    const lines = tall ? Math.min(4, Math.ceil(line.length / Math.max(1, width - 2))) : 1
+    const left = Math.max(0, Math.min(columns - width, m.col - 1))
+    const top = tall
+      ? m.row >= lines + 1 ? m.row - lines - 1 : Math.min(rows - lines, m.row + m.h)
+      : m.row >= 2 ? 0 : rows - 1
+    return [
+      <Box key={`agent:${m.id}`} position="absolute" top={m.row} left={m.col} width={m.w} height={m.h}>
+        <Box
+          position="absolute"
+          top={top - m.row}
+          left={left - m.col}
+          width={width}
+          paddingX={1}
+          backgroundColor={CARD_BG}
+          display="none"
+          hover={{ display: 'flex' }}
+        >
+          <Text color={CARD_FG} wrap={tall ? 'wrap' : 'truncate'}>
+            {line}
+          </Text>
+        </Box>
+      </Box>,
+    ]
+  })
 }
 
 /** What `/flow` needs of the loaded module. */
@@ -736,18 +794,24 @@ export const register: Register = (on, options) => {
     for (const [id, site] of desktopSites) if (ticks - site.at > DESKTOP_STALE_TICKS) desktopSites.delete(id)
     return [...desktopSites.values()].at(-1)
   }
-  /** A desktop site's frame: the scene at its size, as one Svg sized to its cells. */
+  /**
+   * A desktop site's frame: the scene at its size, as one Svg sized to its
+   * cells, and where its companions are (for their agents' hover cards).
+   */
   const desktopSvg = (requestId: string, columns: number, rows: number) => {
     desktopSites.delete(requestId) // re-added last: the newest site steps the scene
     desktopSites.set(requestId, { columns, rows, at: ticks })
     const scene = desktopDriver.dial()
     scene.ensure(columns, rows)
-    return {
+    const svg = {
       source: frameSvg(scene.grid()),
       alt: `flow: ${cfg.style}`,
       width: columns * DESKTOP_CELL_W,
       height: rows * DESKTOP_CELL_H,
     }
+    // A scene with companions is always drawn under a Box (so one arriving doesn't remount the Svg).
+    const marks = scene.agentMarks?.()
+    return { svg, marks, dials: marks?.length ? (scene.agents ?? []) : [] }
   }
 
   /**
@@ -1111,7 +1175,9 @@ export const register: Register = (on, options) => {
     const countAgents = () => {
       $.agent.list().then(
         agents => {
-          activity.runningAgents = agents.filter(a => a.status === 'running' && a.type !== 'teammate').length
+          const subagents = agents.filter(a => a.type !== 'teammate')
+          activity.runningAgents = subagents.filter(a => a.status === 'running').length
+          activity.roster.listed(subagents)
         },
         () => {
           activity.runningAgents = 0
@@ -1162,23 +1228,33 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.complete', ($, e, next) => {
-    // Subagents' runs complete too; only the main loop's ends the turn.
+    // Subagents' runs complete too; only the main loop's ends the turn. A subagent's: it's done (its companion leaves).
     if (e.agentId === undefined) activity.turnEnded()
+    else activity.roster.finished(e.agentId, e.reason === 'answer')
     return next(e)
   })
 
   on('turn.step', async function* ($, e, next) {
-    const isSubagent = e.agentId !== undefined
-    if (isSubagent) subagentSeen = true
+    const agentId = e.agentId
+    const isSubagent = agentId !== undefined
+    if (isSubagent) {
+      subagentSeen = true
+      activity.roster.stepped(agentId)
+    }
     activity.modelStep(e.effort, isSubagent)
     for await (const chunk of next(e)) {
-      if (chunk.kind === 'text' || chunk.kind === 'thinking') activity.streamed(chunk.text.length, chunk.kind, isSubagent)
+      if (chunk.kind === 'text' || chunk.kind === 'thinking') {
+        activity.streamed(chunk.text.length, chunk.kind, isSubagent)
+        // A subagent streaming (a long thinking block included) is working, not quiet.
+        if (agentId !== undefined) activity.roster.heard(agentId)
+      }
       yield chunk
     }
   })
 
   on('tool.call', async ($, e, next) => {
-    const isSubagent = e.agentId !== undefined
+    const agentId = e.agentId
+    const isSubagent = agentId !== undefined
     if (isSubagent) subagentSeen = true
     const lines = linesWritten(e.tool, e)
     if (lines !== undefined) activity.edited(lines, isSubagent)
@@ -1192,6 +1268,11 @@ export const register: Register = (on, options) => {
     const id = e.tool_use_id
     // Claude's question, a plan to approve: put to the person from the start.
     if (id && PERSON_TOOLS.has(e.tool)) activity.waitingOn(id, true, e.tool, e.agentId)
+    // A subagent's tool: it's working for as long as the tool runs (and waiting on you, for a question).
+    if (agentId !== undefined) {
+      activity.roster.toolStarted(agentId)
+      if (id && PERSON_TOOLS.has(e.tool)) activity.roster.waitingOn(agentId, id)
+    }
     try {
       const result = await next(e)
       if (e.tool === 'Bash' && 'isError' in result && result.isError) activity.failed()
@@ -1200,6 +1281,10 @@ export const register: Register = (on, options) => {
       activity.toolsInFlight--
       // (Answered, or over: a permission ask from tool.check ends here too.)
       if (id) activity.answered(id, e.tool)
+      if (agentId !== undefined) {
+        activity.roster.toolEnded(agentId)
+        if (id) activity.roster.answered(agentId, id)
+      }
     }
   })
 
@@ -1208,7 +1293,11 @@ export const register: Register = (on, options) => {
     // An ask goes to the mode's decider: the turn's clock waits until the call is over (or shows it's
     // running). It's put to the person only if a dialog shows (classic.PermissionRequest, below): auto
     // mode's classifier decides most alone, and that's no wait on you.
-    if (verdict.decision === 'ask' && e.tool_use_id) activity.waitingOn(e.tool_use_id, false, e.tool, e.agentId)
+    if (verdict.decision === 'ask' && e.tool_use_id) {
+      activity.waitingOn(e.tool_use_id, false, e.tool, e.agentId)
+      // A subagent's ask: its companion waits on you too.
+      if (e.agentId !== undefined) activity.roster.waitingOn(e.agentId, e.tool_use_id)
+    }
     return verdict
   })
 
@@ -1339,8 +1428,15 @@ export const register: Register = (on, options) => {
     if (e.surface === 'desktop') {
       const columns = Math.max(1, Math.min(512, e.props.bodyColumns))
       const rows = Math.max(2, Math.min(256, e.props.scroll.bodyRows))
-      const { Svg } = $.ui.resolve(e)
-      return <Svg {...desktopSvg(e.requestId, columns, rows)} />
+      const { Box, Svg, Text } = $.ui.resolve(e)
+      const { svg, marks, dials } = desktopSvg(e.requestId, columns, rows)
+      if (!marks) return <Svg {...svg} />
+      return (
+        <Box>
+          <Svg {...svg} />
+          {agentCards({ Box, Text }, marks, dials, columns, rows)}
+        </Box>
+      )
     }
     if (e.surface !== 'terminal') return <Text dimColor>The scene draws in the terminal and on desktop.</Text>
     // The scene fills the whole pane, whatever width the dock gave it.
@@ -1363,8 +1459,16 @@ export const register: Register = (on, options) => {
         desktopSites.delete(e.requestId)
         return next(e)
       }
-      const { Svg } = $.ui.resolve(e)
-      return <Svg {...desktopSvg(e.requestId, Math.max(1, Math.min(512, e.props.bodyColumns)), rows)} />
+      const columns = Math.max(1, Math.min(512, e.props.bodyColumns))
+      const { Box, Svg, Text } = $.ui.resolve(e)
+      const { svg, marks, dials } = desktopSvg(e.requestId, columns, rows)
+      if (!marks) return <Svg {...svg} />
+      return (
+        <Box>
+          <Svg {...svg} />
+          {agentCards({ Box, Text }, marks, dials, columns, rows)}
+        </Box>
+      )
     }
     // Raster is terminal-only; any other surface's band never touches ours.
     if (e.surface !== 'terminal') return next(e)

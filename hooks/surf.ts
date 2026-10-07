@@ -1,4 +1,4 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v126-agents
 //
 // Surf (the `surf` style): a surfer and the ocean on the same dials as the
 // fire; the level is the swell. At 1 the sea is glassy under a dawn sky and
@@ -16,14 +16,22 @@
 //
 // Everything solid is painted into a 2x2-a-cell pixel layer and folded into
 // quadrant glyphs with the two colors that best fit each cell; spray, foam
-// fizz and sun glints are a braille dot layer on top. Subagents (the
-// coverage boost) put more surfers in the line-up; smoke is a wipeout under
-// a grey overcast sky; a nearly-full context turns the sea storm-blue and
-// raises a red warning flag. While Claude waits on the person the swell
+// fizz and sun glints are a braille dot layer on top. Smoke is a wipeout
+// under a grey overcast sky; a nearly-full context turns the sea storm-blue
+// and raises a red warning flag. While Claude waits on the person the swell
 // settles and the surfer sits up on the board, bobbing, waiting for the next
 // wave, the whole view breathing in sepia (waiting.ts).
+//
+// Each subagent is a surfer of its own in the line-up, in its own wetsuit and
+// board (crew.ts): they paddle in from the edge when the agent starts, and
+// while it works paddle hard (or, on a building swell in the band, ride one
+// of the following waves); gone quiet they sit up on their board, bobbing,
+// and while it waits on you they wave an arm; when it's done they paddle off
+// out of sight.
 
+import type { AgentDial } from './agents'
 import { Cells, Rng, isTall } from './cells'
+import { Crew, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
 import { MOON, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
 import { BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, noise1 as vnoise, QUAD, type QuadFit } from './pixels'
@@ -153,6 +161,15 @@ const SPRITES = {
     ['    hh', '  www ', '  ww  '],
     ['    hh', '  wwhh', ' wwww ', 'ww  w ', 'w   w '],
   ],
+  // Sitting up, waving an arm for attention (a companion whose agent waits on you): arm up, then out.
+  waveUp: [
+    [' whh  ', '  ww  ', '  ww  '],
+    ['w hh  ', 'w hh  ', 'wwwww ', ' wwww ', '  ww  '],
+  ],
+  waveOut: [
+    ['  hh  ', ' www  ', '  ww  '],
+    ['  hh  ', '  hh  ', 'wwwww ', ' wwww ', '  ww  '],
+  ],
 } as const
 type Pose = keyof typeof SPRITES
 
@@ -160,9 +177,15 @@ const PMAX = 480
 /** Set pixels in each quadrant mask. */
 const BITS = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4]
 
+/** Surfers in the line-up for subagents, at most (a wetsuit and a board each). */
+const CREW = 5
+
 export class Surf {
   strength = 8
   coverageBoost = 0
+  /** The subagents, one by one: each a surfer of their own. */
+  agents: readonly AgentDial[] = []
+  private crew = new Crew(CREW)
   sounds: SoundEvent[] = []
   /** The frame the next wave's sound comes in on. */
   private nextWave = 0
@@ -389,6 +412,7 @@ export class Surf {
 
   step(): void {
     if (this.columns === 0) return
+    this.crew.update(this.agents, this.coverageBoost)
     const level = this.level
     // A wave coming in: about every 12 s on a calm sea, every 5.5 s on a big one (as measured at real
     // beaches), never on a beat: each one sets the next at random around that.
@@ -480,6 +504,7 @@ export class Surf {
       const sx = this.surferX()
       this.emit(sx + (this.vertical ? 4 : 1.5) + this.rng.f(), this.surfaceAt(sx) - 0.3, 0.1, -0.25, 5, 1)
     }
+    this.placeCrew()
     // Sun glints on calm water.
     if (s < 4.5) {
       const n = (4.5 - s) * 0.5 * (this.vertical ? 1 : this.pw / 120)
@@ -887,35 +912,92 @@ export class Surf {
     this.sprite(pose, large, x + lean, by, facing, SUIT)
   }
 
-  /** Subagents: more surfers in the line-up. */
-  private paintExtras(): void {
-    const n = Math.min(5, Math.round(this.coverageBoost / 12))
-    if (n === 0) return
-    let slot = 0
-    for (let i = 0; i < n; i++) {
-      let x: number
-      let pose: Pose = 'sit'
-      if (!this.vertical && i < this.nF && this.s >= 3) {
-        const u = 0.35 + 0.2 * Math.sin(this.phase * 0.8 + i * 2.1)
-        x = this.fx[i]! + u * this.fW[i]! * 0.7
-        pose = 'ride'
-      } else if (this.vertical) {
-        x = 3 + slot * 6
-        slot++
-        if (x > this.cx - 6) break
-      } else {
-        x = this.cx + this.Wf * 1.6 + 10 + slot * 14 + hash(slot * 3 + 1) * 10
-        if (x > this.pw - 4) x = this.cx - this.Wb - 6 - (x - this.pw) * 1.0
-        slot++
-        if (x < 3) break
-        pose = this.s >= 2 ? 'paddle' : 'sit'
+  /** A companion's place in the line-up (its slot's), or NaN where there's no room for it (a narrow spine). */
+  private lineup(slot: number): number {
+    if (this.vertical) {
+      // On the back of the wave, as many as fit clear of its crest.
+      const x = 3 + slot * 5
+      return x > this.cx - 4 ? Number.NaN : x
+    }
+    let x = this.cx + this.Wf * 1.6 + 10 + slot * 14 + hash(slot * 3 + 1) * 10
+    if (x > this.pw - 4) x = this.cx - this.Wb - 6 - (x - this.pw)
+    return x < 3 ? Number.NaN : x
+  }
+
+  /** The edge nearer a place on the water: where a companion paddles in from, or off to. */
+  private edgeNear(x: number): number {
+    return x > this.cx ? this.pw + 8 : -8
+  }
+
+  /** A companion's pose: riding a following swell or paddling while its agent works, sitting up (waving, if it waits on you) while it rests. */
+  private matePose(m: Mate): Pose {
+    if (m.leaving || m.here < 1) return 'paddle'
+    if (m.busy < 0.5) return m.waiting ? (((this.t + m.slot * 3) >> 2) % 2 ? 'waveUp' : 'waveOut') : 'sit'
+    return this.rides(m) ? 'ride' : 'paddle'
+  }
+
+  /** Whether a working companion rides one of the following swells (the band, once there's a swell to ride). */
+  private rides(m: Mate): boolean {
+    return !this.vertical && m.slot < this.nF && this.s >= 3
+  }
+
+  /**
+   * Each companion's place this frame (`x`, and which way it faces in `y`):
+   * paddling in from the edge to its spot, there (or on its swell), or
+   * paddling off from wherever it is to the nearer edge, out of sight just as
+   * it's gone; and a paddler's splashes.
+   */
+  private placeCrew(): void {
+    for (const m of this.crew.mates) {
+      const home = this.lineup(m.slot)
+      if (Number.isNaN(home)) {
+        m.x = Number.NaN
+        continue
       }
+      let target = home
+      if (!m.leaving && m.busy >= 0.5 && this.rides(m)) {
+        target = this.fx[m.slot]! + (0.35 + 0.2 * Math.sin(this.phase * 0.8 + m.slot * 2.1)) * this.fW[m.slot]! * 0.7
+      }
+      if (m.leaving) {
+        if (Number.isNaN(m.x)) continue
+        const edge = this.edgeNear(m.x)
+        m.x += (edge - m.x) / Math.max(1, m.p * this.crew.leave)
+        m.y = edge > m.x ? 1 : -1
+      } else if (m.here < 1) {
+        const edge = this.edgeNear(target)
+        m.x = edge + (target - edge) * m.here
+        m.y = edge > target ? -1 : 1
+      } else {
+        m.x = Number.isNaN(m.x) ? target : m.x + (target - m.x) * 0.08
+        m.y = 1
+      }
+      if (this.matePose(m) === 'paddle' && (this.t + m.slot) % 5 === 0 && m.x > 0 && m.x < this.pw) {
+        this.emit(m.x + m.y * 1.5 + this.rng.f(), this.surfaceAt(m.x) - 0.3, 0.1 * m.y, -0.25, 5, 1)
+      }
+    }
+  }
+
+  /** The subagents' surfers, each in their own wetsuit and board, and where each is for desktop's hover. */
+  private paintExtras(): void {
+    this.crew.clearMarks()
+    for (const m of this.crew.mates) {
+      const x = m.x
+      if (Number.isNaN(x) || x < -4 || x > this.pw + 4) continue
+      const pose = this.matePose(m)
       const surf = this.surfaceAt(x)
       const slope = (this.surfaceAt(x + 1) - this.surfaceAt(x - 1)) / 2
-      const by = (Math.floor(surf - 0.6 + (pose === 'sit' ? Math.sin(this.t * 0.11 + i * 1.7) * 0.3 : 0)) | 1) + 0.5
-      this.board(x, by, pose === 'ride' ? slope : slope * 0.5, 2.4, 1, EXTRA_BOARDS[i]!)
-      this.sprite(pose, false, x, by, 1, EXTRA_SUITS[i]!)
+      const sitting = pose === 'sit' || pose === 'waveUp' || pose === 'waveOut'
+      const by = (Math.floor(surf - 0.6 + (sitting ? Math.sin(this.t * 0.11 + m.slot * 1.7) * 0.3 : 0)) | 1) + 0.5
+      const facing = m.y < 0 ? -1 : 1
+      this.board(x, by, pose === 'ride' ? slope : slope * 0.5, 2.4, facing, EXTRA_BOARDS[m.slot % EXTRA_BOARDS.length]!)
+      this.sprite(pose, false, x, by, facing, EXTRA_SUITS[m.slot % EXTRA_SUITS.length]!)
+      const top = Math.floor(by) - SPRITES[pose][0].length
+      this.crew.mark(m, Math.floor((x - 3) / 2), Math.floor(top / 2), 4, Math.ceil((by + 1) / 2) - Math.floor(top / 2), this.columns, this.rows)
     }
+  }
+
+  agentMarks(): readonly AgentMark[] {
+    return this.level > 0 ? this.crew.marks : []
   }
 
   /** A nearly-full context: a red warning flag on a buoy. */

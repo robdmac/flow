@@ -1,7 +1,7 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v126-agents
 //
 // The scenes, all driven by the same dials (strength 0..10, coverage boost,
-// tint, night, waiting): SCENES, the one list of them (each scene file exports its
+// the agents one by one, tint, night, waiting): SCENES, the one list of them (each scene file exports its
 // SceneDef; add yours there), and the fire itself (`Ember`, the `fire` scene): the ░▒▓█
 // Doom-style automaton of fire.ts for its shape, glyphs and crisp flicker,
 // colored half its 256-color ramp, half a smooth truecolor black-body eased
@@ -10,6 +10,8 @@
 // waits on the person the fire banks: low flames over a bed of coals along
 // the bottom, glowing and fading with each slow breath (waiting.ts).
 
+import type { AgentDial } from './agents'
+import type { AgentMark } from './crew'
 import { AsciiFire, colorFor, glyphFor } from './fire'
 import { Cells, Rng } from './cells'
 export type { Cells }
@@ -35,7 +37,17 @@ export type Tint = 'normal' | 'smoke' | 'blue'
 /** What the frame timer drives, whatever the look. */
 export interface Scene {
   strength: number
+  /** Company from running subagents, as a count (15 each): a wider fire, more streams. */
   coverageBoost: number
+  /**
+   * Each running subagent on its own (agents.ts), in the order they started:
+   * the scenes with companions give each one of its own (crew.ts) that
+   * arrives, works, rests and leaves with it. Empty when there are none (or
+   * an adapter can't tell them apart: then `coverageBoost` alone).
+   */
+  agents?: readonly AgentDial[]
+  /** Where each agent's companion is drawn this frame (cells): desktop's hover cards sit over them. */
+  agentMarks?(): readonly AgentMark[]
   tint: Tint
   /** Night, for the scenes that have one (the rest have no such field and ignore it). */
   night?: boolean

@@ -1,4 +1,4 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v126-agents
 //
 // How busy the agent is: the work → scene mapping for `/flow auto`. Events
 // add "heat" (the metaphor from when the only scene was a fire), the heat
@@ -9,13 +9,15 @@
 // is put to the person (a dialog is up for them) the level settles to a calm
 // 2 and the scenes show it (`isAwaitingPerson`, waiting.ts). It also says
 // which tint shows: smoke after a failure or a compaction, blue when the
-// context is nearly full. Pure: no `$`, so it is unit-tested directly.
+// context is nearly full, and keeps the roster of subagents, each on its own
+// (agents.ts: the scenes' companions). Pure: no `$`, so it is unit-tested directly.
 //
 // Calibrated so the range reads as work, not chatter (see the calibration
 // tests): a streamed answer sits mid-range, reads and any other tool (an MCP
 // server's) spark a little, edits and commands flare above it, a few
 // subagents push it high, and 10 takes parallel work plus edits.
 
+import { Roster } from './agents'
 import type { Tint } from './styles'
 
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | number | undefined
@@ -73,6 +75,8 @@ export class Activity {
   private waits = new Map<string, Wait>()
   /** Streamed characters since the last tick, weighted. */
   private pendingChars = 0
+  /** Each subagent on its own (working, quiet, waiting on you, done): the scenes' `agents` dial. */
+  readonly roster = new Roster()
 
   private add(n: number): void {
     this.heat = Math.min(MAX_HEAT, this.heat + n)
@@ -202,6 +206,7 @@ export class Activity {
 
   /** Advance `frames` frames (a slow tick covers several) of cooling. */
   tick(frames = 1): void {
+    this.roster.tick(frames * FRAME_MS)
     if (this.isTurnActive && !this.isWaiting) this.turnFrames += frames
     if (this.pendingChars > 0) {
       this.add(Math.min(STREAM_CAP * frames, this.pendingChars * STREAM_PER_CHAR))

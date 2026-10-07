@@ -1,4 +1,4 @@
-// REVISION: flow-v135-someone-there
+// REVISION: flow-v136-agents
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -26,6 +26,8 @@ import { BREATH_FRAMES, breath, easeWait, waitTone } from '../hooks/waiting'
 import { SOUND_FILES } from '../hooks/sound-files'
 import { PixelScene, type Dials, type Painter } from '../hooks/pixel-scene'
 import { hotkeyFor, labelWidth, PICK_LEVEL, pickLayout, pickRows, sceneOfKey, Thumbnails } from '../hooks/picker'
+import { agentLine, DONE_MS, QUIET_MS, Roster, runTime } from '../hooks/agents'
+import { Crew } from '../hooks/crew'
 
 const BAND = {
   component: 'AbovePrompt',
@@ -3051,4 +3053,244 @@ test('/flow pick where no surface places panes says what to do instead, and leav
   await start($)
   expect(await flow($, 'pick')).toContain('/flow next')
   expect(closes).toContain('flow-pick')
+})
+
+// ── Subagents, one by one ────────────────────────────────────────────────
+
+const listed = (id: string, status = 'running', description = `task ${id}`) => ({ id, status, type: 'Explore', description })
+
+test('roster: a listed subagent works, goes quiet when nothing is heard, works again when it is', () => {
+  const r = new Roster()
+  r.listed([listed('a')])
+  expect(r.dials().map(d => [d.id, d.state])).toEqual([['a', 'working']])
+  r.tick(QUIET_MS - 1000)
+  expect(r.dials()[0]!.state).toBe('working')
+  r.tick(2000)
+  expect(r.dials()[0]!.state).toBe('idle') // gone quiet
+  r.heard('a') // a step, or streamed output
+  expect(r.dials()[0]!.state).toBe('working')
+  // A long tool keeps it working, however long it runs.
+  r.toolStarted('a')
+  r.tick(QUIET_MS * 5)
+  expect(r.dials()[0]!.state).toBe('working')
+  r.toolEnded('a')
+  r.tick(QUIET_MS + 1)
+  expect(r.dials()[0]!.state).toBe('idle')
+  // Held (its own background work, a plan) or between turns: resting, whatever it last did.
+  r.heard('a')
+  r.listed([listed('a', 'waiting')])
+  expect(r.dials()[0]!.state).toBe('idle')
+})
+
+test('roster: an ask put to the person makes it wait on you, until answered', () => {
+  const r = new Roster()
+  r.listed([listed('a'), listed('b')])
+  r.waitingOn('a', 'tu1')
+  expect(r.dials().map(d => d.state)).toEqual(['waiting', 'working'])
+  r.tick(QUIET_MS * 2)
+  expect(r.dials()[0]!.state).toBe('waiting') // however long it waits
+  r.answered('a', 'tu1')
+  expect(r.dials()[0]!.state).toBe('working')
+  // Refused, the call never runs to say so: its next model step settles it.
+  r.waitingOn('a', 'tu2')
+  r.heard('a') // (a tool of the same step starting is no answer)
+  expect(r.dials()[0]!.state).toBe('waiting')
+  r.stepped('a')
+  expect(r.dials()[0]!.state).toBe('working')
+})
+
+test('roster: done when its run completes (or it stops being listed), kept a while for its companion to leave, then dropped', () => {
+  const r = new Roster()
+  r.listed([listed('a'), listed('b'), listed('c')])
+  r.tick(5000)
+  r.finished('a', true)
+  r.listed([listed('a'), listed('b', 'failed'), listed('c')]) // a: a poll behind the news, still "running"
+  r.tick(1000)
+  r.listed([listed('a', 'completed'), listed('b', 'failed')]) // c: dropped by the engine
+  const d = r.dials()
+  expect(d.map(x => [x.id, x.state, x.ok])).toEqual([
+    ['a', 'done', true],
+    ['b', 'done', false],
+    ['c', 'done', true],
+  ])
+  expect(d[0]!.ms).toBe(5000) // its run time stops when it's done
+  expect(r.active).toBe(0)
+  r.tick(DONE_MS + 100)
+  expect(r.dials()).toEqual([])
+})
+
+test('roster: one first seen already ended is never shown; one heard from after its run is back, a new run', () => {
+  const r = new Roster()
+  r.listed([listed('old', 'completed'), listed('a')])
+  expect(r.dials().map(d => d.id)).toEqual(['a'])
+  r.finished('a', true)
+  r.tick(500)
+  r.heard('a') // resumed by a message
+  expect(r.dials().map(d => [d.id, d.state, d.ms])).toEqual([['a', 'working', 0]])
+  // Heard from before any poll named it: counted from then, once a poll does.
+  r.heard('new')
+  r.tick(QUIET_MS + 10)
+  r.listed([listed('a'), listed('new')])
+  expect(r.dials().find(d => d.id === 'new')!.state).toBe('idle')
+})
+
+test('roster: a hover card line says the task, what it is doing, and for how long', () => {
+  const d = { id: 'a', state: 'waiting' as const, ok: true, task: 'map the auth flow', type: 'Explore', ms: 125_000 }
+  expect(agentLine(d)).toBe('Explore: map the auth flow · waiting on you, 2m 05s')
+  expect(agentLine({ ...d, state: 'done', ok: false, ms: 9000 })).toBe('Explore: map the auth flow · stopped, 9s')
+  expect(runTime(3_725_000)).toBe('1h 02m')
+})
+
+const dial = (id: string, state: 'working' | 'idle' | 'waiting' | 'done', ok = true) => ({ id, state, ok, task: '', type: '', ms: 0 })
+
+test('crew: a companion eases in, rests and works with its agent, eases out, and frees its place for the next', () => {
+  const c = new Crew(2, 10, 20)
+  c.update([dial('a', 'working'), dial('b', 'idle'), dial('c', 'working')])
+  expect(c.mates.map(m => [m.id, m.slot])).toEqual([['a', 0], ['b', 1]]) // c waits for room
+  const here: number[] = []
+  for (let i = 0; i < 12; i++) {
+    c.update([dial('a', 'working'), dial('b', 'idle'), dial('c', 'working')])
+    here.push(c.mates[0]!.here)
+  }
+  // No popping in: it arrives over the frames, never jumping more than a fifth at once.
+  for (let i = 1; i < here.length; i++) expect(here[i]! - here[i - 1]!).toBeLessThan(0.2)
+  expect(here.at(-1)).toBe(1)
+  expect(c.mates[0]!.busy).toBe(1)
+  expect(c.mates[1]!.busy).toBe(0)
+  // Quiet, then waiting on you: it rests, easing down.
+  c.update([dial('a', 'waiting'), dial('b', 'idle'), dial('c', 'working')])
+  expect(c.mates[0]!.waiting).toBe(true)
+  expect(c.mates[0]!.busy).toBeGreaterThan(0.8)
+  for (let i = 0; i < 60; i++) c.update([dial('a', 'idle'), dial('b', 'idle'), dial('c', 'working')])
+  expect(c.mates[0]!.busy).toBe(0)
+  // Done: it leaves over the frames (failed, it says so), and only then is its place c's.
+  const out: number[] = []
+  for (let i = 0; i < 19; i++) {
+    c.update([dial('a', 'done', false), dial('b', 'idle'), dial('c', 'working')])
+    out.push(c.mates.find(m => m.id === 'a')!.here)
+  }
+  expect(c.mates.find(m => m.id === 'a')!.leaving).toBe(true)
+  expect(c.mates.find(m => m.id === 'a')!.ok).toBe(false)
+  for (let i = 1; i < out.length; i++) expect(out[i - 1]! - out[i]!).toBeLessThan(0.15)
+  expect(c.mates.some(m => m.id === 'c')).toBe(false)
+  for (let i = 0; i < 3; i++) c.update([dial('b', 'idle'), dial('c', 'working')])
+  expect(c.mates.map(m => [m.id, m.slot])).toEqual([['b', 1], ['c', 0]])
+})
+
+test('crew: an adapter that only counts subagents (coverage) still gets that many companions, working, with no hover card', () => {
+  const c = new Crew(4)
+  for (let i = 0; i < 30; i++) c.update([], 30)
+  expect(c.mates.map(m => [m.slot, m.busy])).toEqual([[0, 1], [1, 1]])
+  c.mark(c.mates[0]!, 3, 1, 2, 2, 80, 5)
+  expect(c.marks).toEqual([])
+  for (let i = 0; i < 60; i++) c.update([], 0)
+  expect(c.mates).toEqual([])
+})
+
+/** The scenes that give each subagent a companion of its own. */
+const CREW_SCENES = ['surf', 'ski', 'balloon', 'falcon', 'starship', 'engine'] as const
+
+test('companion scenes: each agent gets one that arrives, is marked where it is, and leaves when done, in the band and the spine', () => {
+  for (const style of CREW_SCENES) {
+    for (const [columns, rows] of [[120, 5], [22, 40]] as const) {
+      const f = makeScene(style, 7)
+      f.strength = 5
+      f.ensure(columns, rows)
+      for (let i = 0; i < 60; i++) f.step()
+      f.grid()
+      expect(f.agentMarks?.() ?? []).toEqual([])
+      const run = (agents: ReturnType<typeof dial>[], n: number) => {
+        for (let i = 0; i < n; i++) {
+          f.agents = agents
+          f.step()
+        }
+        f.grid()
+        return (f.agentMarks?.() ?? []).map(m => m.id)
+      }
+      const at = `${style} at ${columns}×${rows}`
+      // Just arrived: not there yet (it eases in), so not marked.
+      expect([at, run([dial('a', 'working')], 1)]).toEqual([at, []])
+      expect([at, run([dial('a', 'working')], 60)]).toEqual([at, ['a']])
+      for (const m of f.agentMarks!()) {
+        expect([at, m.col >= 0 && m.row >= 0 && m.col + m.w <= columns && m.row + m.h <= rows]).toEqual([at, true])
+      }
+      expect([at, run([dial('a', 'idle')], 40)]).toEqual([at, ['a']])
+      expect([at, run([dial('a', 'waiting')], 10)]).toEqual([at, ['a']])
+      expect([at, run([dial('a', 'done')], 80)]).toEqual([at, []])
+    }
+  }
+})
+
+test('companion scenes: a working companion and a resting one look different', () => {
+  for (const style of CREW_SCENES) {
+    const look = (state: 'working' | 'idle') => {
+      const f = makeScene(style, 7)
+      f.strength = 5
+      f.ensure(120, 5)
+      for (let i = 0; i < 120; i++) {
+        f.agents = [dial('a', state)]
+        f.step()
+      }
+      const g = f.grid()
+      const m = f.agentMarks!()[0]
+      return m ? `${m.row}:${m.col}` : `none ${g.columns}`
+    }
+    // Where it is (aloft or sunk, on station or dropped back, its spot): the scenes move a resting one.
+    const lamps = style === 'engine'
+    if (!lamps) expect(`${style} ${look('working')}`).not.toBe(`${style} ${look('idle')}`)
+  }
+  // The engine's lamps stay put: a working group runs a light along it, a quiet one glows low.
+  const lit = (state: 'working' | 'idle') => {
+    const f = makeScene('engine', 7)
+    f.strength = 5
+    f.ensure(120, 5)
+    for (let i = 0; i < 60; i++) {
+      f.agents = [dial('a', state)]
+      f.step()
+    }
+    const g = f.grid()
+    const m = f.agentMarks!()[0]!
+    const colors: number[] = []
+    for (let c = m.col; c < m.col + m.w; c++) colors.push(g.foreground(4 * 120 + c), g.background(4 * 120 + c))
+    return colors.join()
+  }
+  expect(lit('working')).not.toBe(lit('idle'))
+})
+
+test('desktop: the pointer over a subagent\'s companion shows its task and what it is doing', { options: { style: 'surf' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  engine(on)
+  const agents = [{ id: 'ag1', description: 'map the auth flow', type: 'Explore', status: 'running' }]
+  on('agent.list', () => ({ value: agents as never }))
+  on('tool.check', () => ({ decision: 'ask' }) as never)
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'desktop', ...BAND })
+  const after = async (ms: number) => {
+    for (let t = 0; t < ms; t += 250) {
+      await clock.advance(250)
+      // (The engine stand-in takes the plugin's invalidations: draw again as desktop would.)
+      await ui.redraw()
+    }
+    return JSON.stringify(await ui.drawn())
+  }
+  let drawn = await after(4000)
+  const zone = await ui.find({ key: 'agent:ag1' })
+  expect(zone?.type).toBe('Box')
+  expect(zone?.props.position).toBe('absolute')
+  expect(await ui.find({ type: 'Svg' })).toBeDefined()
+  expect(drawn).toContain('Explore: map the auth flow · working')
+  expect(drawn).toContain('"display":"none"') // the card is hidden until the pointer is over it
+
+  drawn = await after(22_000)
+  expect(drawn).toContain('· quiet')
+
+  await $.tool.check({ tool: 'Bash', input: { command: 'rm -rf build' }, tool_use_id: 'tu1', agentId: 'ag1' } as never)
+  drawn = await after(500)
+  expect(drawn).toContain('· waiting on you')
+
+  agents[0]!.status = 'completed'
+  await after(8000)
+  expect(await ui.find({ key: 'agent:ag1' })).toBeUndefined() // it has left
+  await ui.unmount()
 })

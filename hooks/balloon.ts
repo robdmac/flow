@@ -1,16 +1,25 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v126-agents
 //
 // A hot-air balloon in the sky world (sky.ts): the level is its target
 // altitude. At 1 it sits on the grass among trees and houses; it climbs past
 // birds and the layered clouds into a thinning sky; at 10 it floats in space
 // among stars, Earth's blue rim below. It drifts side to side in the wind,
-// its burner flickers while it climbs, subagents fly as small companion
-// balloons, a failed command grays the burner's flame and leaves a trail of
-// sooty smoke drifting off behind it, and a nearly-full context turns the
-// stripes blue. While Claude waits on the person it hovers where it is, its
-// burner off but for the pilot glowing with each slow breath (sky.ts, waiting.ts).
+// its burner flickers while it climbs, a failed command grays the burner's
+// flame and leaves a trail of sooty smoke drifting off behind it, and a
+// nearly-full context turns the stripes blue. While Claude waits on the person
+// it hovers where it is, its burner off but for the pilot glowing with each
+// slow breath (sky.ts, waiting.ts).
+//
+// Each subagent flies a small companion balloon of its own color (crew.ts):
+// it rises into view from below when its agent starts, flies high with its
+// burner flickering while the agent works, lets the burner go out and sinks
+// low while it's quiet (its envelope blinking while it waits on you), and
+// when the agent is done climbs away off the top (or, if it failed, sinks
+// away below).
 
-import type { Cells } from './cells'
+import type { AgentDial } from './agents'
+import { isTall, type Cells } from './cells'
+import { Crew, type AgentMark } from './crew'
 import { g, hash, mix } from './pixels'
 import { skyColor, SkyWorld } from './sky'
 import { defineScene } from './scene-def'
@@ -35,7 +44,18 @@ const C = {
 /** The balloon, 7 wide × 4 tall; ' ' cells let the sky through. */
 const SPRITE = [' ▄▆█▆▄ ', '███████', ' ▀█▀█▀ ', '  ╲█╱  '] as const
 
+/** Room for this many companion balloons. */
+const CREW = 4
+/** A companion's envelope, and under it its basket on the rope or, burner lit, a jet of flame into the envelope. */
+const ENVELOPE = g('●')
+const ROPE = g('╵')
+const LIT = g('╿')
+
 export class Balloon extends SkyWorld {
+  /** The subagents, one by one: each flies a companion. */
+  agents: readonly AgentDial[] = []
+  private crew = new Crew(CREW)
+
   ambience(): Ambience {
     // The burner, lit while it climbs (as drawn), and the wind it climbs into.
     return { burner: this.burning ? 1 : 0 }
@@ -84,17 +104,56 @@ export class Balloon extends SkyWorld {
     }
   }
 
-  /** Subagents fly as small companion balloons around the main one. */
-  private drawCompanions(out: Cells): void {
-    const n = Math.min(4, Math.round(this.coverageBoost / 15))
+  override step(): void {
+    super.step()
+    this.crew.update(this.agents, this.coverageBoost)
+    // Each companion eases toward its place: spread across the sky in the order of their slots, high while
+    // its agent works, sunk low (burner out) while it rests.
     const w = this.columns
     const h = this.rows
-    for (let k = 0; k < n; k++) {
-      const x = Math.round(((k + 1) / (n + 1)) * w + Math.sin(this.t * 0.01 + k * 2) * 4)
-      const r = Math.max(0, Math.min(h - 2, 1 + ((k + (this.t >> 6)) % 2)))
-      if (x < 0 || x >= w) continue
-      out.set(r * w + x, g('●'), C.companion[k % C.companion.length]!, out.behind(r * w + x))
-      out.set((r + 1) * w + x, g('╵'), C.rope, out.behind((r + 1) * w + x))
+    const tall = isTall(w, h)
+    const mates = [...this.crew.mates].sort((a, b) => a.slot - b.slot)
+    mates.forEach((m, k) => {
+      const sway = Math.sin(this.t * 0.01 + m.seed * 6.283) * (tall ? 1.5 : 4)
+      const tx = ((k + 1) / (mates.length + 1)) * w + sway
+      const up = tall ? Math.round(h * 0.12) + m.slot * 3 : 1 + (m.slot & 1)
+      const low = tall ? Math.min(h - 3, up + 7) : h - 2
+      const ty = low + (up - low) * m.busy
+      m.x = Number.isNaN(m.x) ? tx : m.x + (tx - m.x) * 0.04
+      m.y = Number.isNaN(m.y) ? ty : m.y + (ty - m.y) * 0.05
+    })
+  }
+
+  agentMarks(): readonly AgentMark[] {
+    return this.strength > 0 ? this.crew.marks : []
+  }
+
+  /**
+   * The companions: each rises into view from below as it arrives; leaving, it
+   * climbs off the top downwind, or sinks away below if its agent failed.
+   */
+  private drawCompanions(out: Cells): void {
+    const w = this.columns
+    const h = this.rows
+    this.crew.clearMarks()
+    for (const m of this.crew.mates) {
+      if (Number.isNaN(m.x)) continue
+      const away = 1 - m.here
+      const y = m.leaving && m.ok ? m.y - away * (m.y + 3) : m.y + away * (h + 1 - m.y)
+      const x = Math.round(m.x + (m.leaving ? away * 8 : 0))
+      const r = Math.round(y)
+      if (x < 0 || x >= w || r < -1 || r >= h) continue
+      let color: number = C.companion[m.slot % C.companion.length]!
+      if (this.tint === 'blue') color = mix(color, C.blueA, 0.6)
+      // Waiting on you: the envelope blinks, out of step with any other.
+      if (m.waiting && ((this.t + m.slot * 5) >> 3) % 2 === 0) color = mix(color, 0xffffff, 0.55)
+      if (r >= 0) out.set(r * w + x, ENVELOPE, color, out.behind(r * w + x))
+      if (r + 1 < h) {
+        const lit = m.busy > 0.5 && !m.leaving
+        const flame = this.tint === 'smoke' ? C.smoke : C.flame[((this.t >> 1) + m.slot) % C.flame.length]!
+        out.set((r + 1) * w + x, lit ? LIT : ROPE, lit ? flame : C.rope, out.behind((r + 1) * w + x))
+      }
+      this.crew.mark(m, x - 1, r, 3, 2, w, h)
     }
   }
 

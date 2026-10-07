@@ -85,7 +85,7 @@ Balloon, falcon, starship, surf, ski and train also have a **night** version: st
 | editing files | pushes higher, scaled by the lines written |
 | running commands | sparks; a slow command keeps it ticking over |
 | reading or searching, or using any other tool (an MCP server's too) | a small spark each |
-| running subagents | busier with each one (with diminishing returns); some scenes add company: more balloons, surfers or skiers, a wider fire, more lights on the launch tower, trains running alongside |
+| running subagents | busier with each one (with diminishing returns), and each one gets a companion of its own (see below); the rest add company: a wider fire, more stars, more lit windows, more streams of bubbles, more lights on the launch tower, trains running alongside |
 | hitting a failed command, or compacting | smoke for a moment: smoky flame tips, sooty steam, a grey sky, a wipeout, a rocket's plume sputtering grey, black smoke pouring from the train's diesel |
 | near a full context (≥85%) | blue: a blue-white flame, a storm, dusk on the slopes, a blue gas flame, rain driving past the train |
 | waiting on you: a permission to grant, its question, a plan to approve | settles to a calm 2 and holds, the whole scene turned a warm sepia that breathes slowly, about every 4 s: the fire banks to a bed of glowing coals, the stars stop, the colony ship comes to rest, the balloon hovers with its pilot light glowing, the engine runs down and lets off steam, a rocket holds its stage with amber lights up the tower, the surfer sits up waiting for a wave, the skier stops, the bubbles slow, the train draws up at a red signal or a platform, its headlight and the signal glowing with each breath. With sound on, a soft chime as the wait begins |
@@ -93,6 +93,20 @@ Balloon, falcon, starship, surf, ski and train also have a **night** version: st
 A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes several subagents editing in parallel, or a long turn: it climbs a level every 30 s it keeps going.
 
 Waiting on you shows only while a dialog is actually up for you: a permission ask that auto mode's classifier settles by itself, or that a hook answers, isn't one. It ends when you answer (once the call is over, or as soon as a long command shows it's running). Like the tints, it shows in auto mode only, and only in the session that waits.
+
+### Subagents, one by one
+
+In surf, ski, balloon, falcon, starship and engine, each running subagent has a companion of its own, in its own colors, so you can tell at a glance which are busy, which have gone quiet or are waiting on you, and when each finishes:
+
+| Scene | Arrives | Working | Quiet (nothing for 20 s) | Waiting on you | Done |
+|---|---|---|---|---|---|
+| `surf` | paddles in from the edge | paddles hard, or rides a following wave | sits up on its board, bobbing | sits up waving an arm | paddles off out of sight |
+| `ski` | skis in from behind | carves S-turns, throwing spray | pulls over to the side, standing on its poles | waves a pole overhead | tucks and skis off ahead (failed: drops back) |
+| `balloon` | rises into view from below | flies high, burner flickering | burner out, sinks low | its envelope blinks | climbs away off the top (failed: sinks away below) |
+| `falcon`, `starship` | an escort flies in from the side | holds station beside the rocket on a flickering burn | engine off, drops back low, a light blinking | an amber beacon flashes | peels off and climbs away (failed: falls away trailing smoke) |
+| `engine` | its lamps on the bed plate warm up | a light runs along its lamps | its lamps glow low | its lamps flash together | its lamps fade out (failed: fading red) |
+
+A scene has room for a few (surf 5, ski 4, balloon 4, the rockets 3 escorts, the engine 6 lamp groups; fewer in the narrow spine); more wait for a place to come free. Fire, warp, avalon and bubbles keep the plain company above: they're one body of flame, a stream of stars, a ship's windows, a glass of anonymous bubbles, with nothing that stays put long enough to be someone. In the Claude desktop app, put the pointer over a companion to see its subagent's task, what it's doing and for how long.
 
 ## The command
 
@@ -138,7 +152,7 @@ Run `/flow off`, or `/flow idle dark` to stay in auto mode but show nothing whil
 
 ## pi
 
-The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's editor, drawn as 24-bit ANSI lines. It shares the scenes, the activity model and the `/flow` command with the Claude Code version. pi has no side panes, so there is no spine there, and no built-in subagents. pi's events drive it:
+The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's editor, drawn as 24-bit ANSI lines. It shares the scenes, the activity model and the `/flow` command with the Claude Code version. pi has no side panes, so there is no spine there, and no built-in subagents (so no companions). pi's events drive it:
 
 | pi event | The scene |
 |---|---|

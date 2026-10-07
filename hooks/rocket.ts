@@ -1,4 +1,4 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v126-agents
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -36,6 +36,15 @@
 // lattice and the plume are twice as fine as the grid, and soft things
 // (vapour, steam, the plume's tail) blend into whatever sky is behind them.
 //
+// Each running subagent flies a small escort of its own, trimmed in its own
+// color (crew.ts), holding station beside whatever's flying (on the pad,
+// climbing, in orbit, coming home): it flies in from the side when its
+// agent starts, holds station on a flickering burn while the agent works,
+// cuts its engine and drops back low, a light blinking, while it's quiet (an
+// amber beacon flashing while it waits on you), and when the agent is done
+// peels off and climbs away out of sight (or, if it failed, falls away below
+// trailing smoke).
+//
 // Dials: running subagents add vapour and more tower lights; a failed
 // command makes the engines sputter a grey, smoky plume (on the pad the
 // vents fume grey and the tower lights burn low; in orbit it coughs smoke
@@ -47,7 +56,9 @@
 // 2, and a dip holds), amber lights glow up the tower with each slow breath
 // and the whole view breathes in sepia (waiting.ts).
 
+import type { AgentDial } from './agents'
 import { type Cells, DEFAULT_COLOR, Rng } from './cells'
+import { Crew, type AgentMark } from './crew'
 import { layered, snap } from './clouds/layered'
 import { STAR, STAR_DIM } from './night'
 import { fitQuad, g, hash, lowerBlock, mix, QUAD, type QuadFit } from './pixels'
@@ -353,6 +364,10 @@ const SEA: SceneryCell = { glyph: g('▀'), fg: 0x3a7cc0, bg: 0x1d4e8e }
 
 const LIGHT = { red: 0xff3b30, amber: 0xffb020, green: 0x5cff7a, blue: 0x4aa8ff }
 
+/** Escorts for subagents, at most; each one's trim. */
+const ESCORTS = 3
+const ESCORT = { hull: 0xe6eaef, wing: 0x9aa3ad, trim: [0xff7a3d, 0x45c4f5, 0xb58cff] as const, strobe: 0xffffff }
+
 /** Frames from ignition to liftoff: the hold-down while the engines spool up. */
 const IGNITE = 20
 /** Frames for the arms to swing shut (or open). */
@@ -421,6 +436,9 @@ const OCEAN = 0x1d4e8e
 abstract class LaunchSite extends SkyWorld {
   /** What just happened, to be heard (the split screen's booster's too). */
   sounds: SoundEvent[] = []
+  /** The subagents, one by one: each flies an escort. */
+  agents: readonly AgentDial[] = []
+  private crew = new Crew(ESCORTS)
 
   /** What it's doing now: engines burning, fuel venting, air rushing past, the quiet of orbit. */
   ambience(): Ambience {
@@ -482,6 +500,11 @@ abstract class LaunchSite extends SkyWorld {
     }
     this.strength = this.staged
     super.step()
+    this.crew.update(this.agents, this.coverageBoost)
+  }
+
+  agentMarks(): readonly AgentMark[] {
+    return this.strength > 0 ? this.crew.marks : []
   }
 
   /** Coming home: the acted-out level walking down to 1. */
@@ -1740,7 +1763,76 @@ abstract class LaunchSite extends SkyWorld {
     this.drawRocket()
     if (this.look.catches) this.drawArms()
     if (!this.siteHidden) this.drawLights()
+    this.drawEscorts()
     this.composite(out)
+  }
+
+  /**
+   * The escorts, one for each subagent, holding station beside what's flying
+   * (grid pixels, where the camera has it): out to either side, and for a
+   * third further out, at its height while its agent works, dropped back low
+   * while it rests; in from that side's edge as it arrives, away as it leaves.
+   */
+  private drawEscorts(): void {
+    this.crew.clearMarks()
+    if (this.crew.mates.length === 0) return
+    const pw = this.pw
+    const ph = this.ph
+    const [fc, fr] = this.focus()
+    // What's flying, kept on the grid (the camera may be sliding back to the pad, or it's split off).
+    const left = this.splitTall ? 0 : 2 * Math.round(this.splitW)
+    const bottom = this.splitTall ? ph - 2 * Math.round(this.splitW) : ph
+    const cx = Math.max(left + 6, Math.min(pw - 6, fc * 2))
+    const cy = Math.max(3, Math.min(bottom - 3, fr * 2))
+    const t = this.t
+    for (const m of this.crew.mates) {
+      const side = m.slot === 1 ? -1 : 1
+      const reach = this.tall ? Math.max(8, Math.round(pw * 0.3)) : 16 + (m.slot === 2 ? 14 : 0)
+      // (Clear of the split screen's other half.)
+      const hx = Math.max(left + 2, Math.min(pw - 3, cx + side * reach))
+      const hy = this.tall ? cy + (m.slot - 1) * 8 : cy - 1 + (m.slot & 1) * 2
+      // Resting it drops back low, engine off.
+      const low = this.tall ? Math.min(bottom - 3, hy + 10) : bottom - 2
+      let x = hx
+      let y = hy + (low - hy) * (1 - m.busy) + Math.sin(t * 0.09 + m.seed * 6.283) * 0.6
+      const away = 1 - m.here
+      if (m.leaving) {
+        // Done: peels off and climbs away; failed, it falls away below.
+        x += side * away * (pw * 0.6)
+        y += m.ok ? -away * (y + 8) : away * (bottom + 8 - y)
+      } else if (away > 0) {
+        x += side * away * (side > 0 ? pw + 8 - x : x + 8)
+      }
+      x = Math.round(x)
+      y = Math.round(y)
+      if (x < -3 || x > pw + 3 || y < -3 || y > ph + 3) continue
+      const trim = ESCORT.trim[m.slot % ESCORT.trim.length]!
+      // Its burn: lit while its agent works, as it arrives and as it leaves (grey smoke, failed).
+      const burning = m.leaving || away > 0 ? 1 : m.busy
+      if (burning > 0.3) {
+        const ramp = m.leaving && !m.ok ? RAMPS.smoke : this.ramp
+        const n = hash(x, t, 61)
+        const len = m.leaving || away > 0 ? 3 : 2
+        for (let d = 0; d < len; d++) this.escortPx(x, y + 2 + d, rampColor(ramp, 0.95 - d * 0.3 - n * 0.2), burning * (1 - d * 0.28))
+      }
+      // The craft: a nose, a hull in its trim, swept wings.
+      this.escortPx(x, y - 1, ESCORT.hull, 1)
+      this.escortPx(x, y, trim, 1)
+      this.escortPx(x - 1, y + 1, ESCORT.wing, 1)
+      this.escortPx(x, y + 1, trim, 1)
+      this.escortPx(x + 1, y + 1, ESCORT.wing, 1)
+      // Resting, a light blinks on its nose: a slow white strobe, or an amber beacon while it waits on you.
+      if (m.busy < 0.5 && !m.leaving) {
+        const on = m.waiting ? ((t + m.slot * 3) >> 2) % 2 === 0 : (t + m.slot * 7) % 21 < 3
+        if (on) this.escortPx(x, y - 2, m.waiting ? LIGHT.amber : ESCORT.strobe, 1)
+      }
+      this.crew.mark(m, (x - 2) / 2, (y - 2) / 2, 3, 3, this.columns, this.rows)
+    }
+  }
+
+  /** One of an escort's pixels, where the camera has it (grid pixels). */
+  private escortPx(x: number, y: number, color: number, a: number): void {
+    this.paintP(x + this.viewX(), y, color, a)
   }
 
   private drawTower(): void {

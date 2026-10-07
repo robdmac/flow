@@ -1,4 +1,4 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v126-agents
 //
 // What every harness adapter (Claude Code's register.tsx, pi's pi/index.ts)
 // does the same way: one scene instance per style (so a switch resumes where
@@ -79,6 +79,8 @@ export class SceneDriver {
     const f = this.scene
     f.strength = this.level()
     f.coverageBoost = this.cfg.mode === 'auto' ? this.activity.coverageBoost : 0
+    // Each subagent on its own, for the scenes that give each a companion (none in manual, as with coverage).
+    f.agents = this.cfg.mode === 'auto' ? this.activity.roster.dials() : []
     f.tint = this.tint()
     f.night = this.isNight()
     f.waiting = this.waiting()
