@@ -1,4 +1,4 @@
-// REVISION: flow-v132-picker
+// REVISION: flow-v133-volume-status
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -2684,7 +2684,7 @@ test("sessions: a wait is its own session's: the chime follows that session's so
   await endSession($, 'resume', 'a')
   seen.session = 'b'
   await clock.advance(CHIME_QUIET_MS + 2000)
-  expect((await flow($)).split('\n')[0]).toMatch(/sound on$/) // b's own settings
+  expect((await flow($)).split('\n')[0]).toMatch(/sound on at 7\/10$/) // b's own settings
   expect(chimes()).toBe(0)
   // b's own question: b's sound is on and the wait is new, so it chimes.
   const asked = $.tool.call({ tool: 'AskUserQuestion', questions: [] } as never)
