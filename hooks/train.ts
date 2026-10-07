@@ -1,4 +1,4 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v126-train-crew
 //
 // Train (the `train` scene): a passenger train through the countryside on
 // the same dials as the fire; the level is its speed. At 1 it waits at a red
@@ -9,8 +9,13 @@
 // and at the top it's a dash, everything near the line a blur. When the work
 // winds down it slows, and pulls up at the next red signal or platform.
 //
-// Subagents run alongside on the next track, a short train each, drawing up
-// from behind and falling back when they're done. A failed command (or a
+// Each subagent runs alongside on the next track, a short train of its own in
+// its own livery (crew.ts): it draws up from behind, out of sight, when its
+// agent starts, keeps pace while the agent works (gaining and losing a
+// little, its headlamp lit), drops back a little with its headlamp out while
+// the agent is quiet (its cab flashing amber while it waits on you), and
+// falls back out of sight when the agent is done. Only as many as the view
+// shows whole run alongside; the rest wait for a place. A failed command (or a
 // compaction) sends black smoke pouring from the diesel's exhaust under a
 // grey sky; a nearly-full context brings a storm, rain driving past, the
 // lights on. By night the carriages' windows glow, the headlight lights the
@@ -30,6 +35,8 @@
 // Painted as pixels (2 × 2 a cell) by PixelScene, which eases the level and
 // the night, folds the pixels into glyphs and blanks it all at level 0.
 
+import type { AgentDial } from './agents'
+import { Crew, type AgentMark, type Mate } from './crew'
 import { PixelScene, type Dials, type Painter } from './pixel-scene'
 import { defineScene } from './scene-def'
 import { clamp, grey, hash, hash1, mix, noise1 } from './pixels'
@@ -73,6 +80,17 @@ const CARS = 5
 const TRAIN = LOCO + CARS * (GAP + CAR)
 /** A companion: a driving car and a trailer. */
 const UNIT = CAR + GAP + CAR
+/** A companion's place alongside: this far behind the nose for the first, a unit and a gap more for each after (band pixels). */
+const ALONGSIDE = 6
+const SPACING = UNIT + 14
+/** How far a companion's place wanders while it keeps pace (band pixels, either way), and how far one drops back while its agent is quiet. */
+const SWAY = 12
+const REST_BACK = 26
+/** Frames for a companion to draw up from out of sight, and to fall back out of it again. */
+const ARRIVE = 60
+const LEAVE = 70
+/** A waiting companion's cab, flashing. */
+const FLASH = 0xffb020
 /** From above, in rows: the loco, a carriage, the gap. */
 const A_LOCO = 12
 const A_CAR = 10
@@ -451,7 +469,6 @@ function streak(buf: Int32Array, W: number, H: number, n: number): void {
 /** `k` held to steps of 1/n, so a frame holds few distinct colours (Raster paints 1024 pairs). */
 const q = (k: number, n: number) => Math.round(clamp(k) * n) / n
 
-type Comp = { off: number; livery: number; leaving: boolean; ph: number }
 /** A puff of exhaust: black smoke (a failure), or the faint haze of the diesel idling (`wisp`). */
 type Puff = { s: number; up: number; side: number; r: number; life: number; vu: number; vs: number; wisp: boolean; shade: number }
 /** Birds crossing the sky (by day, in the band): a few, flapping out of step. */
@@ -463,6 +480,10 @@ const CAR_COLORS = [0xd8433a, 0x2f6fd0, 0xf0f0ea, 0x3a3d44, 0xe0b030, 0x4a9a5a]
 
 export class Train extends PixelScene {
   sounds: SoundEvent[] = []
+  /** The subagents, one by one: each runs alongside in a train of its own. */
+  agents: readonly AgentDial[] = []
+  /** Their trains (`x`: how far its front is ahead of the nose, band pixels; negative, behind). */
+  private crew = new Crew(LIVERY.length, ARRIVE, LEAVE)
   /** The nose's distance along the line, in band pixels. */
   private pos = 0
   /** Speed, band pixels a frame (per 70 ms: scaled by the frame's real length). */
@@ -481,8 +502,6 @@ export class Train extends PixelScene {
   private horned = -1
   private kSmoke = 0
   private kStorm = 0
-  private comps: Comp[] = []
-  private nextLivery = 0
   private puffs: Puff[] = []
   private flock: Flock | undefined
   private nextFlock = 200
@@ -519,14 +538,19 @@ export class Train extends PixelScene {
 
   /** How many companions (subagents' trains) are in view, any part of them. */
   get company(): number {
-    return this.comps.filter(c => {
+    return this.crew.mates.filter(m => {
+      if (Number.isNaN(m.x)) return false
       if (this.tall) {
-        const top = this.noseY - Math.round(c.off / 3)
+        const top = this.noseY - Math.round(m.x / 3)
         return top < this.H && top + A_UNIT > 0
       }
-      const front = this.noseX - 1 + Math.round(c.off)
+      const front = this.noseX - 1 + Math.round(m.x)
       return front >= 0 && front - UNIT < this.W
     }).length
+  }
+
+  agentMarks(): readonly AgentMark[] {
+    return this.strength > 0 ? this.crew.marks : []
   }
 
   ambience(): Ambience {
@@ -745,32 +769,50 @@ export class Train extends PixelScene {
     }
   }
 
-  private moveCompanions(d: Dials, dt: number): void {
-    const want = Math.min(LIVERY.length, Math.round(d.boost / 15))
-    let active = this.comps.filter(c => !c.leaving).length
+  /** A companion's place alongside, by its slot (band pixels from the nose; negative, behind). */
+  private station(slot: number): number {
+    return -ALONGSIDE - slot * SPACING
+  }
+
+  /** The furthest back a companion can be and still show at least half of itself. */
+  private inView(): number {
+    return this.tall ? 3 * (this.noseY - this.H + A_UNIT / 2) : UNIT / 2 - (this.noseX - 1)
+  }
+
+  /** How many companions this view has room for: each place in view, however far it wanders back. */
+  private crewRoom(): number {
+    const least = this.inView()
+    let n = 0
+    while (n < LIVERY.length && this.station(n) - SWAY >= least) n++
+    return n
+  }
+
+  /**
+   * Each companion's place this frame: drawing up from out of sight as it
+   * arrives, keeping pace alongside (gaining and losing a little) while its
+   * agent works, dropped back a little while it's quiet, falling back out of
+   * sight as it leaves.
+   */
+  private moveCompanions(d: Dials, _dt: number): void {
+    this.crew.room = this.crewRoom()
+    this.crew.update(this.agents, d.boost)
     const far = this.farBehind()
-    while (active < want) {
-      const used = new Set(this.comps.map(c => c.livery))
-      let livery = this.nextLivery++ % LIVERY.length
-      for (let k = 0; k < LIVERY.length && used.has(livery); k++) livery = (livery + 1) % LIVERY.length
-      this.comps.push({ off: far - UNIT, livery, leaving: false, ph: this.rand() * 6.283 })
-      active++
+    const least = this.inView()
+    for (const m of this.crew.mates) {
+      const ph = m.seed * 6.283
+      const station = this.station(m.slot)
+      const rest = Math.max(least, station - REST_BACK)
+      const sway = (Math.sin(d.t * 0.0037 + ph) * 7 + Math.sin(d.t * 0.0011 + ph * 2.3) * 5) * m.busy
+      const at = rest + (station - rest) * m.busy + sway
+      const out = far - UNIT - (m.leaving ? 40 : 0)
+      m.x = out + (at - out) * m.here
     }
-    for (let i = this.comps.length - 1; i >= 0 && active > want; i--) {
-      if (this.comps[i]!.leaving) continue
-      this.comps[i]!.leaving = true
-      active--
-    }
-    let k = 0
-    for (const c of this.comps) {
-      // Each keeps its place alongside, gaining and losing a little; one that's done falls back out of sight.
-      const target = c.leaving
-        ? far - UNIT - 40
-        : -6 - k * (UNIT + 14) + Math.sin(d.t * 0.0037 + c.ph) * 7 + Math.sin(d.t * 0.0011 + c.ph * 2.3) * 5
-      if (!c.leaving) k++
-      c.off += clamp((target - c.off) * 0.03, -1.4 * dt, 0.9 * dt)
-    }
-    this.comps = this.comps.filter(c => !(c.leaving && c.off < far - UNIT - 20))
+  }
+
+  /** A companion's cab: 1 headlamp lit (its agent working), 0 out (quiet), 2 flashing on (waiting on you). */
+  private cab(m: Mate, t: number): number {
+    if (m.waiting && !m.leaving) return ((t + m.slot * 3) >> 2) % 2 === 0 ? 2 : 0
+    return m.busy >= 0.5 || m.leaving || m.here < 1 ? 1 : 0
   }
 
   private moveSmoke(was: number, dt: number): void {
@@ -851,7 +893,7 @@ export class Train extends PixelScene {
   private gateShut(vc: number): boolean {
     const nose = this.pos / 3
     let back = (this.pos - TRAIN) / 3
-    for (const c of this.comps) back = Math.min(back, (this.pos + c.off - UNIT) / 3)
+    for (const m of this.crew.mates) if (!Number.isNaN(m.x)) back = Math.min(back, (this.pos + m.x - UNIT) / 3)
     return vc >= back - 3 && vc <= nose + 30
   }
 
@@ -923,6 +965,7 @@ export class Train extends PixelScene {
   }
 
   paint(px: Painter, d: Dials): void {
+    this.crew.clearMarks()
     if (px.w === 0 || px.h === 0) return
     this.layout(d)
     if (this.solid.length !== px.w * px.h) this.resize(d)
@@ -1093,22 +1136,25 @@ export class Train extends PixelScene {
     if (yLow >= 0) smear(buf, W, yLow, F_FAR * this.v)
     if (yBog >= 0) smear(buf, W, yBog, this.v)
 
-    // The companions on the far track, then the train itself.
-    for (const c of this.comps) {
-      const front = nx - 1 + Math.round(c.off)
-      const livery = mix(LIVERY[c.livery]!, NIGHT_SHADE, 0.55 * kn)
+    // The companions on the far track (each noted for desktop's hover card), then the train itself.
+    for (const m of this.crew.mates) {
+      if (Number.isNaN(m.x)) continue
+      const front = nx - 1 + Math.round(m.x)
+      const livery = mix(LIVERY[m.slot % LIVERY.length]!, NIGHT_SHADE, 0.55 * kn)
+      const cab = this.cab(m, d.t)
       for (let b = 0; b < UNIT; b++) {
         const x = front - b
         if (x < 0 || x >= W) continue
         for (let r = 0; r < 4; r++) {
           const y = yRoof - 3 + r
           if (y < 0) continue
-          const c2 = this.unitSide(b, r, livery, P)
+          const c2 = this.unitSide(b, r, livery, P, cab)
           if (c2 < 0) continue
           buf[y * W + x] = c2
           this.solid[y * W + x] = 1
         }
       }
+      this.crew.mark(m, (front - UNIT + 1) / 2, (yRoof - 3) / 2, UNIT / 2, 2, d.columns, d.rows)
     }
     for (let b = 0; b < TRAIN; b++) {
       const x = nx - 1 - b
@@ -1380,12 +1426,17 @@ export class Train extends PixelScene {
     return (cb >= 2 && cb < 8) || (cb >= CAR - 8 && cb < CAR - 2) ? P.bogie : P.shadow
   }
 
-  /** A companion side-on: a driving car (its cab at the front) and a trailer, in its livery. */
-  private unitSide(b: number, r: number, livery: number, P: Pal): number {
+  /**
+   * A companion side-on: a driving car (its cab at the front) and a trailer,
+   * in its livery. `cab`: its headlamp lit (1) or out (0), or the cab front
+   * flashing (2: waiting on you).
+   */
+  private unitSide(b: number, r: number, livery: number, P: Pal, cab = 1): number {
     if (b < CAR) {
+      if (cab === 2 && b < 4 && (r === 1 || r === 2)) return FLASH
       if (r === 0) return b < 4 ? -1 : P.carRoof
       if (r === 1) return b < 2 ? -1 : b < 4 ? P.glass : b < 8 ? livery : (b & 2) === 0 ? P.glass : mix(livery, 0xffffff, 0.35)
-      if (r === 2) return b < 2 ? P.lamp : b < 4 ? P.yellow : livery
+      if (r === 2) return b < 2 ? (cab ? P.lamp : P.yellow) : b < 4 ? P.yellow : livery
       return (b >= 4 && b < 10) || (b >= CAR - 8 && b < CAR - 2) ? P.bogie : P.shadow
     }
     const cb = b - CAR - GAP
@@ -1554,21 +1605,24 @@ export class Train extends PixelScene {
     // At speed the countryside streaks down past (the trains, keeping pace with the eye, stay sharp).
     const run = Math.min(3, Math.round((this.v / 3) * 0.7))
     if (run >= 1) streak(buf, W, H, run)
-    // The companions on the right-hand track, then the train.
-    for (const c of this.comps) {
-      const top = ny - Math.round(c.off / 3)
-      const livery = mix(LIVERY[c.livery]!, NIGHT_SHADE, 0.55 * kn)
+    // The companions on the right-hand track (each noted for desktop's hover card), then the train.
+    for (const m of this.crew.mates) {
+      if (Number.isNaN(m.x)) continue
+      const top = ny - Math.round(m.x / 3)
+      const livery = mix(LIVERY[m.slot % LIVERY.length]!, NIGHT_SHADE, 0.55 * kn)
+      const cab = this.cab(m, d.t)
       for (let r = 0; r < A_UNIT; r++) {
         const y = top + r
         if (y < 0 || y >= H) continue
         for (let i = 0; i < 4; i++) {
-          const c2 = this.unitAbove(r, i, livery, P)
+          const c2 = this.unitAbove(r, i, livery, P, cab)
           if (c2 < 0) continue
           buf[y * W + tx + 5 + i] = c2
           this.solid[y * W + tx + 5 + i] = 1
         }
         if (kn > 0.3 && r !== A_CAR) this.spill(px, P, tx + 4, tx + 9, y, r > A_CAR ? r - A_CAR - A_GAP : r, kn)
       }
+      this.crew.mark(m, (tx + 4) / 2, top / 2, 3, A_UNIT / 2, d.columns, d.rows)
     }
     const len = A_LOCO + CARS * (A_GAP + A_CAR)
     for (let r = 0; r < len; r++) {
@@ -1744,12 +1798,13 @@ export class Train extends PixelScene {
     return cr === 3 || cr === 6 ? P.vent : P.carRoof
   }
 
-  /** A companion from above: its cab, then the trailer, its livery along the sides. */
-  private unitAbove(r: number, i: number, livery: number, P: Pal): number {
+  /** A companion from above: its cab, then the trailer, its livery along the sides (`cab` as for `unitSide`). */
+  private unitAbove(r: number, i: number, livery: number, P: Pal, cab = 1): number {
     const edge = i === 0 || i === 3
     if (r === A_CAR) return i === 1 || i === 2 ? P.bogie : -1
     const cr = r < A_CAR ? r : r - A_CAR - A_GAP
-    if (r < A_CAR && cr === 0) return edge ? P.lamp : P.yellow
+    if (cab === 2 && r < 2) return FLASH
+    if (r < A_CAR && cr === 0) return edge && cab ? P.lamp : P.yellow
     if (r < A_CAR && cr === 1) return P.glass
     if (edge) return cr === 0 || cr === A_CAR - 1 ? livery : (cr & 1) === 1 ? mix(livery, P.sideGlass, 0.7) : livery
     return cr === 3 || cr === 6 ? P.vent : P.carRoof

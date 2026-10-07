@@ -1,4 +1,4 @@
-// REVISION: flow-v137-agents-waits
+// REVISION: flow-v138-train-crew
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -27,7 +27,7 @@ import { SOUND_FILES } from '../hooks/sound-files'
 import { PixelScene, type Dials, type Painter } from '../hooks/pixel-scene'
 import { hotkeyFor, labelWidth, PICK_LEVEL, pickLayout, pickRows, sceneOfKey, Thumbnails } from '../hooks/picker'
 import { agentLine, DONE_MS, QUIET_MS, Roster, runTime } from '../hooks/agents'
-import { Crew } from '../hooks/crew'
+import { Crew, type AgentMark } from '../hooks/crew'
 
 const BAND = {
   component: 'AbovePrompt',
@@ -3256,7 +3256,7 @@ test('crew: only places the layout can show are given; less room sends the rest 
 })
 
 /** The scenes that give each subagent a companion of its own. */
-const CREW_SCENES = ['surf', 'ski', 'balloon', 'falcon', 'starship', 'engine'] as const
+const CREW_SCENES = ['surf', 'ski', 'balloon', 'falcon', 'starship', 'engine', 'train'] as const
 
 test('companion scenes: each agent gets one that arrives, is marked where it is, and leaves when done, in the band and the spine', () => {
   for (const style of CREW_SCENES) {
@@ -3300,7 +3300,8 @@ test('companion scenes: every companion given a place is on screen, in the band 
         f.ensure(columns, rows)
         const at = `${style} at ${columns}×${rows} level ${level}`
         const check = (done: string[]) => {
-          for (let i = 0; i < 90; i++) {
+          // (Long enough for those done to leave and those waiting to come in: a train takes its time.)
+          for (let i = 0; i < 160; i++) {
             f.agents = ids.map(id => dial(id, done.includes(id) ? 'done' : 'working'))
             f.step()
           }
@@ -3431,4 +3432,41 @@ test('desktop: the pointer over a subagent\'s companion shows its task and what 
   await after(8000)
   expect(await ui.find({ key: 'agent:ag1' })).toBeUndefined() // it has left
   await ui.unmount()
+})
+
+test("train: each subagent's train draws up from out of sight, keeps pace while it works, drops back with its headlamp out while quiet, flashes its cab while it waits on you, and falls back out of sight when done", () => {
+  const t = makeScene('train', 4) as Train
+  t.strength = 6
+  t.ensure(160, 5)
+  for (let i = 0; i < 20; i++) t.step()
+  const run = (agents: ReturnType<typeof dial>[], n: number) => {
+    for (let i = 0; i < n; i++) {
+      t.agents = agents
+      t.step()
+    }
+    t.grid()
+    return t.agentMarks!()
+  }
+  // Six agents, but the band at 160 columns shows three trains whole: the rest wait for a place.
+  const six = ['a', 'b', 'c', 'd', 'e', 'f']
+  expect(run(six.map(id => dial(id, 'working')), 3).length).toBe(0) // still out of sight: nothing pops in
+  expect(t.company).toBe(0)
+  const marks = run(six.map(id => dial(id, 'working')), 200)
+  expect(marks.map(m => m.id)).toEqual(['a', 'b', 'c'])
+  expect(t.company).toBe(3)
+  // Quiet, it drops back a little (and stays in view).
+  const at = (ms: readonly AgentMark[], id: string) => ms.find(m => m.id === id)!.col
+  const before = at(marks, 'a')
+  const quiet = run([dial('a', 'idle'), ...six.slice(1).map(id => dial(id, 'working'))], 120)
+  expect(at(quiet, 'a')).toBeLessThan(before - 6)
+  // Its cab: the headlamp lit while working, out while quiet, flashing (on, off) while it waits on you.
+  const inner = t as unknown as { crew: Crew; cab(m: unknown, t: number): number }
+  const cab = (id: string, frame: number) => inner.cab(inner.crew.mates.find(m => m.id === id)!, frame)
+  expect(cab('b', 0)).toBe(1)
+  expect(cab('a', 0)).toBe(0)
+  run([dial('a', 'waiting'), ...six.slice(1).map(id => dial(id, 'working'))], 1)
+  expect([...new Set(Array.from({ length: 16 }, (_, f) => cab('a', f)))].sort()).toEqual([0, 2])
+  // Done, the first three fall back out of sight and the next three draw up in their places.
+  const later = run([...['a', 'b', 'c'].map(id => dial(id, 'done')), ...['d', 'e', 'f'].map(id => dial(id, 'working'))], 300)
+  expect(later.map(m => m.id).sort()).toEqual(['d', 'e', 'f'])
 })
