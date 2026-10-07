@@ -1,4 +1,4 @@
-// REVISION: flow-v126-volume
+// REVISION: flow-v127-picker
 //
 // Flow's settings and the `/flow` command's grammar, shared by every harness adapter (Claude Code's
 // register.tsx, pi's pi/index.ts). Pure: no engine imports. Replies carry no
@@ -109,6 +109,8 @@ export function staleRows(rows: readonly StoredRow[], plugin: string): StaleRow[
 export type FlowCommand =
   | { kind: 'show' }
   | { kind: 'help' }
+  /** Every scene at once, to choose from (Claude Code: live thumbnails in a pane). */
+  | { kind: 'pick' }
   | { kind: 'auto' }
   | { kind: 'idle'; level: 0 | 1 }
   /** A fixed level; none given holds the configured one. */
@@ -183,6 +185,7 @@ export function parseFlowArgs(args: string): FlowCommand {
     return { kind: 'error', text: USAGE }
   }
   if (a === 'help' || a === 'list' || a === '?') return { kind: 'help' }
+  if (a === 'pick') return { kind: 'pick' }
   if (a === 'save') return { kind: 'save' }
   if (a === 'reset') return { kind: 'reset' }
   // (Either could be meant: say which is which.)
@@ -279,7 +282,7 @@ export function statusText(cfg: FlowConfig, levelNow: number, tint: string, cloc
   if (defaults && own.length) {
     lines.push(`just this session (your default: ${inWords(defaults, own)}) · \`/flow save\` makes this the default · \`/flow reset\` goes back`)
   }
-  lines.push(`scenes: ${SCENES} · \`/flow next\` for another · \`/flow help\``)
+  lines.push(`scenes: ${SCENES} · \`/flow pick\` to see them all · \`/flow next\` for another · \`/flow help\``)
   return lines.join('\n')
 }
 
@@ -309,11 +312,14 @@ export function resetText(before: FlowConfig, defaults: FlowConfig): string {
   return items.length ? `back to your default: ${inWords(defaults, items)}` : 'already on your default'
 }
 
-/** `/flow help`: everything it takes (`panes`: whether the harness has the spine). */
+/** `/flow help`: everything it takes (`panes`: whether the harness has panes: the spine, the picker's thumbnails). */
 export function helpText(agent = "Claude's", panes = true): string {
   const lines = [
     'ambient scenes that move with the work; each session keeps its own settings',
     `  /flow <name>          pick a scene: ${SCENES}`,
+    panes
+      ? '  /flow pick            every scene live, side by side: arrows move, Enter picks, Esc closes'
+      : '  /flow pick            choose a scene from a list',
     '  /flow next            the next scene',
     `  /flow day | night     pin the time of day (${STYLES.filter(hasNight).join(', ')})`,
     '  /flow clock           day or night by your clock (night 19:00 to 7:00)',
@@ -453,7 +459,7 @@ export function nextTip(tips: Tips, cfg: FlowConfig): { tip?: string; tips: Tips
     t.since = 0
     if (!t.otherScene)
       return {
-        tip: `flow: the fire is one of ${STYLES.length} scenes (${STYLES.filter(s => s !== 'fire').join(', ')}): \`/flow next\` steps through them, or \`/flow <name>\` picks one.`,
+        tip: `flow: the fire is one of ${STYLES.length} scenes (${STYLES.filter(s => s !== 'fire').join(', ')}): \`/flow pick\` shows them all at once, \`/flow next\` steps through them, or \`/flow <name>\` picks one.`,
         tips: t,
       }
     return { tips: t }

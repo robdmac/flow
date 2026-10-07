@@ -68,6 +68,8 @@ Every scene has a level from 0 (off) to 10 (as busy as it gets).
 | `bubbles` | a couple of lazy strings of bubbles | a rolling, fizzing boil |
 | `train` | waiting at a red signal or a platform, its diesel idling (when the work starts the signal clears, the horn sounds and it pulls away; when it winds down the train pulls up again) | flat out past fields, villages, woods, rivers and stations, the poles and the line beside it a blur |
 
+`/flow pick` shows them all at once, each one live, to choose from with the arrow keys and Enter (in pi, a list).
+
 Some scenes also answer to other names: `inferno` and `flame` (fire), `stars` (warp), `colony` and `interstellar` (avalon), `mechanism` (engine), `rocket` (falcon), `spaceship` (starship), `ocean` and `sea` (surf), `snow` (ski), `rail` and `railway` (train).
 
 Balloon, falcon, starship, surf, ski and train also have a **night** version: stars, a moon, moonlit snow or water, and the train's windows lit up. By night, bubbles turns into a stout: pale tan bubbles rising through black. By default day and night follow your local clock (night is 19:00 to 7:00). `/flow day` or `/flow night` pins one.
@@ -102,6 +104,7 @@ A new session starts on your defaults: the rows in `/config` (*Scene mode*, *Sce
 |---|---|
 | `/flow` | show the scene, mode, level and time of day |
 | `/flow <scene>` | pick a scene by name or alias (`/flow surf`, `/flow sea`) |
+| `/flow pick` | every scene at once, live, side by side in a pane: the arrows (or Tab) move, Enter (or the scene's number) picks it for this session, as `/flow <scene>` does, Esc closes; on desktop, click one |
 | `/flow next` | the next scene |
 | `/flow day` / `night` | pin the time of day |
 | `/flow clock` | day or night by your local clock (the default) |

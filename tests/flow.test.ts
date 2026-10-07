@@ -1,4 +1,4 @@
-// REVISION: flow-v131-waiting
+// REVISION: flow-v132-picker
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -25,6 +25,7 @@ import { DEFAULT_VOLUME, MAX_GAIN, master, VOLUME_DB, volumeGain } from '../hook
 import { BREATH_FRAMES, breath, easeWait, waitTone } from '../hooks/waiting'
 import { SOUND_FILES } from '../hooks/sound-files'
 import { PixelScene, type Dials, type Painter } from '../hooks/pixel-scene'
+import { hotkeyFor, labelWidth, PICK_LEVEL, pickLayout, pickRows, sceneOfKey, Thumbnails } from '../hooks/picker'
 
 const BAND = {
   component: 'AbovePrompt',
@@ -49,6 +50,8 @@ function decode(cells: string): Uint32Array {
 
 type Captured = {
   blits: string[]
+  /** Each blit as `<site>/<key>` (the picker's thumbnails are a Raster each). */
+  blitKeys?: string[]
   config: [string, unknown][]
   invalidates?: number
   plays?: string[]
@@ -110,6 +113,7 @@ function engine(
   on('command.register', () => ({ value: { command: 'flow' } }))
   on('ui.blit', (_, e) => {
     captured.blits.push(e.requestId)
+    ;(captured.blitKeys ??= []).push(`${e.requestId}/${e.key}`)
     return { value: {} }
   })
   on('config.set', (_, e) => {
@@ -2101,6 +2105,8 @@ function sceneSession(shared: Shared, id: string) {
     session: { id: undefined, defaults: readConfig(undefined), own: {}, ended: undefined, watch: 0 },
     applyLocal: changes => driver.apply(changes),
     leftSpine: () => {},
+    openingPicker: () => {},
+    closingPicker: () => false,
   }
   return {
     cfg: driver.cfg,
@@ -2726,4 +2732,299 @@ test('train: waiting on the person, it draws up at a red signal or a platform an
       expect(run(60, 5, false)).toContain('horn')
       expect(t.standing).toBe(false)
     }
+})
+
+// ── The picker (/flow pick) ──────────────────────────────────────────────
+
+/** The picker's pane as a docked terminal pane draws it (two thumbnails across). */
+const PICK_PANE = {
+  component: 'Pane',
+  requestId: 'flow-pick',
+  props: { title: 'flow: pick a scene', isFocused: true, bodyColumns: 64, placement: 'dock', scroll: { offset: 0, bodyRows: 44 }, view: {} },
+} as const
+
+/** Stand for the engine's panes: what opens and closes, and with what. */
+function panes(on: On) {
+  const seen = { open: new Set<string>(), opens: [] as Record<string, unknown>[], closes: [] as string[] }
+  on('ui.open', (_, e) => {
+    const args = e as unknown as Record<string, unknown>
+    seen.open.add(args.id as string)
+    seen.opens.push(args)
+    return { value: { isPlaced: true } }
+  })
+  on('ui.close', (_, e) => {
+    seen.open.delete((e as { id: string }).id)
+    seen.closes.push(`${(e as { id: string }).id}:${(e as { origin: { kind: string } }).origin.kind}`)
+    return { value: undefined }
+  })
+  on('ui.panes', () => ({ value: [...seen.open].map(id => ({ id })) as never }))
+  return seen
+}
+
+test('/flow pick: the grammar, the help, and where the status points', () => {
+  expect(parseFlowArgs('pick')).toEqual({ kind: 'pick' })
+  expect(parseFlowArgs(' PICK ')).toEqual({ kind: 'pick' })
+  expect(parseFlowArgs('pick surf').kind).toBe('error') // a scene by name is `/flow surf`
+  expect(changesFor({ kind: 'pick' }, readConfig({}))).toBeUndefined()
+  expect(helpText()).toContain('/flow pick')
+  expect(helpText("pi's", false)).toContain('/flow pick')
+  expect(helpText("pi's", false)).not.toContain('spine')
+  expect(statusText(readConfig({}), 3, 'normal', { hour: 12, minute: 0 })).toContain('`/flow pick`')
+  // The one-time scenes tip names it too.
+  expect(nextTip({}, readConfig({})).tip).toContain('`/flow pick`')
+})
+
+test("picker layout: fits the room it has, thumbnails at the band's 5 rows where they can be, a list where nothing fits", () => {
+  const label = labelWidth()
+  for (let columns = 8; columns <= 260; columns += 7) {
+    for (let rows = 4; rows <= 70; rows += 3) {
+      const l = pickLayout(columns, rows, STYLES.length)
+      if (!l) continue
+      const frame = l.framed ? 2 : 0
+      // Never wider or taller than the body, never narrower than a label.
+      expect(l.across * (l.columns + frame) + (l.across - 1)).toBeLessThanOrEqual(columns)
+      expect(l.height).toBeLessThanOrEqual(rows)
+      expect(Math.ceil(STYLES.length / l.across) * (l.rows + 1 + frame) + (l.lines ? 2 : 0)).toBe(l.height)
+      expect(l.columns).toBeGreaterThanOrEqual(label)
+      expect(l.columns).toBeLessThanOrEqual(40)
+      expect([3, 4, 5]).toContain(l.rows)
+    }
+  }
+  // A docked pane two thumbnails wide: framed, two across, each wide enough to read.
+  const dock = pickLayout(64, 44, STYLES.length)!
+  expect(dock).toMatchObject({ across: 2, framed: true, lines: true })
+  expect(dock.columns).toBeGreaterThanOrEqual(20)
+  // A wide, short inline pane: the band's 5 rows, many across.
+  const wide = pickLayout(200, 20, STYLES.length)!
+  expect(wide.rows).toBe(5)
+  expect(wide.across).toBeGreaterThanOrEqual(5)
+  // Narrower than a label: no room for thumbnails, so a plain list (a spine-width dock gets small ones).
+  expect(pickLayout(10, 50, STYLES.length)).toBeUndefined()
+  // Inline it asks for no more than it needs, and never a whole screen.
+  expect(pickRows(80)).toBeLessThanOrEqual(28)
+  expect(pickRows(200)).toBeLessThan(pickRows(80))
+  // Number keys for the first ten scenes; keys name scenes and nothing else.
+  expect([0, 8, 9, 10].map(hotkeyFor)).toEqual(['1', '9', '0', undefined])
+  expect(sceneOfKey('pick:surf')).toBe('surf')
+  expect(sceneOfKey('pick:nope')).toBeUndefined()
+  expect(sceneOfKey('thumb:surf')).toBeUndefined()
+})
+
+test('picker thumbnails: every scene, lit at its level from the first frame, moving, by day or night', () => {
+  const t = new Thumbnails(5)
+  t.ensure(24, 5)
+  for (const style of STYLES) {
+    const g = t.grid(style)!
+    expect([g.columns, g.rows]).toEqual([24, 5])
+    let lit = 0
+    for (let i = 0; i < g.words.length; i += 3) if (g.words[i] !== 0x20) lit++
+    expect(lit).toBeGreaterThan(0) // warmed up: never a blank tile on opening
+  }
+  const before = STYLES.map(s => t.frame(s))
+  for (let i = 0; i < 5; i++) t.step()
+  const moved = STYLES.filter((s, i) => t.frame(s) !== before[i])
+  expect(moved.length).toBeGreaterThanOrEqual(STYLES.length - 1)
+  t.night = true
+  t.step()
+  expect(PICK_LEVEL).toBeGreaterThan(1)
+  t.clear()
+  expect(t.isBuilt).toBe(false)
+  expect(t.frame('surf')).toBe('')
+})
+
+test('/flow pick opens a dialog of live thumbnails; Enter on one picks it, as /flow <scene> would, and closes it', { options: { mode: 'manual', level: 5 } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  const pane = panes(on)
+  await start($)
+  expect(await flow($, 'pick')).toContain('Esc closes')
+  const opened = pane.opens.find(o => o.id === 'flow-pick')!
+  expect(opened).toMatchObject({ focus: true, closeOnEscape: true, holdToasts: true })
+  expect(pane.open.has('flow-pick')).toBe(true)
+
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  // A Raster and a Button for every scene; the ring starts on the scene on show, marked.
+  expect(await ui.findAll({ type: 'Raster' })).toHaveLength(STYLES.length)
+  const buttons = await ui.findAll({ type: 'Button' })
+  expect(buttons.map(b => b.key)).toEqual(STYLES.map(s => `pick:${s}`))
+  const fire = await ui.find({ key: 'pick:fire' })
+  expect(fire?.props.label).toBe('fire ●')
+  expect(fire?.props.autoFocus).toBe(true)
+  expect(fire?.props.hotkey).toBe('1')
+  // The thumbnails move: each its own blit, about ten a second.
+  seen.blitKeys = []
+  await clock.advance(1000)
+  const thumbs = seen.blitKeys.filter(k => k.startsWith('flow-pick/'))
+  expect(new Set(thumbs)).toEqual(new Set(STYLES.map(s => `flow-pick/thumb:${s}`)))
+  expect(thumbs.length).toBeGreaterThanOrEqual(STYLES.length * 8)
+  expect(thumbs.length).toBeLessThanOrEqual(STYLES.length * 11)
+
+  // Enter on surf: `/flow surf`'s own reply, as a toast once the picker's gone (the first change, so with the hint).
+  seen.toasts = []
+  await ui.press({ key: 'pick:surf' })
+  expect((await flow($)).split('\n')[0]).toContain('surf, holding 5/10')
+  expect(pane.closes).toContain('flow-pick:plugin')
+  expect(seen.toasts).toHaveLength(1)
+  const [said, hint] = seen.toasts![0]!.split('\n')
+  expect(said).toMatch(/^surf, (day|night) .*· `\/flow next` for another$/)
+  expect(hint).toBe('just this session · `/flow save` makes it your default for new sessions')
+  expect(seen.config).toEqual([]) // this session's own, never /config
+  // Closed, its thumbnails stop.
+  seen.blitKeys = []
+  await clock.advance(1000)
+  expect(seen.blitKeys.filter(k => k.startsWith('flow-pick/'))).toEqual([])
+  await ui.unmount()
+  // And it outlasts a reload.
+  await start($)
+  expect((await flow($)).split('\n')[0]).toContain('surf')
+})
+
+test('the picker: a scene picked in one session is that session\'s alone; another, on the same store, keeps the default', async ($, on) => {
+  mock.clock(on)
+  const store = memoryStore(on)
+  const seen = engine(on)
+  panes(on)
+  seen.session = 'a'
+  await start($)
+  await flow($, 'pick')
+  let ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  await ui.press({ key: 'pick:ski' })
+  await ui.unmount()
+  expect(store.get(sessionKey('a'))).toMatchObject({ own: { style: 'ski' } })
+  expect(store.has('overrides')).toBe(false)
+  expect(seen.config).toEqual([])
+  // Session B (another process on the same store): the default, and the picker marks it.
+  seen.session = 'b'
+  await start($)
+  const b = await flow($)
+  expect(b.split('\n')[0]).toMatch(/^fire, auto/)
+  expect(b).not.toContain('just this session')
+  expect(store.has(sessionKey('b'))).toBe(false)
+  await flow($, 'pick')
+  ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  expect((await ui.find({ key: 'pick:fire' }))?.props.label).toBe('fire ●')
+  expect((await ui.find({ key: 'pick:ski' }))?.props.label).toBe('ski')
+  await ui.unmount()
+})
+
+test('the picker: a scene picked comes back when the session is resumed, marked as the one on show', async ($, on) => {
+  mock.clock(on)
+  const store = memoryStore(on)
+  const seen = engine(on)
+  panes(on)
+  seen.session = 'a'
+  await start($)
+  await flow($, 'pick')
+  let ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  await ui.press({ key: 'pick:balloon' })
+  await ui.unmount()
+  // Another session runs meanwhile, picking its own.
+  seen.session = 'b'
+  await start($)
+  await flow($, 'pick')
+  ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  await ui.press({ key: 'pick:surf' })
+  await ui.unmount()
+  // A resumed: its balloon, which the picker marks; B's surf is B's.
+  seen.session = 'a'
+  await start($)
+  expect((await flow($)).split('\n')[0]).toMatch(/^balloon, /)
+  await flow($, 'pick')
+  ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  expect((await ui.find({ key: 'pick:balloon' }))?.props).toMatchObject({ label: 'balloon ●', autoFocus: true })
+  expect((await ui.find({ key: 'pick:surf' }))?.props.label).toBe('surf')
+  await ui.unmount()
+  expect(store.get(sessionKey('b'))).toMatchObject({ own: { style: 'surf' } })
+})
+
+test('the picker: the focus ring moving (the arrows, Tab) lights its tile and names its scene', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  engine(on)
+  panes(on)
+  on('ui.focus', () => ({}))
+  await start($)
+  await flow($, 'pick')
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  expect((await ui.find({ key: 'tile:fire' }))?.props.borderStyle).toBe('bold')
+  expect((await ui.find({ key: 'tile:ski' }))?.props.borderStyle).toBe('round')
+  expect(JSON.stringify(await ui.drawn())).toContain('fire: a ░▒▓█ fire with sparks and smoke (on now)')
+  // The ring moving onto ski, as the engine raises it for the person's arrow key (UiFocusInput).
+  await $.ui.focus({ component: 'Pane', requestId: 'flow-pick', plugin: 'flow', element: 'pick:ski', origin: { kind: 'person' } } as never)
+  await ui.redraw()
+  expect((await ui.find({ key: 'tile:ski' }))?.props.borderStyle).toBe('bold')
+  expect((await ui.find({ key: 'tile:fire' }))?.props.borderStyle).toBe('round')
+  expect(JSON.stringify(await ui.drawn())).toContain('ski: a skier down the mountain')
+  // Moving the ring picks nothing: only Enter (a press) does.
+  expect((await flow($)).split('\n')[0]).toMatch(/^fire/)
+  await ui.unmount()
+})
+
+test('the picker on desktop: an Svg thumbnail and a Button for every scene; its close changes nothing; a click picks', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  const pane = panes(on)
+  await start($)
+  await flow($, 'pick')
+  let ui = await $.ui.mount({ plugin: 'flow', surface: 'desktop', ...PICK_PANE })
+  const svgs = await ui.findAll({ type: 'Svg' })
+  expect(svgs).toHaveLength(STYLES.length)
+  const png = decodeSvgPng(svgs[0]!.props.source as string)
+  const layout = pickLayout(64, 44, STYLES.length)!
+  expect([png.width, png.height]).toEqual([layout.columns * 2, layout.rows * 4])
+  // Redrawn while it's there, as the band is.
+  seen.invalidates = 0
+  await clock.advance(1000)
+  expect(seen.invalidates).toBeGreaterThan(5)
+  // Its close control (Esc, in the terminal): nothing changes, and it stops redrawing.
+  await ui.press({ key: 'close' })
+  expect(pane.closes).toContain('flow-pick:plugin')
+  expect((await flow($)).split('\n')[0]).toMatch(/^fire/)
+  await ui.unmount()
+  seen.invalidates = 0
+  await clock.advance(1000)
+  expect(seen.invalidates).toBeLessThan(2)
+  // Opened again, a click picks.
+  await flow($, 'pick')
+  ui = await $.ui.mount({ plugin: 'flow', surface: 'desktop', ...PICK_PANE })
+  await ui.press({ key: 'pick:bubbles' })
+  expect((await flow($)).split('\n')[0]).toMatch(/^bubbles/)
+  await ui.unmount()
+})
+
+test('the picker narrower than its labels, or on a surface without pictures, is a plain list that still picks', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  engine(on)
+  panes(on)
+  await start($)
+  await flow($, 'pick')
+  for (const [surface, bodyColumns] of [['terminal', 10], ['vscode', 60]] as const) {
+    const ui = await $.ui.mount({ plugin: 'flow', surface, ...PICK_PANE, props: { ...PICK_PANE.props, bodyColumns } })
+    expect(await ui.find({ type: 'Raster' })).toBeUndefined()
+    expect(await ui.findAll({ type: 'Button', key: 'pick:warp' })).toHaveLength(1)
+    await ui.unmount()
+  }
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'vscode', ...PICK_PANE })
+  await ui.press({ key: 'pick:warp' })
+  expect((await flow($)).split('\n')[0]).toMatch(/^warp/)
+  await ui.unmount()
+})
+
+test('/flow pick where no surface places panes says what to do instead, and leaves no pane waiting', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  engine(on)
+  const closes: string[] = []
+  on('ui.open', () => ({ value: { isPlaced: false, reason: 'no surface here places panes' } }))
+  on('ui.close', (_, e) => {
+    closes.push((e as { id: string }).id)
+    return { value: undefined }
+  })
+  on('ui.panes', () => ({ value: [] }))
+  await start($)
+  expect(await flow($, 'pick')).toContain('/flow next')
+  expect(closes).toContain('flow-pick')
 })

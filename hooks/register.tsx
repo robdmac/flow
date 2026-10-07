@@ -1,4 +1,4 @@
-// REVISION: flow-v129-waiting
+// REVISION: flow-v130-picker
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -32,9 +32,14 @@
 // to /config; a row left holding one Flow no longer takes (a scene since
 // renamed or dropped) is written back as the one it stands for. `/flow help`
 // lists the command's forms (see settings.ts, sessions.ts).
+//
+// `/flow pick` opens a second pane, the picker: every scene as a live
+// thumbnail (picker.ts), a Button under each that the focus ring walks
+// (arrows, Tab), Enter or a click or its number to pick (as `/flow <scene>`
+// does, this session alone), Esc to close.
 
 import { atom, update } from 'claude-code'
-import type { CommandRunInput, CommandRunResult, EngineInterface, Register } from 'claude-code'
+import type { CommandRunInput, CommandRunResult, EngineInterface, Register, RenderElement, Timer } from 'claude-code'
 
 import { Balloon } from './balloon'
 import { Activity, linesWritten } from './activity'
@@ -51,6 +56,7 @@ import {
   savedText,
   statusText,
   storedValue,
+  type FlowCommand,
   type FlowConfig,
   type FlowLayout,
   nextTip,
@@ -75,12 +81,30 @@ import {
   storedRecord,
   withOwn,
 } from './sessions'
-import { styleNamed } from './styles'
+import { SCENES, styleNamed, type SceneName } from './styles'
 import { frameSvg } from './svg'
 import { type BedTake, bedStep, burst, chimePlay, chimeStep, gather, MAX_PLAYS, newChimeState, unit, eventPlay, master, type SoundEvent, volumeGain } from './sound'
+import {
+  hiddenNote,
+  hotkeyFor,
+  PICK_COLUMNS,
+  PICK_MS,
+  PICK_NO_PANE,
+  PICK_OPENED,
+  pickBlurb,
+  pickHint,
+  pickKey,
+  pickLabel,
+  pickLayout,
+  pickRows,
+  sceneOfKey,
+  thumbKey,
+  Thumbnails,
+  tileKey,
+} from './picker'
 
 
-const FLOW_REVISION = 'flow-v129-waiting'
+const FLOW_REVISION = 'flow-v130-picker'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -119,6 +143,12 @@ const SPINE = 'flow'
 /** The width the spine asks for; the dock seats it no narrower than its minimum. */
 const SPINE_COLUMNS = 13
 const SPINE_INLINE_ROWS = 12 // when not fullscreen, it sits above the prompt
+/** The picker (`/flow pick`): a pane of every scene's thumbnail. */
+const PICKER = 'flow-pick'
+/** A desktop picker that hasn't rendered for this many of the picker's steps (3 s) is gone. */
+const PICK_DESKTOP_STALE = 30
+/** A thumbnail blit refused (the pane behind another, mid-resize): try again this many steps on. */
+const PICK_BLIT_PAUSE = 10
 const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LSP', 'WebFetch', 'WebSearch'])
 /** Tools that are the person's to answer: Claude's question, a plan to approve. The turn's clock stops while one is open. */
 const PERSON_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode'])
@@ -363,6 +393,10 @@ export type SceneCtx = {
   applyLocal: (changes: Partial<FlowConfig>) => void
   /** The scene no longer draws in the spine. */
   leftSpine: () => void
+  /** The picker is opening: its focus starts on the scene on show, its thumbnails run. */
+  openingPicker: () => void
+  /** The picker is closing: its thumbnails stop and go. Answers whether it was docked. */
+  closingPicker: () => boolean
 }
 
 /**
@@ -510,18 +544,27 @@ export async function runScene($: EngineInterface, e: CommandRunInput, ctx: Scen
 }
 
 async function sceneReply($: EngineInterface, e: CommandRunInput, ctx: SceneCtx): Promise<CommandRunResult> {
+  const cmd = parseFlowArgs(e.args)
+  if (cmd.kind !== 'pick') return { text: await flowReply($, ctx, cmd) }
+  // (The session it is now, on the defaults as they are: the picker marks the scene it shows.)
+  await followSession($, ctx)
+  await refreshDefaults($, ctx)
+  return openPicker($, e, ctx)
+}
+
+/** `/flow <cmd>` in this session (and a scene chosen in the picker, as `/flow <scene>`): its reply. */
+async function flowReply($: EngineInterface, ctx: SceneCtx, cmd: FlowCommand): Promise<string> {
   const { driver, session } = ctx
   const cfg = driver.cfg
   // (A /clear or a resume since the last look: the session it is now. And the
   // defaults as they are now: what follows compares with them.)
   await followSession($, ctx)
   await refreshDefaults($, ctx)
-  const cmd = parseFlowArgs(e.args)
-  if (cmd.kind === 'show') return { text: statusText(cfg, driver.level(), driver.tint(), driver.clock, session.defaults) }
-  if (cmd.kind === 'help') return { text: helpText() }
-  if (cmd.kind === 'error') return { text: cmd.text }
-  if (cmd.kind === 'save') return { text: await saveDefault($, ctx) }
-  if (cmd.kind === 'reset') return { text: await resetSession($, ctx) }
+  if (cmd.kind === 'show') return statusText(cfg, driver.level(), driver.tint(), driver.clock, session.defaults)
+  if (cmd.kind === 'help') return helpText()
+  if (cmd.kind === 'error') return cmd.text
+  if (cmd.kind === 'save') return saveDefault($, ctx)
+  if (cmd.kind === 'reset') return resetSession($, ctx)
   const changes = changesFor(cmd, cfg) ?? {}
   const before = { ...cfg }
   $.ui.invalidate('ui.render')
@@ -530,7 +573,64 @@ async function sceneReply($: EngineInterface, e: CommandRunInput, ctx: SceneCtx)
   session.own = { ...session.own, ...changes }
   let note = (await keepOwn($, session)) ? '' : '  (not saved)'
   note += await placeScene($, ctx, changes.layout)
-  return { text: `${changedText(cmd, cfg, "Claude's", driver.clock)}${note}${ownHint(before, cfg, session.defaults)}` }
+  return `${changedText(cmd, cfg, "Claude's", driver.clock)}${note}${ownHint(before, cfg, session.defaults)}`
+}
+
+/**
+ * `/flow pick`: open the picker as a dialog. It asks for the keys (granted
+ * over an empty prompt, as after a command), Esc closes it, and toasts wait
+ * behind it. Docked it asks for two thumbnails' width; inline, the rows its
+ * grid needs at this terminal's width.
+ */
+async function openPicker($: EngineInterface, e: CommandRunInput, ctx: SceneCtx): Promise<CommandRunResult> {
+  ctx.openingPicker()
+  const opened = await $.ui.open({
+    id: PICKER,
+    title: 'flow: pick a scene',
+    focus: true,
+    closeOnEscape: true,
+    holdToasts: true,
+    columns: PICK_COLUMNS,
+    rows: pickRows(e.presentation.columns),
+  })
+  if (opened.isPlaced) return { text: PICK_OPENED }
+  // Nowhere places panes (an older desktop): don't leave one waiting to pop up later.
+  await closePickerPane($, ctx)
+  return { text: PICK_NO_PANE }
+}
+
+/**
+ * Close the picker from here (a pick, desktop's close). Its own `$.ui.close`
+ * doesn't come back through this plugin's `ui.close` hooks, so it stops
+ * the thumbnails itself first; the person's Esc goes through the hook.
+ */
+async function closePickerPane($: EngineInterface, ctx: SceneCtx): Promise<void> {
+  const docked = ctx.closingPicker()
+  await $.ui.close({ id: PICKER }).catch(() => {})
+  await restoreSpine($, ctx, docked)
+}
+
+/**
+ * The picker docked shares the dock with the spine, and asks for it wider:
+ * once it's gone, ask for the spine's own width again (an open of an open
+ * pane only re-asks; a width the person dragged still wins).
+ */
+async function restoreSpine($: EngineInterface, ctx: SceneCtx, docked: boolean): Promise<void> {
+  const { driver } = ctx
+  if (!docked || driver.cfg.layout !== 'spine' || !driver.isShown() || !(await spineIsUp($))) return
+  await $.ui.open({ id: SPINE, title: 'flow', columns: SPINE_COLUMNS, rows: SPINE_INLINE_ROWS }).catch(() => {})
+}
+
+/**
+ * A scene chosen in the picker: `/flow <scene>` exactly (this session's own,
+ * kept under its id), then the picker closes and the reply shows as a toast
+ * (toasts wait while the picker shows), with a word if nothing's on screen.
+ */
+async function pickScene($: EngineInterface, name: SceneName, ctx: SceneCtx): Promise<void> {
+  const reply = await flowReply($, ctx, { kind: 'style', name })
+  await closePickerPane($, ctx)
+  const hidden = ctx.driver.isShown() ? '' : `\n${hiddenNote(ctx.driver.cfg.mode)}`
+  $.ui.toast(`${reply}${hidden}`, { timeoutMs: 8000 })
 }
 
 export const register: Register = (on, options) => {
@@ -629,6 +729,50 @@ export const register: Register = (on, options) => {
     }
   }
 
+  /**
+   * The picker (`/flow pick`): whether it's open, the scene its focus ring is
+   * on, each surface's thumbnails (the terminal's and desktop's, each at its
+   * own size), and its own timer, which runs only while it's open. The
+   * terminal's thumbnails are blitted, each its own Raster (mounted: drawn
+   * there, and not paused after a refused blit); desktop's Svgs are redrawn
+   * while a desktop has drawn the picker lately (`deskAt`, in its steps).
+   */
+  const pick = {
+    open: false,
+    /** Closed since it was last opened: a late redraw (one asked for as it closed) doesn't start it again. */
+    closed: false,
+    selected: cfg.style as SceneName,
+    term: new Thumbnails(101),
+    desk: new Thumbnails(201),
+    mounted: false,
+    pausedUntil: 0,
+    /** The step the last thumbnails' blits went out on, -1 once they're all in. */
+    blitAt: -1,
+    deskAt: -1,
+    /** Seated beside the transcript (sharing the dock with the spine) when last drawn in the terminal. */
+    docked: false,
+    steps: 0,
+    timer: undefined as Timer | undefined,
+  }
+  /** Start the picker's timer (session.start, holding `$`, sets it). */
+  let startPicker = () => {}
+  /** Stop the picker and let its thumbnails go, answering whether it was docked. */
+  const closePicker = (): boolean => {
+    const docked = pick.docked
+    pick.open = false
+    pick.closed = true
+    pick.mounted = false
+    pick.pausedUntil = 0
+    pick.blitAt = -1
+    pick.deskAt = -1
+    pick.docked = false
+    pick.timer?.cancel()
+    pick.timer = undefined
+    pick.term.clear()
+    pick.desk.clear()
+    return docked
+  }
+
   /** Apply a change here at once and redraw from scratch (the caller invalidates). */
   const applyLocal = (changes: Partial<FlowConfig>) => {
     driver.apply(changes)
@@ -647,6 +791,13 @@ export const register: Register = (on, options) => {
       if (mounted?.requestId === SPINE) mounted = null
       desktopSites.delete(SPINE)
     },
+    openingPicker: () => {
+      pick.open = true
+      pick.closed = false
+      pick.selected = cfg.style
+      startPicker()
+    },
+    closingPicker: closePicker,
   }
 
   on('session.start', async ($, e, next) => {
@@ -660,7 +811,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: COMMAND,
       description: 'An ambient scene that moves with the work: fire, surf, ski, rockets and more',
-      argumentHint: '[<scene> | next | day | night | clock | auto | 1-10 | off | band | spine | save | reset | help]',
+      argumentHint: '[<scene> | pick | next | day | night | clock | auto | 1-10 | off | band | spine | save | reset | help]',
     })
 
     // What's left of Flow from before this load, read before anything below writes: /config's rows as stored,
@@ -870,6 +1021,48 @@ export const register: Register = (on, options) => {
       $.clock.after(ms, () => loop(frame(ms)))
     }
     loop(FRAME_MS)
+
+    // The picker's thumbnails: their own pace, only while it's open.
+    startPicker = () => {
+      if (pick.timer) return
+      pick.timer = $.clock.every(PICK_MS, () => {
+        if (!pick.open) {
+          pick.timer?.cancel()
+          pick.timer = undefined
+          return
+        }
+        pick.steps++
+        const night = driver.isNight()
+        // The terminal's: each thumbnail a blit to its own Raster, the next lot only once the last are in
+        // (or presumed lost).
+        if (pick.mounted && pick.steps >= pick.pausedUntil && pick.term.isBuilt) {
+          pick.term.night = night
+          pick.term.step()
+          if (pick.blitAt < 0 || pick.steps - pick.blitAt > BLIT_STALE_TICKS) {
+            const at = pick.steps
+            pick.blitAt = at
+            let left = SCENES.length
+            const pause = () => {
+              pick.pausedUntil = pick.steps + PICK_BLIT_PAUSE
+            }
+            for (const { name } of SCENES) {
+              void $.ui
+                .blit({ requestId: PICKER, key: thumbKey(name), cells: pick.term.frame(name) })
+                .then(r => r.deny && pause(), pause)
+                .finally(() => {
+                  if (--left === 0 && pick.blitAt === at) pick.blitAt = -1
+                })
+            }
+          }
+        }
+        // Desktop's: stepped here, redrawn as Svgs by its render.
+        if (pick.deskAt >= 0 && pick.steps - pick.deskAt <= PICK_DESKTOP_STALE && pick.desk.isBuilt) {
+          pick.desk.night = night
+          pick.desk.step()
+          $.ui.invalidate('ui.render')
+        }
+      })
+    }
 
     // The pane outlives a reload: one left up from a spine layout that /config
     // has since changed to the band would otherwise draw beside it.
@@ -1147,5 +1340,127 @@ export const register: Register = (on, options) => {
     // it is outside the band, so the scene's base sits one row above the input.
     const { Raster } = $.ui.resolve(e)
     return <Raster key={KEY} columns={columns} rows={rows} cells={lastCells} />
+  })
+
+  // ── The picker (`/flow pick`) ────────────────────────────────────────────
+
+  // The focus ring moving (the arrows, Tab, a click, the autoFocus on the scene on show): light that tile.
+  on('ui.focus', { requestId: PICKER }, ($, e, next) => {
+    const name = sceneOfKey(e.element)
+    if (name && name !== pick.selected) {
+      pick.selected = name
+      $.ui.invalidate('ui.render')
+    }
+    return next(e)
+  })
+
+  // Closed by the person (Esc, its close mark) or an unload: the thumbnails stop and go. (A pick closes it
+  // through closePickerPane, which does the same.)
+  on('ui.close', { id: PICKER }, async ($, e, next) => {
+    const docked = closePicker()
+    const result = await next(e)
+    if (e.origin.kind !== 'unload') await restoreSpine($, sceneCtx, docked)
+    return result
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PICKER }, ($, e) => {
+    const { Box, Text, Button } = $.ui.resolve(e)
+    // A redraw asked for as it closed (a pick redraws everything): it's going, so nothing more starts.
+    if (pick.closed) return <Text dimColor>{SCENES.map(d => d.name).join(' · ')}</Text>
+    // Drawn: opened by /flow pick, or still up across a reload (a pane outlives one). Its thumbnails run while it's open.
+    pick.open = true
+    if (e.surface === 'terminal') pick.docked = e.props.placement === 'dock'
+    startPicker()
+    // The scene this session shows: its own over the defaults.
+    const current = cfg.style
+    const columns = Math.max(1, Math.min(512, e.props.bodyColumns))
+    const rows = Math.max(1, Math.min(256, e.props.scroll.bodyRows))
+    const layout = e.surface === 'terminal' || e.surface === 'desktop' ? pickLayout(columns, rows, SCENES.length) : undefined
+    // Each scene's picture: a Raster in the terminal (blitted by the picker's timer), an Svg on desktop (drawn anew).
+    let picture: (name: SceneName) => RenderElement | null = () => null
+    if (layout && e.surface === 'terminal') {
+      pick.term.night = driver.isNight()
+      pick.term.ensure(layout.columns, layout.rows)
+      pick.mounted = true
+      pick.pausedUntil = 0
+      const { Raster } = $.ui.resolve(e)
+      picture = name => <Raster key={thumbKey(name)} columns={layout.columns} rows={layout.rows} cells={pick.term.frame(name)} />
+    } else if (layout && e.surface === 'desktop') {
+      pick.desk.night = driver.isNight()
+      pick.desk.ensure(layout.columns, layout.rows)
+      pick.deskAt = pick.steps
+      const { Svg } = $.ui.resolve(e)
+      picture = name => {
+        const grid = pick.desk.grid(name)
+        if (!grid) return null
+        return <Svg source={frameSvg(grid)} alt={`flow: ${name}`} width={layout.columns * DESKTOP_CELL_W} height={layout.rows * DESKTOP_CELL_H} />
+      }
+    } else if (e.surface === 'terminal') pick.mounted = false
+
+    // Each scene's Button: what the focus ring walks, Enter (or a click, or its number) picks. The ring starts on the scene on show.
+    const button = (name: SceneName, i: number) => {
+      const hotkey = hotkeyFor(i)
+      return (
+        <Button
+          key={pickKey(name)}
+          label={pickLabel(name, name === current)}
+          plain
+          {...(hotkey ? { hotkey } : {})}
+          {...(name === current ? { autoFocus: true as const } : {})}
+          onPress={() => void pickScene($, name, sceneCtx)}
+        />
+      )
+    }
+    const hint = <Text dimColor wrap="truncate-end">{pickHint(e.surface === 'terminal')}</Text>
+    // Esc closes it in the terminal; a desktop draws its own close control for this.
+    const close = e.surface !== 'terminal' && <Button key="close" role="dismiss" label="Close" onPress={() => void closePickerPane($, sceneCtx)} />
+
+    if (!layout) {
+      // A plain list: too narrow for thumbnails (a spine-width dock), or a surface that draws none.
+      return (
+        <Box flexDirection="column">
+          {hint}
+          {SCENES.map((d, i) => (
+            <Box flexDirection="row" gap={1}>
+              {button(d.name, i)}
+              <Text dimColor wrap="truncate-end">
+                {d.blurb}
+              </Text>
+            </Box>
+          ))}
+          {close}
+        </Box>
+      )
+    }
+
+    // The grid: rows of tiles, each its thumbnail over its Button, the focused one's frame lit (and any under the pointer).
+    const tile = (name: SceneName, i: number) => {
+      const lit = name === pick.selected
+      const frame = layout.framed
+        ? { borderStyle: lit ? 'bold' : 'round', borderColor: lit ? 'claude' : 'subtle', hover: { borderColor: 'claude' } }
+        : {}
+      return (
+        <Box key={tileKey(name)} flexDirection="column" width={layout.columns + (layout.framed ? 2 : 0)} {...frame}>
+          {picture(name)}
+          {button(name, i)}
+        </Box>
+      )
+    }
+    const grid: RenderElement[] = []
+    for (let at = 0; at < SCENES.length; at += layout.across) {
+      grid.push(
+        <Box flexDirection="row" columnGap={1}>
+          {SCENES.slice(at, at + layout.across).map((d, k) => tile(d.name, at + k))}
+        </Box>,
+      )
+    }
+    return (
+      <Box flexDirection="column">
+        {layout.lines && hint}
+        {grid}
+        {layout.lines && <Text wrap="truncate-end">{pickBlurb(pick.selected, current)}</Text>}
+        {close}
+      </Box>
+    )
   })
 }

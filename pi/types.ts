@@ -1,4 +1,4 @@
-// REVISION: flow-v120-per-session
+// REVISION: flow-v122-picker
 //
 // The slice of pi's extension API this adapter uses, declared structurally
 // so the mod needs no npm dependency on `@earendil-works/pi-coding-agent`.
@@ -27,6 +27,8 @@ export interface PiUi {
     options?: { placement?: 'aboveEditor' | 'belowEditor' },
   ): void
   notify(message: string, type?: 'info' | 'warning' | 'error'): void
+  /** A list to choose from: the option chosen, or undefined when dismissed (optional: checked before use). */
+  select?(title: string, options: string[]): Promise<string | undefined>
 }
 
 /** One entry of a session (a message, a model change, an extension's own `custom` entry...). */

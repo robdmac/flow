@@ -13,6 +13,7 @@ hooks/
   hooks.json         { "modules": ["./register.tsx"] }
   register.tsx       Claude Code adapter: hooks, frame loop, /flow, each session's settings in the store
   svg.ts             Claude desktop: a frame's cells as a PNG inside one Svg (pure, unit-tested)
+  picker.ts          /flow pick: the thumbnails' grid for a pane's size, the thumbnails, the picker's words (pure)
   sound.ts           soundscapes: each scene's layers of clips and its events' clips, levels, small events synthesized (pure)
   sound-files.ts     every clip in sounds/ and each mood's bed gain (written by scripts/make-sounds.ts)
   scene.ts           SceneDriver: shared by both adapters (scene per style, level, dials, pace)
@@ -84,6 +85,7 @@ The engine validates the module before it runs (`claude plugin validate .`):
 - No `console`, `process` or `Date.now()` in `hooks/`: they don't exist in the mod sandbox. Read time with `$.clock.now()`. A scene's `Rng` takes a seed.
 - Raster is terminal-only. On Claude desktop the band and spine draw one `Svg` a frame instead (`hooks/svg.ts`): the cells become pixels, 2 × 4 a cell (every quadrant, braille dot and eighth block on its own pixels), stored as a PNG in an `<image>` that desktop scales up with square pixels. An Svg's markup is at most 131,072 characters, so a bigger frame drops to 2 × 2 a cell, then 1 × 2, then 1 × 1, then one pixel for every few cells; the smaller sizes blend the pixels they cover so sparse glyphs dim rather than vanish.
 - Desktop has its own `SceneDriver` (`desktopDriver` in `register.tsx`) on the same settings, so a session drawn in the terminal and on desktop at once steps two scenes, each at its own size. The frame loop steps desktop's scene and invalidates its site (desktop redraws at most 10 times a second); the render only draws it. VS Code and mobile get nothing.
+- `/flow pick` opens a second pane (`flow-pick`) as a dialog (`focus`, `closeOnEscape`, `holdToasts`): every scene as a thumbnail of its own (`Thumbnails`, at level 6, never the scene on show), a Raster each in the terminal (blitted on the picker's own 100 ms timer, only while it's open) and an Svg each on desktop, with a Button under each that the focus ring walks; `ui.focus` says which to light. VS Code and mobile get the Buttons alone. A pick is `/flow <scene>` exactly (`flowReply`: this session's own, kept under its id), its reply shown as a toast once the picker has closed; pi's `/flow pick` is pi's own select list, its choice going on as `/flow <scene>`. A plugin's own `$.ui.close` doesn't come back through its own `ui.close` hooks (so the test engine shows; the person's close, Esc, does), so whatever closes a pane from the code does the hook's bookkeeping itself first (`leftSpine`, `closePickerPane`).
 
 ## Settings
 
