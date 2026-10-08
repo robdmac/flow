@@ -1,4 +1,4 @@
-// REVISION: flow-v160-mini-rockets
+// REVISION: flow-v171-dry-adapter
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -6,6 +6,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { AsciiFire, colorFor, params } from '../hooks/fire'
 import { effortFloor, Activity, linesWritten, WAIT_LEVEL } from '../hooks/activity'
 import { firstTips, nextTip, readTips, changedText, changesFor, helpText, isNightAt, ownHint, parseFlowArgs, readConfig, resetText, savedText, staleRows, statusText } from '../hooks/settings'
+import { CLAUDE_CODE, type FlowAdapter, replyTo } from '../hooks/settings'
 import { differences, type Own, ownAfterSwitch, pinShown, readOwn, readRecord, SESSION_KEPT_MS, SESSIONS_KEPT, sessionKey, staleSessions, storedOwn, storedRecord, withOwn } from '../hooks/sessions'
 import { gridToAnsi } from '../pi/ansi'
 import { effortOf, ownInSession, piLinesWritten } from '../pi/mapping'
@@ -1770,6 +1771,45 @@ test('settings: the shared /flow grammar applies the same changes everywhere', a
   expect(changesFor(parseFlowArgs('idle 0'), cfg)).toEqual({ idle: 0, mode: 'auto' })
   expect(changesFor(parseFlowArgs(''), cfg)).toBeUndefined()
   expect(statusText({ ...cfg, mode: 'manual', level: 3 }, 3, 'normal', { hour: 12, minute: 0 }).split('\n')[0]).toBe('fire, holding 3/10')
+})
+
+test('settings: every adapter answers /flow the same way (replyTo): the status, the help, a mistake, save, reset, a change', async () => {
+  const calls: string[] = []
+  const cfg = readConfig(undefined)
+  const defaults = readConfig({ style: 'surf' })
+  const clock = { hour: 21, minute: 5 }
+  const claude: FlowAdapter = {
+    host: CLAUDE_CODE,
+    agent: "Claude's",
+    cfg,
+    clock,
+    defaults,
+    level: () => 4,
+    tint: () => 'smoke',
+    save: async () => (calls.push('save'), { text: 'saved' }),
+    reset: async () => (calls.push('reset'), 'reset'),
+    change: async changes => {
+      calls.push(`change ${JSON.stringify(changes)}`)
+      Object.assign(cfg, changes)
+      return '  (note)'
+    },
+  }
+  expect(await replyTo(parseFlowArgs(''), claude)).toEqual({ text: statusText(cfg, 4, 'smoke', clock, defaults) })
+  expect(await replyTo(parseFlowArgs('help'), claude)).toEqual({ text: helpText() })
+  const wrong = parseFlowArgs('nonsense')
+  expect(await replyTo(wrong, claude)).toEqual({ text: wrong.kind === 'error' ? wrong.text : '', level: 'warning' })
+  expect(await replyTo(parseFlowArgs('save'), claude)).toEqual({ text: 'saved' })
+  expect(await replyTo(parseFlowArgs('reset'), claude)).toEqual({ text: 'reset' })
+  expect(calls).toEqual(['save', 'reset'])
+  // A change: the adapter keeps it, and the reply is the change's words, then the adapter's note.
+  expect(await replyTo(parseFlowArgs('ski night'), claude)).toEqual({ text: 'ski, night · `/flow next` for another  (note)' })
+  expect(calls.at(-1)).toBe('change {"style":"ski","time":"night"}')
+  expect(cfg).toMatchObject({ style: 'ski', time: 'night' })
+  // pi: its own words and what it has (no panes, no player); without session entries, no defaults to compare with.
+  const pi: FlowAdapter = { ...claude, host: { panes: false, sound: false }, agent: "pi's", defaults: undefined }
+  expect((await replyTo(parseFlowArgs(''), pi)).text).toBe(statusText(cfg, 4, 'smoke', clock, undefined, pi.host))
+  expect((await replyTo(parseFlowArgs('help'), pi)).text).toBe(helpText("pi's", pi.host))
+  expect((await replyTo(parseFlowArgs('auto'), pi)).text).toBe("auto — moves with pi's work  (note)")
 })
 
 test('balloon: sits on the grass at 1, climbs to space at 10, eases back down', async () => {

@@ -51,16 +51,14 @@ import { agentLine, type AgentDial } from './agents'
 import type { AgentMark } from './crew'
 import { FRAME_MS, SceneDriver } from './scene'
 import {
-  changedText,
-  changesFor,
+  CLAUDE_CODE,
   firstTips,
-  helpText,
   ownHint,
   parseFlowArgs,
   readConfig,
+  replyTo,
   resetText,
   savedText,
-  statusText,
   storedValue,
   type FlowCommand,
   type FlowConfig,
@@ -611,6 +609,18 @@ async function resetSession($: EngineInterface, ctx: SceneCtx): Promise<string> 
   return `${resetText(before, s.defaults)}${note}`
 }
 
+/** A `/flow` change: shown at once (the scene carries on: 6 → 8 eases up from 6), this session's alone, kept under its id. Answers the reply's note. */
+async function changeSession($: EngineInterface, ctx: SceneCtx, changes: Partial<FlowConfig>): Promise<string> {
+  const { driver, session } = ctx
+  const before = { ...driver.cfg }
+  $.ui.invalidate('ui.render')
+  ctx.applyLocal(changes)
+  session.own = { ...session.own, ...changes }
+  let note = (await keepOwn($, session)) ? '' : '  (not saved)'
+  note += await placeScene($, ctx, changes.layout)
+  return `${note}${ownHint(before, driver.cfg, session.defaults)}`
+}
+
 const TIPS = 'tips'
 
 /**
@@ -666,25 +676,27 @@ async function sceneReply($: EngineInterface, e: CommandRunInput, ctx: SceneCtx)
 /** `/flow <cmd>` in this session (and a scene chosen in the picker, as `/flow <scene>`): its reply. */
 async function flowReply($: EngineInterface, ctx: SceneCtx, cmd: FlowCommand): Promise<string> {
   const { driver, session } = ctx
-  const cfg = driver.cfg
   // (A /clear or a resume since the last look: the session it is now. And the
   // defaults as they are now: what follows compares with them.)
   await followSession($, ctx)
   await refreshDefaults($, ctx)
-  if (cmd.kind === 'show') return statusText(cfg, driver.level(), driver.tint(), driver.clock, session.defaults)
-  if (cmd.kind === 'help') return helpText()
-  if (cmd.kind === 'error') return cmd.text
-  if (cmd.kind === 'save') return saveDefault($, ctx)
-  if (cmd.kind === 'reset') return resetSession($, ctx)
-  const changes = changesFor(cmd, cfg) ?? {}
-  const before = { ...cfg }
-  $.ui.invalidate('ui.render')
-  ctx.applyLocal(changes) // the scene carries on: 6 → 8 eases up from 6
-  // This session's alone, kept under its id.
-  session.own = { ...session.own, ...changes }
-  let note = (await keepOwn($, session)) ? '' : '  (not saved)'
-  note += await placeScene($, ctx, changes.layout)
-  return `${changedText(cmd, cfg, "Claude's", driver.clock)}${note}${ownHint(before, cfg, session.defaults)}`
+  const reply = await replyTo(cmd, {
+    host: CLAUDE_CODE,
+    agent: "Claude's",
+    cfg: driver.cfg,
+    get clock() {
+      return driver.clock
+    },
+    get defaults() {
+      return session.defaults
+    },
+    level: () => driver.level(),
+    tint: () => driver.tint(),
+    save: async () => ({ text: await saveDefault($, ctx) }),
+    reset: () => resetSession($, ctx),
+    change: changes => changeSession($, ctx, changes),
+  })
+  return reply.text
 }
 
 /**
