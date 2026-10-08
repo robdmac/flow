@@ -1,4 +1,4 @@
-// REVISION: flow-v152-escort-slivers
+// REVISION: flow-v154-escort-pads
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -484,6 +484,8 @@ abstract class LaunchSite extends SkyWorld {
   private eY = new Float32Array(ESCORTS)
   private eTh = new Float32Array(ESCORTS)
   private eLen = new Float32Array(ESCORTS)
+  /** How hot coming in (0..1): the escorts glow and shed plasma as what they fly with does. */
+  private eHeat = 0
   /** Lights this frame (an escort's beacon): their cells and colors, and per cell the color kept through the sepia (-1 none). */
   private lampCell = new Int32Array(ESCORTS)
   private lampColor = new Int32Array(ESCORTS)
@@ -1856,9 +1858,11 @@ abstract class LaunchSite extends SkyWorld {
     // (Clear of the split screen's other half.)
     const left = this.splitTall ? 0 : 2 * Math.round(this.splitW)
     const bottom = this.splitTall ? ph - 2 * Math.round(this.splitW) : ph
-    // What's flying: its middle and its attitude (the gravity turn, orbit; not the Ship's belly-flop, a fall).
+    // What's flying: its middle and its attitude (the gravity turn, orbit, and coming home the Ship's
+    // belly-flop and its flip upright to land, Dragon's lean: the escorts come in as it does).
     const sp = this.spec.fly
-    const [pcx, pcy, pth, sc] = this.pose(sp, this.pos, false)
+    const [pcx, pcy, pth, sc] = this.pose(sp, this.pos)
+    this.eHeat = this.entryHeat()
     const [r0, r1] = this.partRows(this.part)
     const off = sp.h / 2 - (r0 + r1) / 2
     // (Kept on the grid: the camera may be sliding back to the pad.)
@@ -1872,6 +1876,7 @@ abstract class LaunchSite extends SkyWorld {
     const hU = (tall ? ESCORT_TALL : this.escortBand).h
     const smoky = this.tint === 'smoke'
     const contrail = this.state === 'fly' && this.orbit < 0.3 && this.layer < 80
+    const grounded = this.state === 'rest' || this.state === 'ignite'
     const r = this.rng
     const t = this.t
     for (const m of mates) {
@@ -1897,22 +1902,33 @@ abstract class LaunchSite extends SkyWorld {
       const along = st[0] + (st[2] - st[0]) * flat - (tall ? 20 : 8) * rest
       const across = (tall ? st[1] * reach : st[1]) * (1 - flat) + st[3] * flat
       let gx = cx + along * sn + across * cs
-      const gy = clamp(cy + (-along * cs + across * sn) / 2 + rest * flat * (tall ? 2 : 1), 2, bottom - 4)
+      let gy = clamp(cy + (-along * cs + across * sn) / 2 + rest * flat * (tall ? 2 : 1), 2, bottom - 4)
       // Never across what's flying (the band's few rows squeeze its stations): out to its own side of it.
       if (Math.abs(gy - cy) < clearY && Math.abs(gx - cx) < clearX) gx = cx + (gx > cx ? 1 : gx < cx ? -1 : Math.sign(across)) * clearX
       gx = clamp(gx, left + 2, pw - 3)
+      // On the ground with the rocket (before launch, home again): standing on its own pad beside the site.
+      const pad = grounded ? this.padX(s) : NaN
+      const onPad = !Number.isNaN(pad) && !m.leaving
+      if (onPad) {
+        gx = pad - this.viewX()
+        gy = ph - 3 - hU / 2
+      }
       if (fresh) {
         m.x = gx
         m.y = gy
       } else {
         const ease = 0.05 + 0.07 * frac(m.seed * 29)
-        m.x += (gx - m.x) * ease
-        m.y += (gy - m.y) * ease
+        // (Flying home to its pad from wherever the booster came down: at a steady pace, never a dash.)
+        const most = onPad ? (tall ? 1.6 : 2.4) : Infinity
+        m.x += clamp((gx - m.x) * ease, -most, most)
+        m.y += clamp((gy - m.y) * ease, -most, most)
       }
-      // Its own drift about the station: slow, smooth, never in step with another's.
-      let x = m.x + (noise1(t * (0.018 + 0.02 * frac(m.seed * 3)), k) - 0.5) * (tall ? 3 : 2.4)
-      let y = m.y + (noise1(t * (0.015 + 0.02 * frac(m.seed * 5)), k + 77) - 0.5) * (tall ? 1.8 : 1.2)
-      let th = att + (noise1(t * 0.03, k + 151) - 0.5) * 0.12
+      // Its own drift about the station: slow, smooth, never in step with another's (none standing on its pad).
+      const settled = onPad && Math.abs(m.x - gx) < 1 && Math.abs(m.y - gy) < 1
+      const drift = settled ? 0 : onPad ? 0.3 : 1
+      let x = settled ? gx : m.x + (noise1(t * (0.018 + 0.02 * frac(m.seed * 3)), k) - 0.5) * (tall ? 3 : 2.4) * drift
+      let y = settled ? gy : m.y + (noise1(t * (0.015 + 0.02 * frac(m.seed * 5)), k + 77) - 0.5) * (tall ? 1.8 : 1.2) * drift
+      let th = att + (noise1(t * 0.03, k + 151) - 0.5) * 0.12 * drift
       const side = across >= 0 ? 1 : -1
       const away = 1 - m.here
       if (m.leaving && m.ok) {
@@ -1941,10 +1957,16 @@ abstract class LaunchSite extends SkyWorld {
       this.eX[s] = x
       this.eY[s] = y
       this.eTh[s] = th
+      // Coming in hot, as the Ship (or Dragon) is: plasma streaming up off it as it falls.
+      if (this.eHeat > 0.3 && !m.leaving && r.f() < 0.6 * this.eHeat) {
+        const hot = r.f()
+        this.spawn(x + this.viewX() + (r.f() - 0.5) * 3, this.base - y, (r.f() - 0.5) * 0.3, 0.5 + r.f() * 0.9, 5 + r.f() * 6, 0.5, 1, hot < 0.4 ? 0xff5aa0 : hot < 0.75 ? 0xff7a2a : 0xffc46a, 0.85)
+      }
       // Its burn: only while it accelerates: arriving, leaving, or working with the rocket under real thrust
       // (coasting in orbit, a burn would be for nothing).
       const pushing = this.thr > 0.25 && this.orbit < 0.5
-      const goal = m.leaving || away > 0 ? 1 : pushing ? m.busy * (0.55 + 0.45 * this.thr) : 0
+      // (On the ground: lit coming down onto its pad, and for the rocket's ignition; dark once it stands there.)
+      const goal = m.leaving || away > 0 ? 1 : onPad ? (!settled || (this.state === 'ignite' && m.busy > 0.5) ? 1 : 0) : pushing ? m.busy * (0.55 + 0.45 * this.thr) : 0
       this.eThr[s]! += (goal - this.eThr[s]!) * (0.15 + 0.15 * frac(m.seed * 41))
       const failed = m.leaving && !m.ok
       let len = (tall ? ESCORT_PLUME[1] : ESCORT_PLUME[0]) * this.eThr[s]! * (0.85 + 0.3 * hash(t, k, 59))
@@ -1977,6 +1999,15 @@ abstract class LaunchSite extends SkyWorld {
     const thin = this.orbit > 0.02
     const spread = this.plumeSpread()
     const t = this.t
+    // Each escort's pad, while the rocket's on the ground: a small slab of its own beside the site.
+    if (this.state === 'rest' || this.state === 'ignite') {
+      const half = this.tall ? 2 : 1
+      for (const m of this.crew.mates) {
+        const px = this.padX(m.slot)
+        if (Number.isNaN(px) || m.here < 0.05) continue
+        for (let dx = -half; dx <= half; dx++) this.paintP(Math.round(px) + dx, ph - 3, this.look.carriage, Math.min(1, m.here * 2))
+      }
+    }
     for (const m of this.crew.mates) {
       const s = m.slot
       if (Number.isNaN(m.x)) continue
@@ -1990,7 +2021,7 @@ abstract class LaunchSite extends SkyWorld {
       const L = this.eLen[s]!
       if (L > 0)
         this.flame(x + vx - sn * hU, 2 * y + cs * hU, th, L, 0.5, spread, m.leaving && !m.ok ? RAMPS.smoke : this.ramp, thin ? 1.6 : 2.4, thin ? this.thinBurn() : 1, false, 101 * (s + 1), this.base)
-      this.drawEscort(sp, x + vx, y, th, ESCORT.trim[s % ESCORT.trim.length]!)
+      this.drawEscort(sp, x + vx, y, th, ESCORT.trim[s % ESCORT.trim.length]!, m.leaving ? 0 : this.eHeat)
       // Resting, a light blinks on its nose: a slow white strobe, or an amber beacon while it waits on you
       // (a light: it shines through the waiting look's sepia).
       if (m.busy < 0.5 && !m.leaving) {
@@ -2008,7 +2039,9 @@ abstract class LaunchSite extends SkyWorld {
   }
 
   /** An escort's craft, its middle at (x, y) (grid pixels, before the camera), turned to `th`, its hull in its trim. */
-  private drawEscort(sp: Sprite, x: number, y: number, th: number, trim: number): void {
+  private drawEscort(sp: Sprite, x: number, y: number, th: number, trim: number, heat = 0): void {
+    // Coming in hot: its hull glowing as the Ship's tiles do.
+    const glow = Math.min(0.75, heat * 0.75)
     if (!this.tall) {
       // The band's is never turned: a sliver stays one pixel tall at any attitude.
       const py = Math.floor(y)
@@ -2016,7 +2049,7 @@ abstract class LaunchSite extends SkyWorld {
       const x0 = Math.floor(x - sp.w / 2 + 0.5)
       for (let col = 0; col < sp.w; col++) {
         const c = sp.c[col]!
-        if (c !== -1) this.paintP(x0 + col, py, c === TRIM ? trim : c, 1)
+        if (c !== -1) this.paintP(x0 + col, py, mix(c === TRIM ? trim : c, 0xff7a2a, glow), 1)
       }
       return
     }
@@ -2034,7 +2067,7 @@ abstract class LaunchSite extends SkyWorld {
         if (col < 0 || col >= sp.w || row < 0 || row >= sp.h) continue
         const c = sp.c[row * sp.w + col]!
         if (c === -1) continue
-        this.paintP(px, py, c === TRIM ? trim : c, 1)
+        this.paintP(px, py, mix(c === TRIM ? trim : c, 0xff7a2a, glow), 1)
       }
     }
   }
@@ -2209,6 +2242,34 @@ abstract class LaunchSite extends SkyWorld {
   }
 
   /** Where the rocket is drawn: its center (grid pixels), tilt and scale, eased into orbit. */
+  /**
+   * An escort's own pad (world pixels along the ground, its middle) by slot: right of the tower, left of the
+   * rocket, then further out, as far as the pane has room (NaN when it hasn't: it holds station instead).
+   */
+  private padX(slot: number): number {
+    const s = this.spec
+    const step = this.tall ? 7 : 6
+    // (Close in where the pane is narrow: a 13-column spine still finds room for two.)
+    const gap = this.pw < 32 ? 3 : 4
+    let right = this.tx + s.towerW + gap
+    let left = this.ox - gap
+    for (let k = 0; k <= slot; k++) {
+      const goRight = k % 2 === 0
+      const x = goRight ? right : left
+      if (goRight) right += step
+      else left -= step
+      if (k === slot) return x - this.viewX() >= 2 && x - this.viewX() <= this.pw - 2 ? x : NaN
+    }
+    return NaN
+  }
+
+  /** How hot what's flying is coming in (0..1): the Ship belly-first through the glowing part, Dragon's heat shield. */
+  private entryHeat(): number {
+    if (this.look.catches && this.part === 'upper' && this.burn > 6 && this.burn < 84 && this.flop > 0.5) return 1
+    if ((this.part === 'capsule' || this.part === 'dragon') && this.burn > 20 && this.burn < 95) return Math.sin((Math.PI * (this.burn - 20)) / 75)
+    return 0
+  }
+
   private pose(sp: Sprite, posX = this.pos, turned = true): [cx: number, cy: number, tilt: number, scale: number] {
     const o = this.orbit
     const cx = this.ox + posX + sp.w / 2
