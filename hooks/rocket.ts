@@ -68,7 +68,7 @@
 
 import type { AgentDial } from './agents'
 import { type Cells, DEFAULT_COLOR, freshSeed, Rng } from './cells'
-import { Crew, type AgentMark, type Mate } from './crew'
+import { Crew, failed, finished, resting, type AgentMark, type Mate } from './crew'
 import { layered, snap } from './clouds/layered'
 import { STAR, STAR_DIM } from './night'
 import { clamp, dist, fitQuad, g, hash, lowerBlock, mix, noise1, QUAD, rampAt, smooth, type QuadFit } from './pixels'
@@ -659,7 +659,7 @@ abstract class LaunchSite extends SkyWorld {
       const m = r.mate
       const idle = m && m.busy < 0.5 && !r.fresh && r.state === 'rest' && r.part === 'full'
       r.strength = idle ? 1 : this.log[(this.logAt - r.lag) & 31]!
-      r.tint = m && m.leaving && !m.ok ? 'smoke' : this.tint
+      r.tint = failed(m) ? 'smoke' : this.tint
       r.step()
       // Heard as the big one is, a little quieter (a smaller rocket): its ignition, sonic booms, its booster's
       // landing or catch, chutes, splashdown. A beat behind the big one's, so they never land as one.
@@ -1737,11 +1737,11 @@ abstract class LaunchSite extends SkyWorld {
     if (m) {
       const away = 1 - m.here
       const run = this.ph + 20
-      gap += !m.leaving || !m.ok ? away * run : -away * away * run * 1.5
+      gap += finished(m) ? -away * away * run * 1.5 : away * run
     }
     const goal = h.alt + (h.topRow() - this.topRow() - gap) / 2
     this.alt += (goal - this.alt) * 0.2
-    if (m && m.leaving && m.ok) return 1
+    if (finished(m)) return 1
     return homeward ? thrGoal : thrGoal * (1 - 0.85 * quiet)
   }
 
@@ -2129,7 +2129,7 @@ abstract class LaunchSite extends SkyWorld {
     // A point on the sprite (column, row) as drawn: grid pixels, before the camera.
     const px = (col: number, row: number) => cx + (col - sp.w / 2) * sc * cs - 2 * (row - sp.h / 2) * sc * sn
     const py = (col: number, row: number) => cy + ((col - sp.w / 2) * sc * sn + 2 * (row - sp.h / 2) * sc * cs) / 2
-    if (m.busy < 0.5 && !m.leaving) {
+    if (resting(m)) {
       const on = m.waiting ? ((this.t >> 2) & 1) === 0 : this.t % 21 < 3
       const col = s.bodyL + s.bodyW / 2
       const x = Math.floor(px(col, r0 - 0.5))
@@ -2157,7 +2157,7 @@ abstract class LaunchSite extends SkyWorld {
   /** A failed agent's mini rocket tumbling as it falls away (radians). */
   private get tumble(): number {
     const m = this.mate
-    return m && m.leaving && !m.ok ? (1 - m.here) * 3 * (this.slot & 1 ? -1 : 1) : 0
+    return m && failed(m) ? (1 - m.here) * 3 * (this.slot & 1 ? -1 : 1) : 0
   }
 
   /** Sizes for details (smoke, spray, chutes, the arms' pincers): the spine's for a big rocket there, the band's for every other. */

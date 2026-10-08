@@ -14,7 +14,7 @@
 // the bottom, glowing and fading with each slow breath (waiting.ts).
 
 import type { AgentDial } from './agents'
-import { Crew, type AgentMark, type Mate } from './crew'
+import { Crew, failed, type AgentMark, type Mate } from './crew'
 import { AsciiFire, colorFor, glyphFor, params, SMOKE_TIPS } from './fire'
 import { Cells, freshSeed, Rng } from './cells'
 export type { Cells }
@@ -230,7 +230,7 @@ class Ember implements Scene {
 
   /** How alight a companion's fire is (0..1): it kindles once its place opens; done, it burns out (failed: snuffed at once). */
   private static flame(m: Mate): number {
-    return smooth(m.leaving && !m.ok ? clamp((m.p - 0.75) / 0.25) : clamp((m.p - 0.35) / 0.65))
+    return smooth(failed(m) ? clamp((m.p - 0.75) / 0.25) : clamp((m.p - 0.35) / 0.65))
   }
 
   /**
@@ -444,7 +444,7 @@ class Ember implements Scene {
       if (r >= FAINTEST) {
         const o = owner[i % w]!
         const mate = o >= 0 ? bySlot[o] : undefined
-        const snuffed = mate !== undefined && mate.leaving && !mate.ok
+        const snuffed = failed(mate)
         // A failed companion's fire is snuffed: what's left of it goes grey.
         const fg = snuffed
           ? heatColor(s, Math.min(r, 0.98) * SMOKE_TIPS, 'smoke')

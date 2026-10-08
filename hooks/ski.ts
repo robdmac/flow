@@ -36,7 +36,7 @@
 
 import type { AgentDial } from './agents'
 import { Cells, DEFAULT_COLOR, freshSeed, Rng, isTall } from './cells'
-import { Crew, type AgentMark, type Mate } from './crew'
+import { beckon, Crew, finished, resting, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
 import { MOON, moonCover, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
 import { approach, BRAILLE, clamp, fitQuad, hashMurmur as hash, mix, noise1, noise2, QUAD, type Hash1, type QuadFit } from './pixels'
@@ -359,6 +359,8 @@ export class Ski {
   private fp = new Float32Array(FLAKES)
 
   private skiers: Skier[] = []
+  /** `onSlope`'s list, reused. */
+  private slope = [0]
 
   constructor(seed = freshSeed()) {
     this.seed = seed % 100_000
@@ -445,33 +447,34 @@ export class Ski {
     }
   }
 
-  /** The skiers on the slope this frame: the hero (0), then each companion's (its slot + 1). */
+  /** The skiers on the slope this frame (one list, refilled): the hero (0), then each companion's (its slot + 1). */
   private onSlope(): number[] {
-    const out = [0]
+    const out = this.slope
+    out.length = 0
+    out.push(0)
     for (const m of this.crew.mates) out.push(m.slot + 1)
     return out
   }
 
   /** The companion skiing as skier `i`, if any (the hero is no one's). */
   private mateOf(i: number): Mate | undefined {
-    return i === 0 ? undefined : this.crew.mates.find(m => m.slot + 1 === i)
+    return i === 0 ? undefined : this.crew.inSlot(i - 1)
   }
 
   /** How far off its place a companion is as it arrives or leaves (0 at its place): -1 behind, +1 ahead. */
   private away(m: Mate): number {
     const k = 1 - m.here
-    return m.leaving && m.ok ? k : -k
+    return finished(m) ? k : -k
   }
 
-  /** A companion standing on its poles: its agent quiet, or waiting on you. */
-  private resting(m: Mate | undefined): boolean {
-    return m !== undefined && m.busy < 0.5 && !m.leaving
-  }
-
-  /** A resting companion waving its pole (up, then down): its agent waits on you. */
+  /** A companion standing on its poles (`resting`) waving one (up, then down): its agent waits on you. */
   private waving(m: Mate | undefined): boolean {
-    return m !== undefined && m.waiting && this.resting(m) && ((this.t + m.slot * 3) >> 2) % 2 === 0
+    return m !== undefined && resting(m) && m.waiting && beckon(m, this.t)
   }
+
+  /** Back to front: across the band's face, and down the spine. */
+  private readonly byLat = (a: number, b: number) => this.skiers[a]!.lat - this.skiers[b]!.lat
+  private readonly byDepth = (a: number, b: number) => this.skiers[a]!.fy - this.skiers[b]!.fy
 
   agentMarks(): readonly AgentMark[] {
     return this.level > 0 ? this.crew.marks : []
@@ -1007,7 +1010,7 @@ export class Ski {
         return gr[sxp]! + 1 + y
       },
     )
-    const order = on.sort((a, b) => this.skiers[a]!.lat - this.skiers[b]!.lat)
+    const order = on.sort(this.byLat)
     // Front row: a few big pines whipping past at speed. Drawn before the
     // skiers, so they pass behind them: crossing in front, a near-black pine
     // at night blinks the skier out and back again and again.
@@ -1063,8 +1066,8 @@ export class Ski {
     }
     const m = this.mateOf(i)
     // A companion leaving tucks to ski off; resting, it stands on its poles (waving one, waiting on you).
-    const fast = this.v > SPEED[8]! * 0.92 || (m !== undefined && m.leaving && m.ok)
-    const standing = this.v < 0.12 || (hero && this.fall === 2) || this.resting(m)
+    const fast = this.v > SPEED[8]! * 0.92 || finished(m)
+    const standing = this.v < 0.12 || (hero && this.fall === 2) || resting(m)
     let spr = this.waving(m) ? B_WAVE : standing ? B_STAND : fast ? B_TUCK : B_SKI
     // Leaning on the edge mid-turn.
     if (!standing && !fast && Math.abs(Math.cos(this.phi + s.off)) > 0.8) spr = B_CARVE
@@ -1248,7 +1251,7 @@ export class Ski {
     const span = 4
     const s0 = Math.floor((top - 4) / span)
     const s1 = Math.floor((top + H + 12) / span)
-    const order = on.sort((a, b) => this.skiers[a]!.fy - this.skiers[b]!.fy)
+    const order = on.sort(this.byDepth)
     let next = 0
     for (let slot = s0; slot <= s1; slot++) {
       const wyBase = slot * span
@@ -1435,8 +1438,8 @@ export class Ski {
       return
     }
     const m = this.mateOf(i)
-    const standing = this.v < 0.12 || (hero && this.fall === 2) || this.resting(m)
-    const fast = this.v > SPEED[8]! * 0.92 || (m !== undefined && m.leaving && m.ok)
+    const standing = this.v < 0.12 || (hero && this.fall === 2) || resting(m)
+    const fast = this.v > SPEED[8]! * 0.92 || finished(m)
     if (m) this.crew.mark(m, (x - 3) / 2, (y - 7) / 2, 4, 5, this.columns, this.rows)
     // Heading: across the hill when stopped, else down the fall line swinging with the turns.
     const ph = this.phi + s.off

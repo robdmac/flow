@@ -56,7 +56,7 @@
 
 import type { AgentDial } from './agents'
 import { Cells, DEFAULT_COLOR, freshSeed, Rng, isTall } from './cells'
-import { Crew, type AgentMark, type Mate } from './crew'
+import { beckon, Crew, easeTo, resting, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
 import { BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, NEAR, noise2, QUAD, smooth, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
@@ -645,13 +645,8 @@ export class Colony {
     this.bayGlow = 0
     for (const m of this.crew.mates) {
       this.station(m)
-      if (Number.isNaN(m.x)) {
-        m.x = this.sa
-        m.y = this.sc
-      } else {
-        m.x += (this.sa - m.x) * 0.05
-        m.y += (this.sc - m.y) * 0.05
-      }
+      m.x = easeTo(m.x, this.sa, 0.05)
+      m.y = easeTo(m.y, this.sc, 0.05)
       if (!m.leaving && 1 - m.p > this.bayGlow) {
         this.bayGlow = 1 - m.p
         this.bayColor = PROBE.drive[m.slot % PROBES]!
@@ -1261,9 +1256,9 @@ export class Colony {
     const lit = !dead && !(smoke && flick < 0.3) && drive > 0.3
     const glow = smoke ? C.plumeSmoke[0] : PROBE.drive[slot]!
     const hull = dead ? PROBE.dead : PROBE.hull[slot]!
-    const resting = !m.leaving && m.busy < 0.5
-    const beacon = resting && m.waiting && ((this.t + slot * 3) >> 2) % 2 === 0
-    const running = resting && !m.waiting && (this.t + slot * 9) % 30 < 3
+    const quiet = resting(m)
+    const beacon = quiet && m.waiting && beckon(m, this.t)
+    const running = quiet && !m.waiting && (this.t + slot * 9) % 30 < 3
     const sprite = v ? PROBE_TALL : PROBE_WIDE
     let minX = x0
     let maxX = x0

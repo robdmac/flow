@@ -36,7 +36,7 @@
 
 import type { AgentDial } from './agents'
 import { Cells, DEFAULT_COLOR, freshSeed, Rng, isTall } from './cells'
-import { Crew, type AgentMark } from './crew'
+import { beckon, Crew, failed, type AgentMark } from './crew'
 import type { Tint } from './styles'
 import { BRAILLE, clamp01, dist, mix, QUAD, rampAt } from './pixels'
 import { defineScene } from './scene-def'
@@ -1499,12 +1499,12 @@ export class Engine {
         // group while its agent works, a low glow while it's quiet, all flashing while it waits on you.
         let lit: number
         if (m.leaving) lit = m.here
-        else if (m.waiting) lit = ((this.t + m.slot * 3) >> 2) % 2 === 0 ? 1 : 0.15
+        else if (m.waiting) lit = beckon(m, this.t) ? 1 : 0.15
         else {
           const run = lamps === 1 ? ((this.t >> 1) + m.slot) % 4 !== 0 : ((this.t >> 2) + m.slot) % lamps === k
           lit = m.here * (0.35 + 0.65 * m.busy * (run ? 1 : 0.45))
         }
-        const color = m.leaving && !m.ok ? C.lampFail : on
+        const color = failed(m) ? C.lampFail : on
         const x = mid + k * 4
         const c = mix(C.brassDk, color, Math.round(lit * 4) / 4)
         this.q(x, qy, c)

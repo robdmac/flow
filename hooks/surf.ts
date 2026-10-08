@@ -38,7 +38,7 @@
 
 import type { AgentDial } from './agents'
 import { Cells, freshSeed, Rng, isTall } from './cells'
-import { Crew, type AgentMark, type Mate } from './crew'
+import { beckon, Crew, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
 import { MOON, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
 import { BITS, BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, noise1 as vnoise, QUAD, type QuadFit } from './pixels'
@@ -999,12 +999,6 @@ export class Surf {
     return x > this.cx ? this.pw + 8 : -8
   }
 
-  /** The companion in a slot, if there is one. */
-  private mateIn(slot: number): Mate | undefined {
-    const mates = this.crew.mates
-    for (let i = 0; i < mates.length; i++) if (mates[i]!.slot === slot) return mates[i]
-    return undefined
-  }
 
   /** The stretch of the big wave's face its riders share (u, 0 the crest .. 1 the foot): under a barrel, its open part. */
   private faceLo(): number {
@@ -1073,7 +1067,7 @@ export class Surf {
     let given = 0
     let share = 0
     for (let slot = 0; slot < CREW; slot++) {
-      const m = this.mateIn(slot)
+      const m = this.crew.inSlot(slot)
       if (!m) {
         this.rideGoal[slot] = 0
         this.rideK[slot] = 0
@@ -1094,13 +1088,13 @@ export class Surf {
     // The rest of those working ride the following swells in the band, one each, while there are any.
     let f = 0
     for (let slot = 0; slot < CREW; slot++) {
-      const m = this.mateIn(slot)
+      const m = this.crew.inSlot(slot)
       const free = m && !m.leaving && m.busy >= 0.5 && !this.rideGoal[slot] && this.rideK[slot]! < 0.5
       this.follow[slot] = free && !this.vertical && this.s >= 3 && f < this.nF ? f++ : -1
     }
     for (let slot = 0; slot < CREW; slot++) {
       if (!this.rideGoal[slot] && this.rideK[slot] === 0) continue
-      const seed = this.mateIn(slot)!.seed
+      const seed = this.crew.inSlot(slot)!.seed
       this.lane(slot)
       this.ridePh[slot]! += omega * (0.8 + 0.4 * seed)
       const u = this.uAt(this.laneC - this.laneAmp() * (0.55 + 0.45 * hash(seed * 9973 + 5)) * Math.cos(this.ridePh[slot]!))
@@ -1161,7 +1155,7 @@ export class Surf {
    */
   private matePose(m: Mate): Pose {
     if (m.leaving || m.here < 1) return 'paddle'
-    if (m.busy < 0.5) return m.waiting ? (((this.t + m.slot * 3) >> 2) % 2 ? 'waveUp' : 'waveOut') : 'sit'
+    if (m.busy < 0.5) return m.waiting ? (beckon(m, this.t) ? 'waveOut' : 'waveUp') : 'sit'
     if (this.onWave(m)) return this.curl > 0.55 ? 'crouch' : 'ride'
     if (this.waiting && this.s < 2.7) return 'sit'
     return this.rides(m) ? 'ride' : 'paddle'

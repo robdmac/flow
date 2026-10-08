@@ -37,7 +37,7 @@
 
 import type { AgentDial } from './agents'
 import { Rng } from './cells'
-import { Crew, type AgentMark, type Mate } from './crew'
+import { beckon, Crew, type AgentMark, type Mate } from './crew'
 import { PixelScene, type Dials, type Painter } from './pixel-scene'
 import { defineScene } from './scene-def'
 import { clamp, grey, hash, hash1, mix, noise1 } from './pixels'
@@ -804,7 +804,7 @@ export class Train extends PixelScene {
 
   /** A companion's cab: 1 headlamp lit (its agent working), 0 out (quiet), 2 flashing on (waiting on you). */
   private cab(m: Mate, t: number): number {
-    if (m.waiting && !m.leaving) return ((t + m.slot * 3) >> 2) % 2 === 0 ? 2 : 0
+    if (m.waiting && !m.leaving) return beckon(m, t) ? 2 : 0
     return m.busy >= 0.5 || m.leaving || m.here < 1 ? 1 : 0
   }
 
