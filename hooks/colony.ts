@@ -1,4 +1,4 @@
-// REVISION: flow-v144-avalon-voyage
+// REVISION: flow-v147-slim-probes
 //
 // A colony ship on the same dials as the fire: the level is its speed. A
 // long ship like the Avalon holds steady (nose to the right in the band,
@@ -130,8 +130,8 @@ function sprite(rows: readonly string[], tall: boolean): Int8Array {
   )
   return Int8Array.from(out)
 }
-/** The band's probe: a stubby craft, 2½ cells long, one row tall. */
-const PROBE_WIDE = sprite(['ZLLLN', 'ZHHHN'], false)
+/** The band's probe: a slim craft, 2½ cells long, half a row tall (the band's rows are few). */
+const PROBE_WIDE = sprite(['.....', 'ZHLLN'], false)
 /** The spine's: two cells across, two rows tall, a rounded nose and its drive below. */
 const PROBE_TALL = sprite(['.NN.', 'HLLH', 'HHHH', '.ZZ.'], true)
 
