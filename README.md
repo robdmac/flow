@@ -85,7 +85,7 @@ Balloon, falcon, starship, surf, ski and train also have a **night** version: st
 | editing files | pushes higher, scaled by the lines written |
 | running commands | sparks; a slow command keeps it ticking over |
 | reading or searching, or using any other tool (an MCP server's too) | a small spark each |
-| running subagents | busier with each one (with diminishing returns), and each one gets a companion of its own (see below); the rest add company: a wider fire, more stars, more lit windows, more streams of bubbles, more lights on the launch tower |
+| running subagents | busier with each one (with diminishing returns), and each one gets a companion of its own (see below); the rest add company: more stars, more lit windows, more streams of bubbles, more lights on the launch tower |
 | hitting a failed command, or compacting | smoke for a moment: smoky flame tips, sooty steam, a grey sky, a wipeout, a rocket's plume sputtering grey, black smoke pouring from the train's diesel |
 | near a full context (≥85%) | blue: a blue-white flame, a storm, dusk on the slopes, a blue gas flame, rain driving past the train |
 | waiting on you: a permission to grant, its question, a plan to approve | settles to a calm 2 and holds, the whole scene turned a warm sepia that breathes slowly, about every 4 s: the fire banks to a bed of glowing coals, the stars stop, the colony ship comes to rest, the balloon hovers with its pilot light glowing, the engine runs down and lets off steam, a rocket holds its stage with amber lights up the tower, the surfer sits up waiting for a wave, the skier stops, the bubbles slow, the train draws up at a red signal or a platform, its headlight and the signal glowing with each breath. With sound on, a soft chime as the wait begins |
@@ -96,10 +96,11 @@ Waiting on you shows only while a dialog is actually up for you: a permission as
 
 ### Subagents, one by one
 
-In surf, ski, balloon, falcon, starship, engine and train, each running subagent has a companion of its own, in its own colors, so you can tell at a glance which are busy, which have gone quiet or are waiting on you, and when each finishes:
+In fire, surf, ski, balloon, falcon, starship, engine and train, each running subagent has a companion of its own, in its own colors or its own place, so you can tell at a glance which are busy, which have gone quiet or are waiting on you, and when each finishes:
 
 | Scene | Arrives | Working | Quiet (nothing for 20 s) | Waiting on you (a permission dialog, its question) | Done |
 |---|---|---|---|---|---|
+| `fire` | the main fire narrows to make room and a small fire of its own kindles beside it, sparks catching (on alternate sides, a dark gap between each) | burns bright and lively, taller the busier the scene | dies down to low, glowing embers | its embers pulse a bright glow, quicker than the waiting fire's breath | burns out with a last puff of smoke and the gap closes, the main fire widening back (failed: snuffed out at once, in grey smoke) |
 | `surf` | paddles in from the edge | paddles hard, or rides a following wave | sits up on its board, bobbing | sits up waving an arm | paddles off out of sight |
 | `ski` | skis in from behind | carves S-turns, throwing spray | pulls over to the side, standing on its poles | waves a pole overhead | tucks and skis off ahead (failed: drops back) |
 | `balloon` | rises into view from below | flies high, burner flickering | burner out, sinks low | its envelope blinks | climbs away off the top (failed: sinks away below) |
@@ -107,7 +108,7 @@ In surf, ski, balloon, falcon, starship, engine and train, each running subagent
 | `engine` | its lamps on the bed plate warm up | a light runs along its lamps | its lamps glow low | its lamps flash together | its lamps fade out (failed: fading red) |
 | `train` | a short train of its own draws up alongside from out of sight | keeps pace on the next track, gaining and losing a little, headlamp lit | drops back a little, headlamp out | its cab flashes amber | falls back out of sight |
 
-A scene has room for a few (surf 5, ski 4, balloon 4, the rockets 3 escorts, the engine 6 lamp groups, the train up to 4 trains; fewer in the narrow spine or a narrow band: only as many as it shows whole); more wait for a place to come free. Fire, warp, avalon and bubbles keep the plain company above: they're one body of flame, a stream of stars, a ship's windows, a glass of anonymous bubbles, with nothing that stays put long enough to be someone. In the Claude desktop app, put the pointer over a companion to see its subagent's task, what it's doing and for how long.
+A scene has room for a few (the fire 4 to 6 small fires across the band, 1 or 2 in the spine, surf 5, ski 4, balloon 4, the rockets 3 escorts, the engine 6 lamp groups, the train up to 4 trains; fewer in the narrow spine or a narrow band: only as many as it shows whole); more wait for a place to come free. Warp, avalon and bubbles keep the plain company above: they're a stream of stars, a ship's windows, a glass of anonymous bubbles, with nothing that stays put long enough to be someone. In the Claude desktop app, put the pointer over a companion to see its subagent's task, what it's doing and for how long.
 
 ## The command
 

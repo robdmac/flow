@@ -1,4 +1,4 @@
-// REVISION: flow-v138-train-crew
+// REVISION: flow-v143-fire-crew
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -3256,7 +3256,7 @@ test('crew: only places the layout can show are given; less room sends the rest 
 })
 
 /** The scenes that give each subagent a companion of its own. */
-const CREW_SCENES = ['surf', 'ski', 'balloon', 'falcon', 'starship', 'engine', 'train'] as const
+const CREW_SCENES = ['fire', 'surf', 'ski', 'balloon', 'falcon', 'starship', 'engine', 'train'] as const
 
 test('companion scenes: each agent gets one that arrives, is marked where it is, and leaves when done, in the band and the spine', () => {
   for (const style of CREW_SCENES) {
@@ -3353,8 +3353,9 @@ test('companion scenes: a working companion and a resting one look different', (
       return m ? `${m.row}:${m.col}` : `none ${g.columns}`
     }
     // Where it is (aloft or sunk, on station or dropped back, its spot): the scenes move a resting one.
-    const lamps = style === 'engine'
-    if (!lamps) expect(`${style} ${look('working')}`).not.toBe(`${style} ${look('idle')}`)
+    // (The engine's lamps and the fire's own fires stay put: see below.)
+    const staysPut = style === 'engine' || style === 'fire'
+    if (!staysPut) expect(`${style} ${look('working')}`).not.toBe(`${style} ${look('idle')}`)
   }
   // The engine's lamps stay put: a working group runs a light along it, a quiet one glows low.
   const lit = (state: 'working' | 'idle') => {
@@ -3372,6 +3373,26 @@ test('companion scenes: a working companion and a resting one look different', (
     return colors.join()
   }
   expect(lit('working')).not.toBe(lit('idle'))
+  // A companion's fire burns tall while its agent works and dies down to embers while it's quiet.
+  const flames = (state: 'working' | 'idle') => {
+    const f = makeScene('fire', 7)
+    f.strength = 6
+    f.ensure(120, 5)
+    let cells = 0
+    for (let i = 0; i < 160; i++) {
+      f.agents = [dial('a', state)]
+      f.step()
+      if (i < 100) continue
+      const g = f.grid()
+      const m = f.agentMarks!()[0]!
+      for (let r = 0; r < 4; r++) for (let c = m.col; c < m.col + m.w; c++) {
+        const cp = g.codePoint(r * 120 + c)
+        if (cp !== 0x20 && cp < 0x2800) cells++ // flame, not a spark
+      }
+    }
+    return cells
+  }
+  expect(flames('working')).toBeGreaterThan(flames('idle') * 2)
 })
 
 test('desktop: the pointer over a subagent\'s companion shows its task and what it is doing', { options: { style: 'surf' } }, async ($, on) => {
@@ -3469,4 +3490,57 @@ test("train: each subagent's train draws up from out of sight, keeps pace while 
   // Done, the first three fall back out of sight and the next three draw up in their places.
   const later = run([...['a', 'b', 'c'].map(id => dial(id, 'done')), ...['d', 'e', 'f'].map(id => dial(id, 'working'))], 300)
   expect(later.map(m => m.id).sort()).toEqual(['d', 'e', 'f'])
+})
+
+test("fire: each subagent kindles a small fire of its own on alternate sides, the main fire narrowing to make room, a dark gap between; done, it burns out and the main fire widens back", () => {
+  const f = makeScene('fire', 5)
+  f.strength = 6
+  f.ensure(120, 5)
+  const lit = (g: ReturnType<typeof f.grid>, c: number) => {
+    for (let r = 0; r < 5; r++) {
+      const cp = g.codePoint(r * 120 + c)
+      if (cp !== 0x20 && cp < 0x2800) return true
+    }
+    return false
+  }
+  /** How often each column burns over `n` frames (0..1). */
+  const burning = (agents: ReturnType<typeof dial>[], n: number) => {
+    const seen = new Float32Array(120)
+    for (let i = 0; i < n; i++) {
+      f.agents = agents
+      f.step()
+      const g = f.grid()
+      for (let c = 0; c < 120; c++) if (lit(g, c)) seen[c]! += 1 / n
+    }
+    return seen
+  }
+  const alone = burning([], 80)
+  expect(alone[2]! > 0.5 && alone[117]! > 0.5).toBe(true) // the whole width burns
+  const two = [dial('a', 'working'), dial('b', 'working')]
+  burning(two, 60)
+  const marks = f.agentMarks!()
+  expect(marks.map(m => m.id).sort()).toEqual(['a', 'b'])
+  const a = marks.find(m => m.id === 'a')!
+  const b = marks.find(m => m.id === 'b')!
+  expect(a.col > 60 && b.col < 60).toBe(true) // one each side
+  const with2 = burning(two, 60)
+  // Each companion's own fire burns, with a gap no flame crosses between it and the main fire.
+  expect(with2[a.col + 2]!).toBeGreaterThan(0.5)
+  expect(with2[b.col + 2]!).toBeGreaterThan(0.5)
+  expect(with2[a.col - 1]!).toBe(0)
+  expect(with2[b.col + b.w]!).toBe(0)
+  // An adapter with only a count gets as many fires, unmarked (no hover card).
+  const g = makeScene('fire', 5)
+  g.strength = 6
+  g.ensure(120, 5)
+  g.coverageBoost = 30
+  for (let i = 0; i < 60; i++) g.step()
+  g.grid()
+  expect((g as unknown as { crew: Crew }).crew.mates.length).toBe(2)
+  expect(g.agentMarks!()).toEqual([])
+  // Done: they burn out, the gaps close, the main fire takes the whole width again.
+  burning([dial('a', 'done'), dial('b', 'done', false)], 80)
+  expect(f.agentMarks!()).toEqual([])
+  const after = burning([], 60)
+  expect(after[a.col - 1]! > 0.3 && after[b.col + b.w]! > 0.3).toBe(true)
 })
