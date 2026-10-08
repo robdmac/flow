@@ -1,4 +1,4 @@
-// REVISION: flow-v61-names
+// REVISION: flow-v125-waiting
 //
 // The world the balloon and the rockets fly through, on the fire's dials: the
 // level is a target altitude, eased toward, and the world scrolls past the
@@ -18,13 +18,16 @@
 // to the ground, stars show at every height, clouds are moonlit, the grass
 // and trees are dark, the houses' windows are lit, and a moon hangs high
 // (the same night as every scene's: night.ts). Night falls and lifts over a
-// couple of seconds rather than in one frame.
+// couple of seconds rather than in one frame. While Claude waits on the
+// person the vehicle holds where it is (the balloon hovers, its climb easing
+// off) and the whole sky breathes in sepia (waiting.ts).
 
 import { Cells, DEFAULT_COLOR } from './cells'
 import { layered, snap } from './clouds/layered'
 import type { Tint } from './styles'
 import { MOON, MOON_ACROSS, MOON_ROW, NIGHT_HORIZON, NIGHT_ZENITH, STAR, STAR_DIM } from './night'
 import { g, hash, lowerBlock, mix } from './pixels'
+import { easeWait, waitTone } from './waiting'
 
 /**
  * How much taller the atmosphere is than the cloud painter's own scale:
@@ -119,6 +122,12 @@ export abstract class SkyWorld {
   night = false
   /** How far night has fallen, 0..1: eased toward `night` a little each frame. */
   protected kNight = -1
+  /** Claude waits on the person: hold where it is, and breathe. */
+  waiting = false
+  /** How far into the wait's look (0..1), eased. */
+  protected kWait = 0
+  /** The altitude it's making for: held where it was while Claude waits on the person (-1 until the first frame). */
+  protected goal = -1
   protected columns = 0
   protected rows = 0
   protected out = new Cells(0, 0)
@@ -165,6 +174,7 @@ export abstract class SkyWorld {
     if (this.kNight < 0) this.kNight = k
     this.kNight += (k - this.kNight) * 0.05
     if (Math.abs(k - this.kNight) < 0.01) this.kNight = k
+    this.kWait = easeWait(this.kWait, this.waiting)
     this.advance()
   }
 
@@ -173,10 +183,15 @@ export abstract class SkyWorld {
     return this.kNight < 0 ? (this.night ? 1 : 0) : this.kNight
   }
 
-  /** Move the altitude one frame toward its target; a subclass may fly differently. */
+  /**
+   * Move the altitude one frame toward its target; a subclass may fly
+   * differently. While Claude waits on the person the target holds where it
+   * was and the climb (or the descent) eases off to a hover, picking up again after.
+   */
   protected advance(): void {
-    this.alt += (this.target - this.alt) * CLIMB
-    if (Math.abs(this.target - this.alt) < 0.01) this.alt = this.target
+    if (!this.waiting || this.goal < 0) this.goal = this.target
+    this.alt += (this.goal - this.alt) * CLIMB * (1 - this.kWait)
+    if (Math.abs(this.goal - this.alt) < 0.01) this.alt = this.goal
   }
 
   /** The row the vehicle's top sits on at rest: one row is left under it for the ground. */
@@ -319,6 +334,7 @@ export abstract class SkyWorld {
     }
     this.drawMoon(out)
     this.drawVehicle(out, this.vehicleTop)
+    waitTone(out, this.kWait, this.t)
     return out
   }
 

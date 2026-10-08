@@ -1,4 +1,4 @@
-// REVISION: flow-v104-sound-stream
+// REVISION: flow-v125-waiting
 //
 // A hot-air balloon in the sky world (sky.ts): the level is its target
 // altitude. At 1 it sits on the grass among trees and houses; it climbs past
@@ -7,13 +7,15 @@
 // its burner flickers while it climbs, subagents fly as small companion
 // balloons, a failed command grays the burner's flame and leaves a trail of
 // sooty smoke drifting off behind it, and a nearly-full context turns the
-// stripes blue.
+// stripes blue. While Claude waits on the person it hovers where it is, its
+// burner off but for the pilot glowing with each slow breath (sky.ts, waiting.ts).
 
 import type { Cells } from './cells'
 import { g, hash, mix } from './pixels'
 import { skyColor, SkyWorld } from './sky'
 import { defineScene } from './scene-def'
 import type { Ambience } from './sound'
+import { breath } from './waiting'
 
 export { skyColor }
 
@@ -36,7 +38,12 @@ const SPRITE = [' ▄▆█▆▄ ', '███████', ' ▀█▀█▀ 
 export class Balloon extends SkyWorld {
   ambience(): Ambience {
     // The burner, lit while it climbs (as drawn), and the wind it climbs into.
-    return { burner: this.target > this.alt + 0.3 || this.strength >= 6 ? 1 : 0 }
+    return { burner: this.burning ? 1 : 0 }
+  }
+
+  /** The burner's lit while it climbs, and high up; not while it hovers, waiting on the person. */
+  private get burning(): boolean {
+    return !this.waiting && (Math.max(this.goal, this.target) > this.alt + 0.3 || this.strength >= 6)
   }
 
   protected vehicleHeight(): number {
@@ -95,7 +102,9 @@ export class Balloon extends SkyWorld {
     const w = this.columns
     const bx = this.balloonX()
     const blue = this.tint === 'blue'
-    const burning = this.target > this.alt + 0.3 || this.strength >= 6
+    const burning = this.burning
+    // Hovering for the person: the pilot glows up and fades with each breath.
+    const pilot = this.kWait * breath(this.t)
     for (let sr = 0; sr < SPRITE.length; sr++) {
       const row = SPRITE[sr]!
       const r = top + sr
@@ -112,7 +121,7 @@ export class Balloon extends SkyWorld {
             ? C.smoke
             : burning
               ? C.flame[(this.t >> 1) % C.flame.length]!
-              : blue ? C.blueA : C.stripeA
+              : mix(blue ? C.blueA : C.stripeA, C.flame[0], pilot)
         } else {
           const even = sc % 2 === 0
           color = blue ? (even ? C.blueA : C.blueB) : even ? C.stripeA : C.stripeB

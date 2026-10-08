@@ -1,4 +1,4 @@
-// REVISION: flow-v124-tool-spark
+// REVISION: flow-v125-picker
 //
 // Flow for pi (badlogic/pi-mono), by Rob Macrae: the same ambient
 // scenes as the Claude Code mod, in a widget above pi's editor. pi's events
@@ -23,7 +23,8 @@
 // with it (another pi session may have saved); `/flow save` writes it. An
 // older pi without session entries keeps one set for every session, in that
 // file, as before (session.ts). pi has no built-in subagents, so they never add to the scene here,
-// and no side panes, so there is no spine.
+// and no side panes, so there is no spine, and `/flow pick` is a plain list (pi's own select)
+// rather than thumbnails, its choice going the way `/flow <scene>` goes.
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -32,6 +33,7 @@ import { dirname, join } from 'node:path'
 import { Activity } from '../hooks/activity'
 import { FRAME_MS, SceneDriver } from '../hooks/scene'
 import { changedText, changesFor, helpText, parseFlowArgs, readConfig, statusText, storedValue, type FlowConfig } from '../hooks/settings'
+import { SCENES } from '../hooks/styles'
 import { gridToAnsi } from './ansi'
 import { COMMAND_TOOLS, effortOf, FLOW_ENTRY, piLinesWritten, READ_TOOLS } from './mapping'
 import { PiSettings, type SessionEntries } from './session'
@@ -242,11 +244,30 @@ export default function flow(pi: PiApi) {
   const say = (text: string) => `flow: ${text}`
 
   const handler = async (args: string, ctx: PiContext) => {
-    const cmd = parseFlowArgs(args)
+    let cmd = parseFlowArgs(args)
     readClock()
     const entries = entriesOf(ctx)
     // flow.json as it is now: what follows compares with it.
     await settings.refresh(entries)
+    if (cmd.kind === 'pick') {
+      // No panes for thumbnails here: pi's own list, each scene with its blurb; the one chosen is
+      // `/flow <scene>` from here on.
+      const select = ctx.hasUI ? ctx.ui.select?.bind(ctx.ui) : undefined
+      if (!select) {
+        ctx.ui.notify(say('`/flow next` steps through the scenes, `/flow <name>` picks one'), 'warning')
+        return
+      }
+      const options = SCENES.map(d => `${d.name}${d.name === cfg.style ? ' (on now)' : ''}: ${d.blurb}`)
+      let chosen: string | undefined
+      try {
+        chosen = await select('flow: pick a scene', options)
+      } catch {
+        chosen = undefined
+      }
+      const name = chosen === undefined ? undefined : SCENES[options.indexOf(chosen)]?.name
+      if (!name) return
+      cmd = { kind: 'style', name }
+    }
     if (cmd.kind === 'show') {
       // (Without session entries every session shares one set: none is "just this session".)
       const defaults = entries ? settings.defaults : undefined
@@ -282,7 +303,7 @@ export default function flow(pi: PiApi) {
   }
   pi.registerCommand('flow', {
     description:
-      'Ambient scenes above the editor: /flow [<scene> | next | day | night | clock | auto | 1-10 | off | save | reset | help]',
+      'Ambient scenes above the editor: /flow [<scene> | pick | next | day | night | clock | auto | 1-10 | off | save | reset | help]',
     handler,
   })
 }

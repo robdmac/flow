@@ -1,4 +1,4 @@
-// REVISION: flow-v122-shared-noise
+// REVISION: flow-v125-waiting
 //
 // Surf (the `surf` style): a surfer and the ocean on the same dials as the
 // fire; the level is the swell. At 1 the sea is glassy under a dawn sky and
@@ -19,7 +19,9 @@
 // fizz and sun glints are a braille dot layer on top. Subagents (the
 // coverage boost) put more surfers in the line-up; smoke is a wipeout under
 // a grey overcast sky; a nearly-full context turns the sea storm-blue and
-// raises a red warning flag.
+// raises a red warning flag. While Claude waits on the person the swell
+// settles and the surfer sits up on the board, bobbing, waiting for the next
+// wave, the whole view breathing in sepia (waiting.ts).
 
 import { Cells, Rng, isTall } from './cells'
 import type { Tint } from './styles'
@@ -27,6 +29,7 @@ import { MOON, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from '
 import { BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, noise1 as vnoise, QUAD, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
 import { hear, type Ambience, type SoundEvent } from './sound'
+import { easeWait, waitTone } from './waiting'
 
 /** Pixels of water texture that stream past per frame at each level. */
 const SPEED = [0, 0.05, 0.12, 0.22, 0.34, 0.48, 0.64, 0.82, 1.02, 1.26, 1.55]
@@ -166,6 +169,10 @@ export class Surf {
   tint: Tint = 'normal'
   /** Night: the moon instead of the sun, stars, and moonlight on the water. */
   night = false
+  /** Claude waits on the person: the surfer sits up, waiting for a wave. */
+  waiting = false
+  /** How far into the wait's look (0..1), eased. */
+  private kWait = 0
   private columns = 0
   private rows = 0
   private out = new Cells(0, 0)
@@ -406,6 +413,7 @@ export class Surf {
     this.kGrey += ((this.tint === 'smoke' ? 1 : 0) - this.kGrey) * 0.05
     this.kStorm += ((this.tint === 'blue' ? 1 : 0) - this.kStorm) * 0.05
     this.kNight += ((this.night ? 1 : 0) - this.kNight) * 0.04
+    this.kWait = easeWait(this.kWait, this.waiting)
     if (level <= 0) return
     this.layout()
 
@@ -526,7 +534,8 @@ export class Surf {
 
   private pose(): Pose {
     if (this.recover > 0) return 'paddle'
-    if (this.s < 1.7) return 'sit'
+    // Waiting on the person: once the swell has settled, they sit up and wait for a wave.
+    if (this.s < 1.7 || (this.waiting && this.s < 2.7)) return 'sit'
     if (this.s < 2.7) return 'paddle'
     return this.curl > 0.55 ? 'crouch' : 'ride'
   }
@@ -579,6 +588,7 @@ export class Surf {
     this.composite()
     this.overlayDots()
     this.overlayGulls()
+    waitTone(out, this.kWait, this.t)
     return out
   }
 

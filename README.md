@@ -68,6 +68,8 @@ Every scene has a level from 0 (off) to 10 (as busy as it gets).
 | `bubbles` | a couple of lazy strings of bubbles | a rolling, fizzing boil |
 | `train` | waiting at a red signal or a platform, its diesel idling (when the work starts the signal clears, the horn sounds and it pulls away; when it winds down the train pulls up again) | flat out past fields, villages, woods, rivers and stations, the poles and the line beside it a blur |
 
+`/flow pick` shows them all at once, each one live, to choose from with the arrow keys and Enter (in pi, a list).
+
 Some scenes also answer to other names: `inferno` and `flame` (fire), `stars` (warp), `colony` and `interstellar` (avalon), `mechanism` (engine), `rocket` (falcon), `spaceship` (starship), `ocean` and `sea` (surf), `snow` (ski), `rail` and `railway` (train).
 
 Balloon, falcon, starship, surf, ski and train also have a **night** version: stars, a moon, moonlit snow or water, and the train's windows lit up. By night, bubbles turns into a stout: pale tan bubbles rising through black. By default day and night follow your local clock (night is 19:00 to 7:00). `/flow day` or `/flow night` pins one.
@@ -86,19 +88,23 @@ Balloon, falcon, starship, surf, ski and train also have a **night** version: st
 | running subagents | busier with each one (with diminishing returns); some scenes add company: more balloons, surfers or skiers, a wider fire, more lights on the launch tower, trains running alongside |
 | hitting a failed command, or compacting | smoke for a moment: smoky flame tips, sooty steam, a grey sky, a wipeout, a rocket's plume sputtering grey, black smoke pouring from the train's diesel |
 | near a full context (≥85%) | blue: a blue-white flame, a storm, dusk on the slopes, a blue gas flame, rain driving past the train |
+| waiting on you: a permission to grant, its question, a plan to approve | settles to a calm 2 and holds, the whole scene turned a warm sepia that breathes slowly, about every 4 s: the fire banks to a bed of glowing coals, the stars stop, the colony ship comes to rest, the balloon hovers with its pilot light glowing, the engine runs down and lets off steam, a rocket holds its stage with amber lights up the tower, the surfer sits up waiting for a wave, the skier stops, the bubbles slow, the train draws up at a red signal or a platform, its headlight and the signal glowing with each breath. With sound on, a soft chime as the wait begins |
 
 A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes several subagents editing in parallel, or a long turn: it climbs a level every 30 s it keeps going.
+
+Waiting on you shows only while a dialog is actually up for you: a permission ask that auto mode's classifier settles by itself, or that a hook answers, isn't one. It ends when you answer (once the call is over, or as soon as a long command shows it's running). Like the tints, it shows in auto mode only, and only in the session that waits.
 
 ## The command
 
 `/flow` changes things at once, in the session you run it in. Each session keeps its own scene and settings, so two sessions side by side can show different scenes, and resuming one (`claude --resume`, `claude --continue`, or opening it again in the Claude desktop app) brings its settings back. A `/clear` keeps the scene you had.
 
-A new session starts on your defaults: the rows in `/config` (*Scene mode*, *Scene*, *Scene while idle*, *Manual level*, *Scene layout*, *Day or night*, *Sound*). `/flow save` makes the current session's settings your default, and `/flow reset` puts a session back on it. Changing a row in `/config` changes the default and the session you're in. A session already running keeps what it shows when the default changes elsewhere (another session's `/flow save`, say), and `/flow` on its own says when the session differs from your default, and how. `/flow save` saves exactly what the session shows.
+A new session starts on your defaults: the rows in `/config` (*Scene mode*, *Scene*, *Scene while idle*, *Manual level*, *Scene layout*, *Day or night*, *Sound*, *Sound volume*). `/flow save` makes the current session's settings your default, and `/flow reset` puts a session back on it. Changing a row in `/config` changes the default and the session you're in. A session already running keeps what it shows when the default changes elsewhere (another session's `/flow save`, say), and `/flow` on its own says when the session differs from your default, and how. `/flow save` saves exactly what the session shows.
 
 | Command | Effect |
 |---|---|
 | `/flow` | show the scene, mode, level and time of day |
 | `/flow <scene>` | pick a scene by name or alias (`/flow surf`, `/flow sea`) |
+| `/flow pick` | every scene at once, live, side by side in a pane: the arrows (or Tab) move, Enter (or the scene's number) picks it for this session, as `/flow <scene>` does, Esc closes; on desktop, click one |
 | `/flow next` | the next scene |
 | `/flow day` / `night` | pin the time of day |
 | `/flow clock` | day or night by your local clock (the default) |
@@ -107,6 +113,7 @@ A new session starts on your defaults: the rows in `/config` (*Scene mode*, *Sce
 | `/flow 1`–`10` / `off` | hold a fixed level, or switch it off |
 | `/flow idle glow` / `dark` | in auto mode while idle: a low glow (the default), or nothing (the band gives its rows back) |
 | `/flow sound` | toggle a soundscape for the scene, swelling with the work (macOS; off by default); `/flow sound on` / `off` to set it |
+| `/flow sound 1`–`10` | the soundscape's volume, turning it on (7 is the default; each step below it 3 dB quieter); `/flow sound 0` turns it off. `/flow volume 1`–`10` does the same |
 | `/flow band` / `spine` | a 5-row band above the prompt (the default; also `horizontal`, `bar` or `flat`), or a tall pane docked beside the transcript (also `portrait`, `vertical` or `side`) |
 | `/flow save` | make this session's settings your default, the one new sessions start with (it writes them to `/config`) |
 | `/flow reset` | put this session back on your default |
@@ -119,7 +126,11 @@ A new session starts on your defaults: the rows in `/config` (*Scene mode*, *Sce
 
 The background is long takes that blend one into the next at random moments, so nothing comes round on a beat, and a fresh one crossfades in whenever the level or the scene changes (a rocket on the pad, climbing, in orbit, coming home). On top of it you hear what happens on screen, as it happens: bubbles bursting, rocks blowing up on the shield, sparks, a wave breaking, each ski turn, the hammer, the train's horn as it pulls away and before each level crossing, and the rockets' ignition, staging, the booster's sonic boom, the catch, parachutes and splashdown. Every scene follows the same loudness from level 1 (quiet) to 10.
 
-It plays only while the scene is on screen, and stops with the session. Claude Code plays the clips with `afplay`, so it's macOS only; elsewhere the setting does nothing. It's set per session like everything else, so you can have it on in one session and not another; several sessions with it on each play their own.
+`/flow sound 1` to `10` turns it on at that volume in the session you run it in (*Sound volume* in `/config` is the volume new sessions start with, and `/flow save` makes this session's it). 7, the default, is the loudness the scenes were tuned to; each step below it is 3 dB quieter, so 1 is 18 dB down. Above 7 there's little room left: the loudest sounds already play near full scale, and any louder they'd distort. So 8, 9 and 10 lift the quieter sounds by up to 2, 4 and 6 dB, the louder ones by less and the loudest not at all, and a busier moment still sounds busier than a calm one. `/flow sound 0` turns it off, and `/flow sound` turns it back on at the volume it had.
+
+When Claude starts waiting on you (a permission, its question, a plan to approve), a soft chime: two struck tubes rising a fourth, about as loud as a scene at 6. Once a wait, and not for one right behind another (within 20 s): you're there already. It's part of the soundscape, so it follows the session's sound setting: `/flow sound` turns it on and off with the rest. For an alert without the ambience, there's Claude Code's own notification setting in `/config`.
+
+It plays only while the scene is on screen, and stops with the session. Claude Code plays the clips with `afplay`, so it's macOS only; elsewhere the setting does nothing. It's set per session like everything else, so you can have it on in one session and not another, or quieter in one; several sessions with it on each play their own.
 
 ## Turning it off
 
@@ -138,6 +149,8 @@ The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's edito
 | `tool_result` with `isError` | a failed command shows as smoke |
 | `session_compact` | so does a compaction |
 | `ctx.getContextUsage()` | a nearly-full context shows as blue |
+
+pi tells an extension nothing of a wait on you, so there the scenes never show one.
 
 As in Claude Code, each session keeps its own settings, kept in the session itself (an entry the model never sees), so resuming or forking it brings them back. `~/.pi/agent/flow.json` holds the defaults new sessions start with; `/flow save` writes it. To try it without installing: `pi --extension ./pi/index.ts`.
 
@@ -165,12 +178,12 @@ CI ([ci.yml](.github/workflows/ci.yml)) runs these and `npm run check` on every 
 ```sh
 npm install
 npm run new-scene -- aurora --blurb "curtains of light that ripple faster with the work" --night
-npm run preview -- aurora    # see it here at levels 1, 5 and 10, as a band and a spine, with each tint
+npm run preview -- aurora    # see it here at levels 1, 5 and 10, as a band and a spine, with each tint and waiting
 claude --plugin-dir .        # then /flow aurora
 npm run check                # colour pairs and timing, before you open a pull request
 ```
 
-`new-scene` writes `hooks/aurora.ts`: a scene that already moves with the level, shows the tints and (with `--night`) has a night. Edit its `paint()`: it gets a grid of pixels (2 × 2 a terminal cell) and the dials (the level, eased; the frame count; night; the tint; whether it's the tall spine). [AGENTS.md](AGENTS.md) has the rules a scene keeps to.
+`new-scene` writes `hooks/aurora.ts`: a scene that already moves with the level, shows the tints, breathes while Claude waits on you and (with `--night`) has a night. Edit its `paint()`: it gets a grid of pixels (2 × 2 a terminal cell) and the dials (the level, eased; the frame count; night; the tint; how far into a wait on you; whether it's the tall spine). [AGENTS.md](AGENTS.md) has the rules a scene keeps to.
 
 Every hook file carries a `// REVISION:` marker. On startup the mod writes the loaded revision, the local time and the UTC offset to the debug log (`claude --debug`).
 

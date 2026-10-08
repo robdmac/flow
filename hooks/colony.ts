@@ -1,4 +1,4 @@
-// REVISION: flow-v120-cvd-blue
+// REVISION: flow-v125-waiting
 //
 // A colony ship on the same dials as the fire: the level is its speed. A
 // long ship like the Avalon holds steady (nose to the right in the band,
@@ -17,7 +17,9 @@
 // burns long and impacts keep the shield lit. Subagents light more of the
 // habitat windows; smoke dims the engine to gray, coughs puffs out behind
 // it, and leaves the shield flickering weakly; a nearly-full context turns
-// the shield a hard-glowing cyan and the stars a deep blue.
+// the shield a hard-glowing cyan and the stars a deep blue. While Claude waits on
+// the person the ship comes to a stop among still stars, breathing in sepia
+// (waiting.ts).
 //
 // Everything is placed in a flight frame (a = along the direction of
 // travel, c = across it, both in braille dots: square, two a cell across and
@@ -30,6 +32,7 @@ import type { Tint } from './styles'
 import { BRAILLE, clamp, fitQuad, g, hash1 as hash, mix, NEAR, QUAD, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
 import { hear, leadFrames, type SoundEvent } from './sound'
+import { easeWait, waitTone } from './waiting'
 
 /** Cells per frame the nearest stars travel at each level (0 = off). */
 const SPEED = [0, 0.012, 0.03, 0.06, 0.11, 0.19, 0.32, 0.52, 0.85, 1.35, 2.1]
@@ -114,6 +117,10 @@ export class Colony {
   coverageBoost = 0
   sounds: SoundEvent[] = []
   tint: Tint = 'normal'
+  /** Claude waits on the person: the ship comes to a stop. */
+  waiting = false
+  /** How far it has stopped (0..1), eased. */
+  private kWait = 0
   private columns = 0
   private rows = 0
   private out = new Cells(0, 0)
@@ -227,11 +234,11 @@ export class Colony {
     }
   }
 
-  /** The stars' speed (cells per frame) at the eased level, between table steps. */
+  /** The stars' speed (cells per frame) at the eased level, between table steps; none once stopped for the person. */
   private get speed(): number {
     const l = clamp(this.level, 0, 10)
     const i = Math.min(9, Math.floor(l))
-    return SPEED[i]! + (SPEED[i + 1]! - SPEED[i]!) * (l - i)
+    return (SPEED[i]! + (SPEED[i + 1]! - SPEED[i]!) * (l - i)) * (1 - this.kWait)
   }
 
   /** How fast the rocks drift in (dots per frame): their own drift plus the ship's speed. */
@@ -247,6 +254,7 @@ export class Colony {
 
   step(): void {
     this.t++
+    this.kWait = easeWait(this.kWait, this.waiting)
     const want = clamp(this.strength, 0, 10)
     if (Number.isNaN(this.level)) this.level = want
     this.level += Math.abs(want - this.level) < 0.01 ? want - this.level : (want - this.level) * 0.05
@@ -427,6 +435,7 @@ export class Colony {
     }
     this.drawFlashes(out)
     this.drawShip(out, level)
+    waitTone(out, this.kWait, this.t)
     return out
   }
 

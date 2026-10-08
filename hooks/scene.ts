@@ -1,11 +1,12 @@
-// REVISION: flow-v80-scene-follows-cfg
+// REVISION: flow-v125-waiting
 //
 // What every harness adapter (Claude Code's register.tsx, pi's pi/index.ts)
 // does the same way: one scene instance per style (so a switch resumes where
 // that scene left off), the level the settings and the activity call for, whether
-// anything shows at all, and pointing the current scene at those dials and
-// the time of day. Two drivers can share one cfg (each with its own scenes):
-// the scene follows the shared style. Pure: no engine imports.
+// anything shows at all, and pointing the current scene at those dials, the
+// time of day and whether Claude waits on the person. Two drivers can share
+// one cfg (each with its own scenes): the scene follows the shared style.
+// Pure: no engine imports.
 
 import { type Activity } from './activity'
 import { isNightAt, type Clock, type FlowConfig } from './settings'
@@ -62,6 +63,11 @@ export class SceneDriver {
     return this.cfg.mode === 'auto' ? this.activity.tint : 'normal'
   }
 
+  /** Whether auto mode shows Claude waiting on the person (a dialog is up for them); never in manual, as with the tints. */
+  waiting(): boolean {
+    return this.cfg.mode === 'auto' && this.activity.isAwaitingPerson
+  }
+
   /** How long until the next frame: calm scenes (low, untinted) step slower. */
   pace(): number {
     const f = this.scene
@@ -75,6 +81,7 @@ export class SceneDriver {
     f.coverageBoost = this.cfg.mode === 'auto' ? this.activity.coverageBoost : 0
     f.tint = this.tint()
     f.night = this.isNight()
+    f.waiting = this.waiting()
     return f
   }
 }

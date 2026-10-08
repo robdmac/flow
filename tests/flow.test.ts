@@ -1,10 +1,10 @@
-// REVISION: flow-v129-quiet-exit
+// REVISION: flow-v135-someone-there
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { AsciiFire, colorFor, params } from '../hooks/fire'
-import { effortFloor, Activity, linesWritten } from '../hooks/activity'
+import { effortFloor, Activity, linesWritten, WAIT_LEVEL } from '../hooks/activity'
 import { firstTips, nextTip, readTips, changedText, changesFor, helpText, isNightAt, ownHint, parseFlowArgs, readConfig, resetText, savedText, staleRows, statusText } from '../hooks/settings'
 import { differences, type Own, ownAfterSwitch, pinShown, readOwn, readRecord, SESSION_KEPT_MS, SESSIONS_KEPT, sessionKey, staleSessions, storedOwn, storedRecord, withOwn } from '../hooks/sessions'
 import { gridToAnsi } from '../pi/ansi'
@@ -15,14 +15,17 @@ import { Balloon, skyColor } from '../hooks/balloon'
 import { Falcon } from '../hooks/rocket'
 import { Colony } from '../hooks/colony'
 import { Train } from '../hooks/train'
-import { makeScene, nextStyle, SCENES, STYLES, styleNamed } from '../hooks/styles'
+import { makeScene, nextStyle, SCENES, STYLES, styleNamed, type SceneName } from '../hooks/styles'
 import { migrateOverrides, openSession, runScene, type SceneCtx } from '../hooks/register'
 import { coverage, frameSvg, gridPixels, SVG_LIMIT } from '../hooks/svg'
 import { Cells, isTall } from '../hooks/cells'
 import { SceneDriver } from '../hooks/scene'
-import { BED_EVERY_MS, BED_FADE_MS, BED_MIN_MS, BED_MS, BURST_MAX, MAX_PLAYS, MOODS, PLAYER_DRAIN_MS, PLAYER_LEAD_MS, type BedTake, bedGap, bedPlays, bedStep, burst, EVENTS, eventPlay, gather, LAYERS } from '../hooks/sound'
+import { BED_EVERY_MS, BED_FADE_MS, BED_MIN_MS, BED_MS, BURST_MAX, CHIME_DELAY_MS, CHIME_QUIET_MS, MAX_PLAYS, MOODS, PLAYER_DRAIN_MS, PLAYER_LEAD_MS, type BedTake, bedGap, bedPlays, bedStep, burst, chimePlay, chimeStep, EVENTS, eventPlay, gather, LAYERS, newChimeState } from '../hooks/sound'
+import { DEFAULT_VOLUME, MAX_GAIN, master, VOLUME_DB, volumeGain } from '../hooks/sound'
+import { BREATH_FRAMES, breath, easeWait, waitTone } from '../hooks/waiting'
 import { SOUND_FILES } from '../hooks/sound-files'
 import { PixelScene, type Dials, type Painter } from '../hooks/pixel-scene'
+import { hotkeyFor, labelWidth, PICK_LEVEL, pickLayout, pickRows, sceneOfKey, Thumbnails } from '../hooks/picker'
 
 const BAND = {
   component: 'AbovePrompt',
@@ -47,9 +50,13 @@ function decode(cells: string): Uint32Array {
 
 type Captured = {
   blits: string[]
+  /** Each blit as `<site>/<key>` (the picker's thumbnails are a Raster each). */
+  blitKeys?: string[]
   config: [string, unknown][]
   invalidates?: number
   plays?: string[]
+  /** Each clip played: its file (none for one synthesized here) and its gain. */
+  played?: { asset?: string; gain?: number }[]
   toasts?: string[]
   /** What `$.ui.log` was given, and where to. */
   logs?: { text: string; to?: string }[]
@@ -78,10 +85,13 @@ function engine(
   refuse?: (asset: string) => boolean,
 ) {
   on('session.id', () => ({ value: (captured.session ??= 'session-a') }))
+  // The prompt box: an edit lands as made.
+  on('prompt.edit', (_, e) => ({ text: e.text, cursor: e.cursor }))
   on('session.end', (_, e) => ({ sessionId: e.sessionId }))
   on('audio.play', (_, e) => {
     const clip = e.clip as { base64?: string; asset?: string }
     ;(captured.plays ??= []).push(`${e.shouldLoop ? 'loop' : 'once'}:${(clip.base64 ?? '').length}:${clip.asset ?? (clip.base64 ?? '').slice(-24)}`)
+    ;(captured.played ??= []).push({ asset: clip.asset, gain: e.gain })
     if (clip.asset && refuse?.(clip.asset)) return { deny: 'refused: 4 plays are going at once' }
     return { value: undefined }
   })
@@ -105,6 +115,7 @@ function engine(
   on('command.register', () => ({ value: { command: 'flow' } }))
   on('ui.blit', (_, e) => {
     captured.blits.push(e.requestId)
+    ;(captured.blitKeys ??= []).push(`${e.requestId}/${e.key}`)
     return { value: {} }
   })
   on('config.set', (_, e) => {
@@ -132,8 +143,16 @@ function memoryStore(on: On, entries: Readonly<Record<string, unknown>> = {}): M
 
 type TestDollar = { session: { start: (a: { cwd: string; surface: 'terminal'; isInteractive: boolean }) => Promise<unknown> } }
 
+/** A session starting with someone at it: they press a key in the prompt (so its soundscape may play). */
 async function start($: TestDollar) {
   await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  await keyed($)
+}
+
+/** A key in the prompt box: someone's at the session. */
+async function keyed($: unknown) {
+  const edit = { origin: { kind: 'composer' }, text: '', cursor: 0, start: 0, end: 0, inputText: 'h' }
+  await ($ as { prompt: { edit: (e: object) => Promise<unknown> } }).prompt.edit(edit)
 }
 
 type RunInput = {
@@ -587,6 +606,199 @@ test('settings: /flow sound on | off | (toggle), shown in the status', () => {
   expect(helpText()).toContain('/flow sound')
 })
 
+test('settings: /flow sound 1-10 turns it on at that volume; 0 turns it off, keeping the volume for next time', () => {
+  expect(parseFlowArgs('sound 4')).toEqual({ kind: 'sound', sound: 'on', volume: 4 })
+  expect(parseFlowArgs('sound 10')).toEqual({ kind: 'sound', sound: 'on', volume: 10 })
+  expect(parseFlowArgs('sound 0')).toEqual({ kind: 'sound', sound: 'off' })
+  for (const bad of ['sound 11', 'sound -1', 'sound 4.5', 'sound on 4', 'sound 4 on', 'volume', 'volume 11', 'volume loud']) expect(parseFlowArgs(bad).kind).toBe('error')
+  // `/flow volume 4` is `/flow sound 4`.
+  expect(parseFlowArgs('volume 4')).toEqual(parseFlowArgs('sound 4'))
+  expect(parseFlowArgs('volume 0')).toEqual({ kind: 'sound', sound: 'off' })
+  const off = readConfig(undefined)
+  expect(off.volume).toBe(DEFAULT_VOLUME)
+  expect(changesFor(parseFlowArgs('sound 4'), off)).toEqual({ sound: 'on', volume: 4 })
+  const four = { ...off, sound: 'on' as const, volume: 4 }
+  expect(changesFor(parseFlowArgs('sound 0'), four)).toEqual({ sound: 'off' })
+  // Toggled back on, it plays at the volume it had.
+  expect(changesFor(parseFlowArgs('sound'), { ...four, sound: 'off' })).toEqual({ sound: 'on' })
+  const clock = { hour: 12, minute: 0 }
+  expect(statusText(four, 3, 'normal', clock)).toContain('sound on at 4/10')
+  expect(statusText({ ...four, sound: 'off' }, 3, 'normal', clock)).not.toContain('sound on')
+  expect(changedText(parseFlowArgs('sound 4'), four, "Claude's", clock)).toBe('sound on at 4/10 (7 plays as tuned)')
+  expect(changedText(parseFlowArgs('sound 7'), { ...four, volume: 7 }, "Claude's", clock)).toBe('sound on at 7/10, as tuned')
+  expect(changedText(parseFlowArgs('sound 9'), { ...four, volume: 9 }, "Claude's", clock)).toContain('the loudest already play near full')
+  expect(changedText(parseFlowArgs('sound'), four, "Claude's", clock)).toContain('`/flow sound 1-10` sets the volume')
+  expect(changedText(parseFlowArgs('sound 0'), { ...four, sound: 'off' }, "Claude's", clock)).toBe('sound off')
+  expect(helpText()).toContain('/flow sound 1-10')
+  // Stored: a whole number from 1 to 10, else the default.
+  expect(readConfig({ volume: 3 }).volume).toBe(3)
+  for (const bad of [0, 11, 4.5, -2, 'loud', null]) expect(readConfig({ volume: bad }).volume).toBe(DEFAULT_VOLUME)
+})
+
+test('soundscapes: the volume is 3 dB a step below the default, and above it a lift that tapers to none at the cap: no play ever past 1.4', () => {
+  const dB = (x: number) => 20 * Math.log10(x)
+  const near = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThan(1e-6)
+  expect(VOLUME_DB).toHaveLength(10)
+  expect(VOLUME_DB[DEFAULT_VOLUME - 1]).toBe(0)
+  for (let g = 0.01; g <= MAX_GAIN; g += 0.01) {
+    // The default plays as tuned; below it, every play is turned down alike.
+    near(volumeGain(g, DEFAULT_VOLUME), g)
+    for (let v = 1; v < DEFAULT_VOLUME; v++) near(dB(volumeGain(g, v) / g), -3 * (DEFAULT_VOLUME - v))
+    // Each step up is louder (or, at the cap, as loud).
+    for (let v = 2; v <= 10; v++) expect(volumeGain(g, v)).toBeGreaterThanOrEqual(volumeGain(g, v - 1))
+  }
+  // Above the default: a quiet play gets the step's whole lift, a louder one less, one at the cap none...
+  near(dB(volumeGain(0.2, 10) / 0.2), 6)
+  expect(dB(volumeGain(0.7, 10) / 0.7)).toBeLessThan(6)
+  expect(dB(volumeGain(0.7, 10) / 0.7)).toBeGreaterThan(2)
+  expect(volumeGain(MAX_GAIN, 10)).toBe(MAX_GAIN)
+  // ...and a louder play stays the louder (a busier moment still sounds busier), none past the cap.
+  for (let v = 1; v <= 10; v++) {
+    let last = 0
+    for (let g = 0; g <= 4; g += 0.005) {
+      const out = volumeGain(g, v)
+      expect(out).toBeLessThanOrEqual(MAX_GAIN)
+      expect(out).toBeGreaterThanOrEqual(last)
+      last = out
+    }
+  }
+  // Every scene's beds, event clips and bursts, at every level and volume.
+  const amb = { roar: 1, wind: 1, burner: 1, sea: 1 }
+  for (const scene of STYLES)
+    for (let level = 0; level <= 10; level++)
+      for (let volume = 1; volume <= 10; volume++) {
+        for (const p of bedPlays({ scene, level, tint: 'normal', night: false, amb }, level) ?? []) expect(volumeGain(p.gain, volume)).toBeLessThanOrEqual(1.4)
+        for (const kind of Object.keys(EVENTS) as (keyof typeof EVENTS)[])
+          expect(volumeGain(eventPlay({ kind, v: 1 }, level, scene, level)!.gain, volume)).toBeLessThanOrEqual(1.4)
+        expect(volumeGain(master(scene, level), volume)).toBeLessThanOrEqual(1.4)
+      }
+  // Out of range: clamped, never NaN.
+  expect(volumeGain(1, 0)).toBe(volumeGain(1, 1))
+  expect(volumeGain(1, 99)).toBe(volumeGain(1, 10))
+  expect(volumeGain(1, Number.NaN)).toBe(1)
+})
+
+test('soundscapes: a new volume crossfades a fresh bed take in within seconds (turned down, the old one goes sooner)', () => {
+  const takes: (BedTake | undefined)[] = []
+  const mood = (volume: number) => ({ scene: 'engine', level: 9, tint: 'normal' as const, night: false, amb: {}, volume })
+  const first = bedStep(takes, mood(DEFAULT_VOLUME), 0, 1)
+  expect(first.play.length).toBe(1)
+  // Nothing new while the volume holds (the take isn't due)...
+  for (let ms = 70; ms < 5000; ms += 70) expect(bedStep(takes, mood(DEFAULT_VOLUME), ms, 2).play).toEqual([])
+  // ...then a new volume: a fresh take at once, the old one stopped a third of the crossfade in (it's the louder).
+  const quieter = bedStep(takes, mood(3), 5000, 3)
+  expect(quieter.play.length).toBe(1)
+  expect(bedStep(takes, mood(3), 5000 + BED_FADE_MS / 3, 4).stop).toEqual([first.play[0]!.id])
+  // Turned up: the old one stays through the whole crossfade.
+  const louder = bedStep(takes, mood(9), 10_000, 5)
+  expect(louder.play.length).toBe(1)
+  expect(bedStep(takes, mood(9), 10_000 + BED_FADE_MS / 3, 6).stop).toEqual([])
+  expect(bedStep(takes, mood(9), 10_000 + BED_FADE_MS, 7).stop).toEqual([quieter.play[0]!.id])
+})
+
+test('the volume scales every clip as it plays, the bed and the bursts alike; a new one is heard within seconds', { options: { mode: 'manual', level: 9, sound: 'on', style: 'fire' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  // The fire's bed, and its sparks' bursts (synthesized here: no file), as tuned.
+  const bed = bedPlays({ scene: 'fire', level: 9, tint: 'normal', night: false, amb: {} }, 1)![0]!.gain
+  const sparks = master('fire', 9)
+  const near = (a: number | undefined, b: number) => expect(Math.abs((a ?? Number.NaN) - b)).toBeLessThan(1e-9)
+  const heard = async (ms: number) => {
+    const from = (seen.played ?? []).length
+    await clock.advance(ms)
+    const p = (seen.played ?? []).slice(from)
+    return { beds: p.filter(x => x.asset?.includes('/bed-')), bursts: p.filter(x => x.asset === undefined) }
+  }
+  let h = await heard(4000)
+  expect(h.beds.length).toBeGreaterThan(0)
+  expect(h.bursts.length).toBeGreaterThan(0)
+  for (const p of h.beds) near(p.gain, bed)
+  for (const p of h.bursts) near(p.gain, sparks)
+  // Turned down 9 dB: the sparks at once, the bed as a fresh take crossfades in.
+  expect((await flow($, 'sound 4')).split('\n')[0]).toBe('sound on at 4/10 (7 plays as tuned)')
+  h = await heard(4000)
+  expect(h.beds.length).toBeGreaterThan(0)
+  expect(h.bursts.length).toBeGreaterThan(0)
+  for (const p of h.beds) near(p.gain, bed * 10 ** (-9 / 20))
+  for (const p of h.bursts) near(p.gain, sparks * 10 ** (-9 / 20))
+  // Turned up past the default: louder than as tuned, but never past 1.4.
+  await flow($, 'sound 10')
+  h = await heard(4000)
+  expect(h.beds.length).toBeGreaterThan(0)
+  for (const p of [...h.beds, ...h.bursts]) expect(p.gain!).toBeLessThanOrEqual(1.4)
+  for (const p of h.beds) near(p.gain, volumeGain(bed, 10))
+  for (const p of h.bursts) {
+    near(p.gain, volumeGain(sparks, 10))
+    expect(p.gain!).toBeGreaterThan(sparks)
+  }
+  await ui.unmount()
+})
+
+test("the volume from /config scales event clips too (the engine's chuffs)", { options: { mode: 'manual', level: 9, sound: 'on', style: 'engine', volume: 4 } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  await start($)
+  expect((await flow($)).split('\n')[0]).toContain('sound on at 4/10')
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(6000)
+  const chuffs = (seen.played ?? []).filter(p => p.asset?.includes('events/chuff'))
+  expect(chuffs.length).toBeGreaterThan(0)
+  // As tuned, a chuff plays between its smallest and biggest gains; at 4, each 9 dB under.
+  const [lo, hi] = [0, 1].map(v => EVENTS.chuff!.gain(v) * master('engine', 9) * 10 ** (-9 / 20))
+  for (const p of chuffs) {
+    expect(p.gain!).toBeGreaterThanOrEqual(lo! - 1e-9)
+    expect(p.gain!).toBeLessThanOrEqual(hi! + 1e-9)
+  }
+  await ui.unmount()
+})
+
+test("sessions: the volume is a session's own: /flow sound 4 in one leaves another as it was; save and reset cover it", async ($, on) => {
+  mock.clock(on)
+  const store = memoryStore(on)
+  const seen = engine(on, { blits: [], config: [], rows: {} })
+  seen.session = 'a'
+  await start($)
+  const four = await flow($, 'sound 4')
+  expect(four.split('\n')[0]).toBe('sound on at 4/10 (7 plays as tuned)')
+  expect(four).toContain('just this session')
+  expect(store.get(sessionKey('a'))).toMatchObject({ own: { sound: 'on', volume: 4 } })
+  expect(seen.config).toEqual([]) // the default, /config, untouched
+  // B, on the same store and /config: the default, then a volume of its own; A's stays as it was.
+  seen.session = 'b'
+  await start($)
+  expect((await flow($)).split('\n')[0]).not.toContain('sound on')
+  expect((await flow($, 'volume 9')).split('\n')[0]).toContain('sound on at 9/10')
+  expect(store.get(sessionKey('a'))).toMatchObject({ own: { sound: 'on', volume: 4 } })
+  seen.session = 'a'
+  await start($)
+  const a = await flow($)
+  expect(a.split('\n')[0]).toMatch(/sound on at 4\/10$/)
+  expect(a).toContain('just this session (your default: sound off, volume 7/10)')
+  // Off and on again: back at 4.
+  expect((await flow($, 'sound 0')).split('\n')[0]).toBe('sound off')
+  expect((await flow($, 'sound')).split('\n')[0]).toContain('sound on at 4/10')
+  // Saved, it's /config's row, the volume new sessions start with...
+  expect((await flow($, 'save')).split('\n\n')[0]).toBe('saved as your default: new sessions start with sound on, volume 4/10')
+  expect(seen.config).toContainEqual(['flow.volume', 4])
+  seen.session = 'c'
+  await start($)
+  expect((await flow($)).split('\n')[0]).toMatch(/sound on at 4\/10$/)
+  // ...while B keeps its own, until it's reset to the default.
+  seen.session = 'b'
+  await start($)
+  expect((await flow($)).split('\n')[0]).toMatch(/sound on at 9\/10$/)
+  expect((await flow($, 'reset')).split('\n\n')[0]).toBe('back to your default: volume 4/10')
+  expect((await flow($)).split('\n')[0]).toMatch(/sound on at 4\/10$/)
+  // A stored volume out of range isn't one.
+  expect(readOwn({ volume: 11 })).toEqual({})
+  expect(readOwn({ volume: '4' })).toEqual({})
+  expect(readOwn({ volume: 4 })).toEqual({ volume: 4 })
+})
+
 test('soundscapes: a bed renews as its take fades, never with the take before, and follows the level at once', () => {
   const takes: (BedTake | undefined)[] = []
   const mood = (level: number) => ({ scene: 'avalon', level, tint: 'normal' as const, night: false, amb: {} })
@@ -861,6 +1073,20 @@ test('the session ending stops the soundscape for good (Claude Code quitting lea
   await ui.unmount()
 })
 
+test('a session no one is at stays quiet (Claude Code warms spares in the background, a terminal no one sees); a key in the prompt, and it plays', { options: { mode: 'manual', level: 9, style: 'bubbles', sound: 'on' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  await ($ as unknown as TestDollar).session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(10_000)
+  expect(seen.plays ?? []).toEqual([])
+  await keyed($)
+  await clock.advance(3000)
+  expect((seen.plays ?? []).length).toBeGreaterThan(0)
+  await ui.unmount()
+})
+
 test('spine: the pane hides while flow is off, as the band does, and comes back with it', { options: { mode: 'manual', level: 5, layout: 'spine' } }, async ($, on) => {
   mock.clock(on)
   mock.store(on)
@@ -920,7 +1146,7 @@ test('sound off (the default): nothing plays', async ($, on) => {
 })
 
 test('config values are validated, falling back to defaults', async () => {
-  expect(readConfig(undefined)).toEqual({ mode: 'auto', style: 'fire', idle: 1, level: 8, layout: 'band', time: 'clock', sound: 'off' })
+  expect(readConfig(undefined)).toEqual({ mode: 'auto', style: 'fire', idle: 1, level: 8, layout: 'band', time: 'clock', sound: 'off', volume: 7 })
   expect(readConfig({ mode: 'manual', style: 'ember', idle: 'dark', level: 3 })).toEqual({
     mode: 'manual',
     style: 'fire',
@@ -929,6 +1155,7 @@ test('config values are validated, falling back to defaults', async () => {
     layout: 'band',
     time: 'clock',
     sound: 'off',
+    volume: 7,
   })
   expect(readConfig({ idle: 'pilot' }).idle).toBe(1) // the old name for glow
   expect(readConfig({ idle: 'glow' })).toEqual({
@@ -939,6 +1166,7 @@ test('config values are validated, falling back to defaults', async () => {
     layout: 'band',
     time: 'clock',
     sound: 'off',
+    volume: 7,
   })
   expect(readConfig({ mode: 'loud', style: 'hearth', idle: 'x', level: 5.5 })).toEqual(readConfig(undefined))
   expect(readConfig({ level: 42 }).level).toBe(8)
@@ -1695,7 +1923,7 @@ test('sessions: /flow changes only the session it runs in; each resumes with its
   // B resumed: its own.
   seen.session = 'b'
   await start($)
-  expect((await flow($)).split('\n')[0]).toMatch(/^bubbles, .*sound on$/)
+  expect((await flow($)).split('\n')[0]).toMatch(/^bubbles, .*sound on at 7\/10$/)
   // A brand new session: the defaults, with nothing of its own.
   seen.session = 'c'
   await start($)
@@ -1776,7 +2004,7 @@ test('sessions: a /config change made in the session is the default, and that ro
   await set({ key: 'flow.style', value: 'ski', previous: 'fire', provider: { plugin: 'flow', tier: 'user' }, origin: { kind: 'composer' } })
   expect(store.get(sessionKey('session-a'))).toEqual({ own: { sound: 'on' }, at: 0 })
   const status = await flow($)
-  expect(status.split('\n')[0]).toMatch(/^ski, .*sound on$/)
+  expect(status.split('\n')[0]).toMatch(/^ski, .*sound on at 7\/10$/)
   expect(status).toContain('your default: sound off')
 })
 
@@ -1901,6 +2129,8 @@ function sceneSession(shared: Shared, id: string) {
     session: { id: undefined, defaults: readConfig(undefined), own: {}, ended: undefined, watch: 0 },
     applyLocal: changes => driver.apply(changes),
     leftSpine: () => {},
+    openingPicker: () => {},
+    closingPicker: () => false,
   }
   return {
     cfg: driver.cfg,
@@ -1967,7 +2197,7 @@ test('sessions: the defaults changing under a running session (another one\'s sa
   // A new session starts on the defaults as they are.
   seen.session = 'b'
   await start($)
-  expect((await flow($)).split('\n')[0]).toMatch(/^surf, .*sound on$/)
+  expect((await flow($)).split('\n')[0]).toMatch(/^surf, .*sound on at 7\/10$/)
   // Saved from the first again: /config takes all it shows, so new sessions start just so.
   seen.session = 'a'
   await start($)
@@ -2028,6 +2258,42 @@ test('pi: two sessions on one flow.json: B saves, then A changes and saves exact
   await old.open(undefined)
   await old.change({ style: 'ski' }, undefined)
   expect(json.style).toBe('ski')
+})
+
+test("pi: the volume is a session's own too: /flow sound 4 in one leaves the other, and flow.json, as they were", async () => {
+  let json: Record<string, unknown> = {}
+  const file = {
+    load: async () => readConfig(json),
+    save: async (changes: Own) => {
+      json = { ...json, ...storedOwn(changes) }
+    },
+  }
+  const sessionOf = (): SessionEntries & { entries: PiSessionEntry[] } => {
+    const entries: PiSessionEntry[] = []
+    return { entries, branch: () => entries, keep: data => void entries.push({ type: 'custom', id: String(entries.length), customType: 'flow', data }) }
+  }
+  const sa = sessionOf()
+  const sb = sessionOf()
+  const a = new PiSettings(readConfig(undefined), file)
+  const b = new PiSettings(readConfig(undefined), file)
+  await a.open(sa)
+  await b.open(sb)
+  expect(await a.change(changesFor(parseFlowArgs('sound 4'), a.cfg) ?? {}, sa)).toContain('just this session')
+  expect(a.cfg).toMatchObject({ sound: 'on', volume: 4 })
+  expect(ownInSession(sa.entries)).toEqual({ sound: 'on', volume: 4 })
+  expect(b.cfg).toMatchObject({ sound: 'off', volume: 7 })
+  expect(json).toEqual({})
+  // Resumed: its own volume back.
+  const a2 = new PiSettings(readConfig(undefined), file)
+  await a2.open(sa)
+  expect(a2.cfg.volume).toBe(4)
+  // Saved: flow.json's; B shows what it showed (its own now) until it's reset.
+  expect((await a.save(sa)).text).toBe('saved as your default: new sessions start with sound on, volume 4/10')
+  expect(json).toMatchObject({ sound: 'on', volume: 4 })
+  await b.refresh(sb)
+  expect(b.cfg).toMatchObject({ sound: 'off', volume: 7 })
+  expect(b.reset(sb)).toBe('back to your default: sound on, volume 4/10')
+  expect(b.cfg).toMatchObject({ sound: 'on', volume: 4 })
 })
 
 test('sessions: what a session shows that the defaults no longer hold becomes its own; what it set, or shows as the default, stays as it was', () => {
@@ -2134,4 +2400,655 @@ test('train: subagents run alongside, drawing up from out of sight, and fall bac
     for (let i = 0; i < 600; i++) t.step()
     expect(t.company).toBe(0)
   }
+})
+// ── Waiting on the person ────────────────────────────────────────────────
+
+test('waiting on the person: a question shows at once; a permission ask only once its dialog is up (auto mode settles most alone)', () => {
+  const h = new Activity()
+  h.turnStarted()
+  h.modelStep('high')
+  h.heat = 3
+  const working = h.strength(1)
+  expect(working).toBeGreaterThan(WAIT_LEVEL)
+  // A permission ask: the turn's clock stops, but no one's asked yet (the classifier may settle it).
+  h.waitingOn('toolu_1', false, 'Bash')
+  expect(h.isWaiting).toBe(true)
+  expect(h.isAwaitingPerson).toBe(false)
+  expect(h.strength(1)).toBe(working)
+  // Its dialog shows: now it waits on the person, and the level settles.
+  h.prompted('Bash')
+  expect(h.isAwaitingPerson).toBe(true)
+  expect(h.strength(1)).toBe(WAIT_LEVEL)
+  h.answered('toolu_1', 'Bash')
+  expect(h.isAwaitingPerson).toBe(false)
+  expect(h.strength(1)).toBe(working)
+  // Claude's question is put to the person from the start; the turn ending forgets it.
+  h.waitingOn('toolu_2', true, 'AskUserQuestion')
+  expect(h.isAwaitingPerson).toBe(true)
+  h.turnEnded()
+  expect(h.isAwaitingPerson).toBe(false)
+})
+
+test("waiting on the person: a dialog takes its own loop's ask first, and one seen with no ask before it lasts till a call of its tool ends", () => {
+  const h = new Activity()
+  h.turnStarted()
+  h.waitingOn('main', false, 'Bash')
+  h.waitingOn('sub', false, 'Bash', 'agent-1')
+  h.prompted('Bash', 'agent-1')
+  h.answered('main', 'Bash')
+  expect(h.isAwaitingPerson).toBe(true) // the subagent's call still waits on its dialog
+  h.answered('sub', 'Bash')
+  expect(h.isAwaitingPerson).toBe(false)
+  h.prompted('WebFetch')
+  expect(h.isAwaitingPerson).toBe(true)
+  h.answered('toolu_9', 'WebFetch')
+  expect(h.isAwaitingPerson).toBe(false)
+})
+
+test('the driver shows waiting in auto mode only (as it does the tints), settling the level to 2', () => {
+  const a = new Activity()
+  const d = new SceneDriver(readConfig({ style: 'surf' }), a)
+  a.turnStarted()
+  a.heat = 4
+  a.waitingOn('toolu_q', true, 'AskUserQuestion')
+  expect(d.waiting()).toBe(true)
+  expect(d.dial().waiting).toBe(true)
+  expect(d.level()).toBe(WAIT_LEVEL)
+  d.apply({ mode: 'manual', level: 7 })
+  expect(d.dial().waiting).toBe(false)
+  expect(d.level()).toBe(7)
+})
+
+test("the waiting look: eases in over about a second, breathes every ~4 s, keeps the terminal's own color, maps colors one to one", () => {
+  let k = 0
+  let frames = 0
+  while (k < 1) {
+    k = easeWait(k, true)
+    frames++
+  }
+  expect(frames).toBeGreaterThan(10)
+  expect(frames).toBeLessThan(25)
+  expect(easeWait(1, false)).toBeGreaterThan(0.9) // out again, gently
+  expect(Math.abs(breath(0))).toBeLessThan(1e-9) // out
+  expect(Math.abs(breath(BREATH_FRAMES / 2) - 1)).toBeLessThan(1e-9) // in, half a breath on
+  for (let t = -BREATH_FRAMES; t < 2 * BREATH_FRAMES; t++) expect(breath(t) >= 0 && breath(t) <= 1).toBe(true)
+  const g = new Cells(4, 1)
+  g.set(0, 0x2588, 0x2f7fd0, 0xa9daf4) // sky
+  g.set(1, 0x2588, 0xeef4fb) // snow, over the terminal's own background
+  g.blank(2)
+  g.set(3, 0x2588, 0x2f7fd0, 0xa9daf4) // the same pair again
+  waitTone(g, 1, BREATH_FRAMES / 2)
+  expect(g.background(1)).toBe(DEFAULT)
+  expect(g.foreground(2)).toBe(DEFAULT)
+  expect([g.foreground(3), g.background(3)]).toEqual([g.foreground(0), g.background(0)])
+  for (const c of [g.foreground(0), g.background(0), g.foreground(1)]) expect((c >> 16) & 255).toBeGreaterThan(c & 255) // sepia: warm
+  const none = new Cells(1, 1)
+  none.set(0, 0x2588, 0x123456)
+  waitTone(none, 0, 3)
+  expect(none.foreground(0)).toBe(0x123456)
+})
+
+/** Mean warmth (red less blue) and brightness of a frame's painted colors. */
+function tone(g: Cells): { warm: number; light: number } {
+  let n = 0
+  let warm = 0
+  let light = 0
+  for (let i = 0; i < g.columns * g.rows; i++)
+    for (const c of [g.foreground(i), g.background(i)]) {
+      if (c === DEFAULT) continue
+      warm += ((c >> 16) & 255) - (c & 255)
+      light += ((c >> 16) & 255) * 0.3 + ((c >> 8) & 255) * 0.59 + (c & 255) * 0.11
+      n++
+    }
+  return { warm: n ? warm / n : 0, light: n ? light / n : 0 }
+}
+
+test('every scene shows waiting on the person, by day and night, in the band and the spine: warm and breathing, unlike smoke or blue', () => {
+  for (const def of SCENES)
+    for (const [columns, rows] of [
+      [90, 5],
+      [16, 40],
+    ] as const)
+      for (const night of def.night ? [false, true] : [false]) {
+        // From work at 6 down to the calm 2: plainly, with each tint, or waiting on the person.
+        const settle = (tint: 'normal' | 'smoke' | 'blue', waiting: boolean) => {
+          const f = makeScene(def.name, 5)
+          f.strength = 6
+          f.tint = tint
+          f.night = night
+          f.ensure(columns, rows)
+          for (let i = 0; i < 60; i++) f.step()
+          f.waiting = waiting
+          f.strength = WAIT_LEVEL
+          for (let i = 0; i < 30; i++) f.step()
+          return f
+        }
+        const plain = [settle('normal', false), settle('smoke', false), settle('blue', false)].map(f => f.grid())
+        const f = settle('normal', true)
+        const breathing: { warm: number; light: number }[] = []
+        let coals = 0
+        for (let i = 0; i < BREATH_FRAMES; i += 4) {
+          for (let k = 0; k < 4; k++) f.step()
+          const g = f.grid()
+          breathing.push(tone(g))
+          if (def.name === 'fire') {
+            let lit = 0
+            for (let x = 0; x < columns; x++) if (g.codePoint((rows - 1) * columns + x) !== 0x20) lit++
+            coals = Math.max(coals, lit / columns)
+          }
+        }
+        const where = `${def.name} ${columns}×${rows}${night ? ' night' : ''}`
+        const light = breathing.map(b => b.light)
+        // It breathes: brighter and dimmer by a good part over each breath.
+        expect({ where, breath: (Math.max(...light) - Math.min(...light)) / Math.max(...light) > 0.12 }).toEqual({ where, breath: true })
+        if (def.name === 'fire') {
+          // The fire banks: a bed of coals right along the bottom (it's warm already: no sepia).
+          expect({ where, coals: coals > 0.9 }).toEqual({ where, coals: true })
+          continue
+        }
+        const warmest = Math.max(...breathing.map(b => b.warm))
+        for (const [n, g] of plain.entries()) expect({ where, n, warmer: warmest > tone(g).warm + 15 }).toEqual({ where, n, warmer: true })
+      }
+})
+
+test('waiting holds each scene where it is: the balloon hovers, a rocket keeps its stage, the skier stops, the engine and the stars come to rest, the surfer sits up', () => {
+  const balloon = new Balloon(3)
+  balloon.ensure(60, 5)
+  balloon.strength = 8
+  for (let i = 0; i < 400; i++) balloon.step()
+  const high = balloon.altitude
+  balloon.waiting = true
+  balloon.strength = WAIT_LEVEL
+  for (let i = 0; i < 300; i++) balloon.step()
+  expect(balloon.altitude).toBeGreaterThan(high * 0.85) // it eases to a hover, it doesn't come down
+  balloon.waiting = false
+  for (let i = 0; i < 400; i++) balloon.step()
+  expect(balloon.altitude).toBeLessThan(high * 0.5) // the wait over, it follows the level again
+
+  const flying = new Falcon(3)
+  flying.ensure(60, 5)
+  flying.strength = 6
+  flying.step() // a fresh start resumes as asked
+  flying.waiting = true
+  for (let i = 0; i < 100; i++) {
+    flying.strength = WAIT_LEVEL
+    flying.step()
+  }
+  expect(flying.strength).toBe(6) // held, not brought home
+  const parked = new Falcon(3)
+  parked.ensure(60, 5)
+  parked.strength = 1
+  parked.step()
+  parked.waiting = true
+  for (let i = 0; i < 100; i++) {
+    parked.strength = WAIT_LEVEL
+    parked.step()
+  }
+  expect(parked.strength).toBe(1) // nor launched off the pad
+
+  const at = (name: SceneName, frames: number) => {
+    const f = makeScene(name, 3)
+    f.ensure(90, 5)
+    f.strength = 7
+    for (let i = 0; i < 120; i++) f.step()
+    f.waiting = true
+    f.strength = WAIT_LEVEL
+    for (let i = 0; i < frames; i++) f.step()
+    return f
+  }
+  expect(at('ski', 120).ambience!().wind).toBeLessThan(0.01)
+  const engine = at('engine', 200) as unknown as { omega: number }
+  expect(engine.omega).toBeLessThan(0.002)
+  const warp = at('warp', 60) as unknown as { stars: { z: number }[]; step(): void }
+  const z = warp.stars.map(s => s.z)
+  warp.step()
+  expect(warp.stars.map(s => s.z)).toEqual(z)
+  const surf = at('surf', 200) as unknown as { pose(): string }
+  expect(surf.pose()).toBe('sit')
+})
+
+test('the chime: once a wait, a moment in; not for a wait right behind another; again after a quiet spell', () => {
+  const s = newChimeState()
+  let now = 0
+  const run = (waiting: boolean, ms: number) => {
+    let n = 0
+    for (let t = 0; t < ms; t += 70) {
+      now += 70
+      if (chimeStep(s, waiting, now)) n++
+    }
+    return n
+  }
+  expect(run(false, 2000)).toBe(0)
+  expect(run(true, CHIME_DELAY_MS - 150)).toBe(0) // not at once: a wait answered straight off never chimes
+  expect(run(true, 5000)).toBe(1) // once
+  expect(run(false, 3000)).toBe(0)
+  expect(run(true, 5000)).toBe(0) // right behind the last: you're there already
+  expect(run(false, CHIME_QUIET_MS + 1000)).toBe(0)
+  expect(run(true, 5000)).toBe(1)
+  const files = new Set(SOUND_FILES)
+  for (let seed = 0; seed < 12; seed++) {
+    const p = chimePlay(seed)
+    expect(files.has(p.asset)).toBe(true)
+    expect(p.gain).toBeLessThanOrEqual(1.4)
+  }
+})
+
+test("sound on: a soft chime as Claude's question waits on you, once; none for another right behind it", { options: { sound: 'on', style: 'bubbles' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  let answer: (() => void) | undefined
+  on('tool.call', () => new Promise(r => (answer = () => r({ result: {} as never }))))
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const chimes = () => (seen.plays ?? []).filter(p => p.includes('events/chime')).length
+  await clock.advance(2000)
+  expect(chimes()).toBe(0)
+  const first = $.tool.call({ tool: 'AskUserQuestion', questions: [] } as never)
+  await clock.advance(2000)
+  expect(chimes()).toBe(1)
+  await clock.advance(4000)
+  expect(chimes()).toBe(1) // once a wait
+  answer!()
+  await first
+  await clock.advance(2000)
+  const second = $.tool.call({ tool: 'AskUserQuestion', questions: [] } as never)
+  await clock.advance(3000)
+  expect(chimes()).toBe(1)
+  answer!()
+  await second
+  await ui.unmount()
+})
+
+test('a permission dialog (not an ask auto mode settles alone) is what waits on you: it chimes, and ends with its call', { options: { sound: 'on', style: 'bubbles' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  let finish: (() => void) | undefined
+  on('tool.call', () => new Promise(r => (finish = () => r({ result: {} as never }))))
+  // No settings hook answers it for the person: the dialog shows.
+  on('classic.PermissionRequest', () => ({}))
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const chimes = () => (seen.plays ?? []).filter(p => p.includes('events/chime')).length
+  const call = $.tool.call({ tool: 'Bash', command: 'make' } as never)
+  await clock.advance(2000)
+  expect(chimes()).toBe(0) // a command running is no wait on you
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'make' } } as never)
+  await clock.advance(2000)
+  expect(chimes()).toBe(1)
+  finish!()
+  await call
+  // Its wait ended with the call: a dialog a while later is a new wait, and chimes again.
+  await clock.advance(CHIME_QUIET_MS + 2000)
+  const next = $.tool.call({ tool: 'Bash', command: 'make test' } as never)
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'make test' } } as never)
+  await clock.advance(2000)
+  expect(chimes()).toBe(2)
+  finish!()
+  await next
+  await ui.unmount()
+})
+
+test("sessions: a wait is its own session's: the chime follows that session's sound, and a wait left open as the process moves on isn't carried over", async ($, on) => {
+  const clock = mock.clock(on)
+  memoryStore(on, { [sessionKey('b')]: storedRecord({ sound: 'on' }, 0) })
+  const seen = engine(on)
+  const answers: (() => void)[] = []
+  on('tool.call', () => new Promise(r => answers.push(() => r({ result: {} as never }))))
+  seen.session = 'a'
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const chimes = () => (seen.plays ?? []).filter(p => p.includes('events/chime')).length
+  // Session a (sound off, the default): its question waits, unheard.
+  const open = $.tool.call({ tool: 'AskUserQuestion', questions: [] } as never)
+  await clock.advance(2000)
+  expect(chimes()).toBe(0)
+  // The process moves on to b (a resume from inside), a's question never answered: nothing waits in b.
+  await endSession($, 'resume', 'a')
+  seen.session = 'b'
+  await clock.advance(CHIME_QUIET_MS + 2000)
+  expect((await flow($)).split('\n')[0]).toMatch(/sound on at 7\/10$/) // b's own settings
+  expect(chimes()).toBe(0)
+  // b's own question: b's sound is on and the wait is new, so it chimes.
+  const asked = $.tool.call({ tool: 'AskUserQuestion', questions: [] } as never)
+  await clock.advance(2000)
+  expect(chimes()).toBe(1)
+  for (const answer of answers) answer()
+  await Promise.all([open, asked])
+  await ui.unmount()
+})
+
+test('train: waiting on the person, it draws up at a red signal or a platform and stands, its lamps shining through the sepia; answered, the horn and away', () => {
+  for (const [columns, rows] of [[120, 5], [22, 60]] as const)
+    for (const seed of [3, 8]) {
+      const t = makeScene('train', seed) as Train
+      const where = `${columns}×${rows} seed ${seed}`
+      const run = (frames: number, level: number, waiting: boolean) => {
+        t.strength = level
+        t.waiting = waiting
+        const kinds: string[] = []
+        for (let i = 0; i < frames; i++) {
+          t.step()
+          kinds.push(...t.sounds.map(e => e.kind))
+          t.sounds.length = 0
+        }
+        return kinds
+      }
+      t.ensure(columns, rows)
+      run(300, 6, false)
+      expect(t.standing).toBe(false)
+      // A wait: the level settles to 2, which would run on; waiting, it pulls up and stands.
+      run(900, WAIT_LEVEL, true)
+      expect({ where, standing: t.standing }).toEqual({ where, standing: true })
+      run(200, WAIT_LEVEL, true)
+      expect({ where, standing: t.standing }).toEqual({ where, standing: true })
+      // At a signal, its red lamp keeps its color in the sepia (a platform has no signal).
+      const held = (t as unknown as { held: number | undefined }).held
+      if (held !== undefined) {
+        const g = t.grid()
+        let red = 0
+        for (let i = 0; i < columns * rows; i++)
+          for (const c of [g.foreground(i), g.background(i)]) if (((c >> 16) & 255) > 160 && ((c >> 8) & 255) < 120 && (c & 255) < 120) red++
+        expect({ where, red: red > 0 }).toEqual({ where, red: true })
+      }
+      // Answered: the signal clears, the horn, and away.
+      expect(run(60, 5, false)).toContain('horn')
+      expect(t.standing).toBe(false)
+    }
+})
+
+// ── The picker (/flow pick) ──────────────────────────────────────────────
+
+/** The picker's pane as a docked terminal pane draws it (two thumbnails across). */
+const PICK_PANE = {
+  component: 'Pane',
+  requestId: 'flow-pick',
+  props: { title: 'flow: pick a scene', isFocused: true, bodyColumns: 64, placement: 'dock', scroll: { offset: 0, bodyRows: 44 }, view: {} },
+} as const
+
+/** Stand for the engine's panes: what opens and closes, and with what. */
+function panes(on: On) {
+  const seen = { open: new Set<string>(), opens: [] as Record<string, unknown>[], closes: [] as string[] }
+  on('ui.open', (_, e) => {
+    const args = e as unknown as Record<string, unknown>
+    seen.open.add(args.id as string)
+    seen.opens.push(args)
+    return { value: { isPlaced: true } }
+  })
+  on('ui.close', (_, e) => {
+    seen.open.delete((e as { id: string }).id)
+    seen.closes.push(`${(e as { id: string }).id}:${(e as { origin: { kind: string } }).origin.kind}`)
+    return { value: undefined }
+  })
+  on('ui.panes', () => ({ value: [...seen.open].map(id => ({ id })) as never }))
+  return seen
+}
+
+test('/flow pick: the grammar, the help, and where the status points', () => {
+  expect(parseFlowArgs('pick')).toEqual({ kind: 'pick' })
+  expect(parseFlowArgs(' PICK ')).toEqual({ kind: 'pick' })
+  expect(parseFlowArgs('pick surf').kind).toBe('error') // a scene by name is `/flow surf`
+  expect(changesFor({ kind: 'pick' }, readConfig({}))).toBeUndefined()
+  expect(helpText()).toContain('/flow pick')
+  expect(helpText("pi's", false)).toContain('/flow pick')
+  expect(helpText("pi's", false)).not.toContain('spine')
+  expect(statusText(readConfig({}), 3, 'normal', { hour: 12, minute: 0 })).toContain('`/flow pick`')
+  // The one-time scenes tip names it too.
+  expect(nextTip({}, readConfig({})).tip).toContain('`/flow pick`')
+})
+
+test("picker layout: fits the room it has, thumbnails at the band's 5 rows where they can be, a list where nothing fits", () => {
+  const label = labelWidth()
+  for (let columns = 8; columns <= 260; columns += 7) {
+    for (let rows = 4; rows <= 70; rows += 3) {
+      const l = pickLayout(columns, rows, STYLES.length)
+      if (!l) continue
+      const frame = l.framed ? 2 : 0
+      // Never wider or taller than the body, never narrower than a label.
+      expect(l.across * (l.columns + frame) + (l.across - 1)).toBeLessThanOrEqual(columns)
+      expect(l.height).toBeLessThanOrEqual(rows)
+      expect(Math.ceil(STYLES.length / l.across) * (l.rows + 1 + frame) + (l.lines ? 2 : 0)).toBe(l.height)
+      expect(l.columns).toBeGreaterThanOrEqual(label)
+      expect(l.columns).toBeLessThanOrEqual(40)
+      expect([3, 4, 5]).toContain(l.rows)
+    }
+  }
+  // A docked pane two thumbnails wide: framed, two across, each wide enough to read.
+  const dock = pickLayout(64, 44, STYLES.length)!
+  expect(dock).toMatchObject({ across: 2, framed: true, lines: true })
+  expect(dock.columns).toBeGreaterThanOrEqual(20)
+  // A wide, short inline pane: the band's 5 rows, many across.
+  const wide = pickLayout(200, 20, STYLES.length)!
+  expect(wide.rows).toBe(5)
+  expect(wide.across).toBeGreaterThanOrEqual(5)
+  // Narrower than a label: no room for thumbnails, so a plain list (a spine-width dock gets small ones).
+  expect(pickLayout(10, 50, STYLES.length)).toBeUndefined()
+  // Inline it asks for no more than it needs, and never a whole screen.
+  expect(pickRows(80)).toBeLessThanOrEqual(28)
+  expect(pickRows(200)).toBeLessThan(pickRows(80))
+  // Number keys for the first ten scenes; keys name scenes and nothing else.
+  expect([0, 8, 9, 10].map(hotkeyFor)).toEqual(['1', '9', '0', undefined])
+  expect(sceneOfKey('pick:surf')).toBe('surf')
+  expect(sceneOfKey('pick:nope')).toBeUndefined()
+  expect(sceneOfKey('thumb:surf')).toBeUndefined()
+})
+
+test('picker thumbnails: every scene, lit at its level from the first frame, moving, by day or night', () => {
+  const t = new Thumbnails(5)
+  t.ensure(24, 5)
+  for (const style of STYLES) {
+    const g = t.grid(style)!
+    expect([g.columns, g.rows]).toEqual([24, 5])
+    let lit = 0
+    for (let i = 0; i < g.words.length; i += 3) if (g.words[i] !== 0x20) lit++
+    expect(lit).toBeGreaterThan(0) // warmed up: never a blank tile on opening
+  }
+  const before = STYLES.map(s => t.frame(s))
+  for (let i = 0; i < 5; i++) t.step()
+  const moved = STYLES.filter((s, i) => t.frame(s) !== before[i])
+  expect(moved.length).toBeGreaterThanOrEqual(STYLES.length - 1)
+  t.night = true
+  t.step()
+  expect(PICK_LEVEL).toBeGreaterThan(1)
+  t.clear()
+  expect(t.isBuilt).toBe(false)
+  expect(t.frame('surf')).toBe('')
+})
+
+test('/flow pick opens a dialog of live thumbnails; Enter on one picks it, as /flow <scene> would, and closes it', { options: { mode: 'manual', level: 5 } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  const pane = panes(on)
+  await start($)
+  expect(await flow($, 'pick')).toContain('Esc closes')
+  const opened = pane.opens.find(o => o.id === 'flow-pick')!
+  expect(opened).toMatchObject({ focus: true, closeOnEscape: true, holdToasts: true })
+  expect(pane.open.has('flow-pick')).toBe(true)
+
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  // A Raster and a Button for every scene; the ring starts on the scene on show, marked.
+  expect(await ui.findAll({ type: 'Raster' })).toHaveLength(STYLES.length)
+  const buttons = await ui.findAll({ type: 'Button' })
+  expect(buttons.map(b => b.key)).toEqual(STYLES.map(s => `pick:${s}`))
+  const fire = await ui.find({ key: 'pick:fire' })
+  expect(fire?.props.label).toBe('fire ●')
+  expect(fire?.props.autoFocus).toBe(true)
+  expect(fire?.props.hotkey).toBe('1')
+  // The thumbnails move: each its own blit, about ten a second.
+  seen.blitKeys = []
+  await clock.advance(1000)
+  const thumbs = seen.blitKeys.filter(k => k.startsWith('flow-pick/'))
+  expect(new Set(thumbs)).toEqual(new Set(STYLES.map(s => `flow-pick/thumb:${s}`)))
+  expect(thumbs.length).toBeGreaterThanOrEqual(STYLES.length * 8)
+  expect(thumbs.length).toBeLessThanOrEqual(STYLES.length * 11)
+
+  // Enter on surf: `/flow surf`'s own reply, as a toast once the picker's gone (the first change, so with the hint).
+  seen.toasts = []
+  await ui.press({ key: 'pick:surf' })
+  expect((await flow($)).split('\n')[0]).toContain('surf, holding 5/10')
+  expect(pane.closes).toContain('flow-pick:plugin')
+  expect(seen.toasts).toHaveLength(1)
+  const [said, hint] = seen.toasts![0]!.split('\n')
+  expect(said).toMatch(/^surf, (day|night) .*· `\/flow next` for another$/)
+  expect(hint).toBe('just this session · `/flow save` makes it your default for new sessions')
+  expect(seen.config).toEqual([]) // this session's own, never /config
+  // Closed, its thumbnails stop.
+  seen.blitKeys = []
+  await clock.advance(1000)
+  expect(seen.blitKeys.filter(k => k.startsWith('flow-pick/'))).toEqual([])
+  await ui.unmount()
+  // And it outlasts a reload.
+  await start($)
+  expect((await flow($)).split('\n')[0]).toContain('surf')
+})
+
+test('the picker: a scene picked in one session is that session\'s alone; another, on the same store, keeps the default', async ($, on) => {
+  mock.clock(on)
+  const store = memoryStore(on)
+  const seen = engine(on)
+  panes(on)
+  seen.session = 'a'
+  await start($)
+  await flow($, 'pick')
+  let ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  await ui.press({ key: 'pick:ski' })
+  await ui.unmount()
+  expect(store.get(sessionKey('a'))).toMatchObject({ own: { style: 'ski' } })
+  expect(store.has('overrides')).toBe(false)
+  expect(seen.config).toEqual([])
+  // Session B (another process on the same store): the default, and the picker marks it.
+  seen.session = 'b'
+  await start($)
+  const b = await flow($)
+  expect(b.split('\n')[0]).toMatch(/^fire, auto/)
+  expect(b).not.toContain('just this session')
+  expect(store.has(sessionKey('b'))).toBe(false)
+  await flow($, 'pick')
+  ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  expect((await ui.find({ key: 'pick:fire' }))?.props.label).toBe('fire ●')
+  expect((await ui.find({ key: 'pick:ski' }))?.props.label).toBe('ski')
+  await ui.unmount()
+})
+
+test('the picker: a scene picked comes back when the session is resumed, marked as the one on show', async ($, on) => {
+  mock.clock(on)
+  const store = memoryStore(on)
+  const seen = engine(on)
+  panes(on)
+  seen.session = 'a'
+  await start($)
+  await flow($, 'pick')
+  let ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  await ui.press({ key: 'pick:balloon' })
+  await ui.unmount()
+  // Another session runs meanwhile, picking its own.
+  seen.session = 'b'
+  await start($)
+  await flow($, 'pick')
+  ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  await ui.press({ key: 'pick:surf' })
+  await ui.unmount()
+  // A resumed: its balloon, which the picker marks; B's surf is B's.
+  seen.session = 'a'
+  await start($)
+  expect((await flow($)).split('\n')[0]).toMatch(/^balloon, /)
+  await flow($, 'pick')
+  ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  expect((await ui.find({ key: 'pick:balloon' }))?.props).toMatchObject({ label: 'balloon ●', autoFocus: true })
+  expect((await ui.find({ key: 'pick:surf' }))?.props.label).toBe('surf')
+  await ui.unmount()
+  expect(store.get(sessionKey('b'))).toMatchObject({ own: { style: 'surf' } })
+})
+
+test('the picker: the focus ring moving (the arrows, Tab) lights its tile and names its scene', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  engine(on)
+  panes(on)
+  on('ui.focus', () => ({}))
+  await start($)
+  await flow($, 'pick')
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  expect((await ui.find({ key: 'tile:fire' }))?.props.borderStyle).toBe('bold')
+  expect((await ui.find({ key: 'tile:ski' }))?.props.borderStyle).toBe('round')
+  expect(JSON.stringify(await ui.drawn())).toContain('fire: a ░▒▓█ fire with sparks and smoke (on now)')
+  // The ring moving onto ski, as the engine raises it for the person's arrow key (UiFocusInput).
+  await $.ui.focus({ component: 'Pane', requestId: 'flow-pick', plugin: 'flow', element: 'pick:ski', origin: { kind: 'person' } } as never)
+  await ui.redraw()
+  expect((await ui.find({ key: 'tile:ski' }))?.props.borderStyle).toBe('bold')
+  expect((await ui.find({ key: 'tile:fire' }))?.props.borderStyle).toBe('round')
+  expect(JSON.stringify(await ui.drawn())).toContain('ski: a skier down the mountain')
+  // Moving the ring picks nothing: only Enter (a press) does.
+  expect((await flow($)).split('\n')[0]).toMatch(/^fire/)
+  await ui.unmount()
+})
+
+test('the picker on desktop: an Svg thumbnail and a Button for every scene; its close changes nothing; a click picks', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  const pane = panes(on)
+  await start($)
+  await flow($, 'pick')
+  let ui = await $.ui.mount({ plugin: 'flow', surface: 'desktop', ...PICK_PANE })
+  const svgs = await ui.findAll({ type: 'Svg' })
+  expect(svgs).toHaveLength(STYLES.length)
+  const png = decodeSvgPng(svgs[0]!.props.source as string)
+  const layout = pickLayout(64, 44, STYLES.length)!
+  expect([png.width, png.height]).toEqual([layout.columns * 2, layout.rows * 4])
+  // Redrawn while it's there, as the band is.
+  seen.invalidates = 0
+  await clock.advance(1000)
+  expect(seen.invalidates).toBeGreaterThan(5)
+  // Its close control (Esc, in the terminal): nothing changes, and it stops redrawing.
+  await ui.press({ key: 'close' })
+  expect(pane.closes).toContain('flow-pick:plugin')
+  expect((await flow($)).split('\n')[0]).toMatch(/^fire/)
+  await ui.unmount()
+  seen.invalidates = 0
+  await clock.advance(1000)
+  expect(seen.invalidates).toBeLessThan(2)
+  // Opened again, a click picks.
+  await flow($, 'pick')
+  ui = await $.ui.mount({ plugin: 'flow', surface: 'desktop', ...PICK_PANE })
+  await ui.press({ key: 'pick:bubbles' })
+  expect((await flow($)).split('\n')[0]).toMatch(/^bubbles/)
+  await ui.unmount()
+})
+
+test('the picker narrower than its labels, or on a surface without pictures, is a plain list that still picks', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  engine(on)
+  panes(on)
+  await start($)
+  await flow($, 'pick')
+  for (const [surface, bodyColumns] of [['terminal', 10], ['vscode', 60]] as const) {
+    const ui = await $.ui.mount({ plugin: 'flow', surface, ...PICK_PANE, props: { ...PICK_PANE.props, bodyColumns } })
+    expect(await ui.find({ type: 'Raster' })).toBeUndefined()
+    expect(await ui.findAll({ type: 'Button', key: 'pick:warp' })).toHaveLength(1)
+    await ui.unmount()
+  }
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'vscode', ...PICK_PANE })
+  await ui.press({ key: 'pick:warp' })
+  expect((await flow($)).split('\n')[0]).toMatch(/^warp/)
+  await ui.unmount()
+})
+
+test('/flow pick where no surface places panes says what to do instead, and leaves no pane waiting', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  engine(on)
+  const closes: string[] = []
+  on('ui.open', () => ({ value: { isPlaced: false, reason: 'no surface here places panes' } }))
+  on('ui.close', (_, e) => {
+    closes.push((e as { id: string }).id)
+    return { value: undefined }
+  })
+  on('ui.panes', () => ({ value: [] }))
+  await start($)
+  expect(await flow($, 'pick')).toContain('/flow next')
+  expect(closes).toContain('flow-pick')
 })

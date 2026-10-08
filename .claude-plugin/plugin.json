@@ -93,6 +93,12 @@
         "off",
         "on"
       ]
+    },
+    "volume": {
+      "type": "number",
+      "title": "Sound volume",
+      "description": "How loud the soundscape plays: 1 (quietest) to 10; 7, the default, is as it was tuned, each step below it 3 dB quieter. Above 7 the quieter sounds come up most: the loudest already play near full",
+      "default": 7
     }
   }
 }

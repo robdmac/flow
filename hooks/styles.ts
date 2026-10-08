@@ -1,18 +1,21 @@
-// REVISION: flow-v122-train
+// REVISION: flow-v125-waiting
 //
 // The scenes, all driven by the same dials (strength 0..10, coverage boost,
-// tint, night): SCENES, the one list of them (each scene file exports its
+// tint, night, waiting): SCENES, the one list of them (each scene file exports its
 // SceneDef; add yours there), and the fire itself (`Ember`, the `fire` scene): the ░▒▓█
 // Doom-style automaton of fire.ts for its shape, glyphs and crisp flicker,
 // colored half its 256-color ramp, half a smooth truecolor black-body eased
 // over time, with sparks breaking off the tips and cooling into smoke.
-// Everything off the flames is transparent: no backgrounds.
+// Everything off the flames is transparent: no backgrounds. While Claude
+// waits on the person the fire banks: low flames over a bed of coals along
+// the bottom, glowing and fading with each slow breath (waiting.ts).
 
 import { AsciiFire, colorFor, glyphFor } from './fire'
 import { Cells, Rng } from './cells'
 export type { Cells }
 import { heatColor, smokeColor } from './fire-palette'
-import { BRAILLE, mix } from './pixels'
+import { BRAILLE, hash1, lowerBlock, mix } from './pixels'
+import { breath, easeWait, waitTone } from './waiting'
 import { defineScene, type SceneDef } from './scene-def'
 import type { Ambience, SoundEvent } from './sound'
 import { balloonScene } from './balloon'
@@ -36,6 +39,8 @@ export interface Scene {
   tint: Tint
   /** Night, for the scenes that have one (the rest have no such field and ignore it). */
   night?: boolean
+  /** Claude is waiting on the person (a permission, a question, a plan): settle, hold, and breathe (waiting.ts). */
+  waiting?: boolean
   ensure(columns: number, rows: number): void
   step(): void
   /** The current frame's cells: what every harness draws from. */
@@ -88,6 +93,8 @@ type Spark = { x: number; y: number; vy: number; heat: number; cool: number; pha
 const SMOKE_AT = 0.38
 /** Ember drops cells fainter than this: on a dark terminal they read as black. */
 const FAINTEST = 0.1
+/** Banked coals, dull to glowing: what the base turns to while Claude waits on the person. */
+const COALS = [0x3a0a04, 0x781806, 0xb8320c, 0xe85a18, 0xff8c2a, 0xffbe58] as const
 
 /**
  * Half classic, half smooth. Classic's automaton at full height draws the
@@ -102,6 +109,10 @@ class Ember implements Scene {
   coverageBoost = 0
   sounds: SoundEvent[] = []
   tint: Tint = 'normal'
+  /** Claude waits on the person: the fire banks to glowing coals. */
+  waiting = false
+  /** How far it has banked (0..1), eased. */
+  private kWait = 0
   private core: AsciiFire
   private rng: Rng
   /** The heat softened: blurred over five columns, eased across frames. */
@@ -149,6 +160,7 @@ class Ember implements Scene {
     this.core.coverageBoost = this.coverageBoost
     this.core.step()
     this.t++
+    this.kWait = easeWait(this.kWait, this.waiting)
     const cells = this.core.cells
     const peak = Math.max(1, this.core.peak)
     for (let y = 0; y < h; y++) {
@@ -219,6 +231,8 @@ class Ember implements Scene {
     const cells = this.core.cells
     const peak = Math.max(1, this.core.peak)
     const s = this.strength
+    // Banked, the low flames over the coals burn orange to their roots: no pilot-blue.
+    const ramp = this.kWait > 0.5 ? Math.max(s, 5) : s
     // Braille dots for the sparks and smoke, per cell.
     const { bits, spark, smoke } = this
     bits.fill(0)
@@ -237,7 +251,7 @@ class Ember implements Scene {
       const r = cells[i]! / peak
       if (r >= FAINTEST) {
         const smooth = Math.min(1, (r + this.soft[i]!) * 0.55)
-        const fg = mix(colorFor(s, r, this.tint), heatColor(s, smooth, this.tint), 0.5)
+        const fg = mix(colorFor(ramp, r, this.tint), heatColor(s, smooth, this.tint), 0.5)
         out.set(i, glyphFor(r), fg)
       } else if (bits[i]) {
         const fg =
@@ -251,7 +265,38 @@ class Ember implements Scene {
         out.blank(i)
       }
     }
+    if (this.kWait > 0 && s > 0) this.drawCoals(out)
+    // (Its own breath, no sepia: a fire is already warm, and sepia would only dull it.)
+    waitTone(out, this.kWait, this.t, 0)
     return out
+  }
+
+  /**
+   * Banked: a bed of coals along the bottom row (heaped a row higher in a
+   * tall pane), coming in column by column as it banks, each its own height
+   * and heat, all glowing and fading together with the breath. A flame's own
+   * cell stays a flame.
+   */
+  private drawCoals(out: Cells): void {
+    const w = this.columns
+    const h = this.rows
+    const b = breath(this.t)
+    const peak = Math.max(1, this.core.peak)
+    const tall = h > 8
+    for (let x = 0; x < w; x++) {
+      if (hash1(x * 31 + 7) >= this.kWait) continue
+      const i = (h - 1) * w + x
+      if (this.core.cells[i]! / peak >= 0.6) continue
+      // Each coal its own heat, shimmering a little, all swelling with the breath.
+      const own = 0.45 + 0.4 * hash1(x * 131 + 3) + 0.15 * hash1(x * 977 + (this.t >> 3))
+      const heat = own * (0.4 + 0.6 * b)
+      const v = Math.round(Math.min(1, heat) * 20) / 20 * (COALS.length - 1.001)
+      const fg = mix(COALS[Math.floor(v)]!, COALS[Math.floor(v) + 1]!, v - Math.floor(v))
+      out.set(i, tall ? 0x2588 : lowerBlock(4 + Math.floor(hash1(x * 17 + 1) * 5)), fg)
+      const j = i - w
+      if (tall && hash1(x * 53 + 11) < 0.7 && this.core.cells[j]! / peak < 0.45)
+        out.set(j, lowerBlock(1 + Math.floor(hash1(x * 59 + 5) * 4)), mix(COALS[0], fg, 0.75))
+    }
   }
 }
 

@@ -1,4 +1,4 @@
-// REVISION: flow-v104-sound-stream
+// REVISION: flow-v125-waiting
 //
 // Bubbles (the `bubbles` style): a glass of fizz on the same dials as the
 // fire; the level is the fizz. At 1 a couple of airstones let lazy bubbles
@@ -17,13 +17,15 @@
 // stirs a cloud of sediment up off the bottom and turns the water murky; a
 // nearly-full context runs the water cold, a deep indigo welling up from below.
 // By night it's a stout: near-black liquid with pale tan bubbles rising, and a
-// creamy line of head at the top.
+// creamy line of head at the top. While Claude waits on the person it settles
+// to a few slow strings, the whole glass breathing in sepia (waiting.ts).
 
 import { Cells, Rng } from './cells'
 import type { SoundEvent } from './sound'
 import type { Tint } from './styles'
 import { BRAILLE, clamp, hash1, mix } from './pixels'
 import { defineScene } from './scene-def'
+import { easeWait, waitTone } from './waiting'
 
 /** The surface's rest height, in dots from the top: room above for the splash. */
 const SURFACE = 2
@@ -79,6 +81,10 @@ export class Bubbles {
   tint: Tint = 'normal'
   /** Night: a stout instead of water. */
   night = false
+  /** Claude waits on the person: a few slow strings. */
+  waiting = false
+  /** How far into the wait's look (0..1), eased. */
+  private kWait = 0
   private columns = 0
   private rows = 0
   private out = new Cells(0, 0)
@@ -138,9 +144,9 @@ export class Bubbles {
     return this.rows * 4
   }
 
-  /** Rise speed now: a tall spine's column is deeper, so bubbles cross it a bit quicker. */
+  /** Rise speed now: a tall spine's column is deeper, so bubbles cross it a bit quicker; slower while it waits on the person. */
   private rise(): number {
-    return this.at(RISE) * Math.pow(Math.max(1, this.H / 20), 0.35)
+    return this.at(RISE) * Math.pow(Math.max(1, this.H / 20), 0.35) * (1 - 0.4 * this.kWait)
   }
 
   /** The level's table value, read between whole levels. */
@@ -199,6 +205,7 @@ export class Bubbles {
     this.s += clamp(target - this.s, -0.06, 0.06)
     this.kMurk += clamp((this.tint === 'smoke' ? 1 : 0) - this.kMurk, -0.05, 0.05)
     this.kCold += clamp((this.tint === 'blue' ? 1 : 0) - this.kCold, -0.04, 0.04)
+    this.kWait = easeWait(this.kWait, this.waiting)
     if (this.kNight < 0) this.kNight = this.night ? 1 : 0
     this.kNight += clamp((this.night ? 1 : 0) - this.kNight, -0.04, 0.04)
     if (this.fresh) {
@@ -452,6 +459,7 @@ export class Bubbles {
       }
       out.set(i, 0x2800 | bits[i]!, fg, bg)
     }
+    waitTone(out, this.kWait, this.t)
     return out
   }
 }

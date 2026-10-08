@@ -1,4 +1,4 @@
-// REVISION: flow-v109-held
+// REVISION: flow-v125-waiting
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -42,7 +42,10 @@
 // back along its track); a nearly-full context burns a blue methane-ish
 // plume, turns the tower's lights blue all the way up, and in orbit fires
 // blue-white thruster puffs off the nose. Either tint keeps a thin burn
-// going in orbit, where the engines would otherwise coast dark.
+// going in orbit, where the engines would otherwise coast dark. While Claude
+// waits on the person the mission holds its stage (the level drops only to
+// 2, and a dip holds), amber lights glow up the tower with each slow breath
+// and the whole view breathes in sepia (waiting.ts).
 
 import { type Cells, DEFAULT_COLOR, Rng } from './cells'
 import { layered, snap } from './clouds/layered'
@@ -51,6 +54,7 @@ import { fitQuad, g, hash, lowerBlock, mix, QUAD, type QuadFit } from './pixels'
 import { type SceneryCell, SkyWorld } from './sky'
 import { defineScene } from './scene-def'
 import { hear, type Ambience, type SoundEvent } from './sound'
+import { breath, waitTone } from './waiting'
 
 const ceilEven = (n: number) => n + (n & 1)
 
@@ -466,12 +470,12 @@ abstract class LaunchSite extends SkyWorld {
     } else if (this.sinceStage >= STAGE_FRAMES) {
       // A mission only climbs: a dip in the work holds it where it is. Asked
       // all the way back to 1 it comes home, a level a second, all the way,
-      // whatever's asked meanwhile.
+      // whatever's asked meanwhile. Waiting on the person, it holds its stage.
       if (this.descending || (asked <= 1 && this.staged > 1)) {
         this.staged--
         this.sinceStage = 0
         this.descending = this.staged > 1
-      } else if (asked > this.staged) {
+      } else if (asked > this.staged && !this.waiting) {
         this.staged++
         this.sinceStage = 0
       }
@@ -486,7 +490,9 @@ abstract class LaunchSite extends SkyWorld {
   /** Drawn at the acted-out level too, even on a frame drawn without a step. */
   override grid(): Cells {
     if (this.staged >= 0 && this.strength > 0) this.strength = this.staged
-    return this.drawFrame()
+    const out = this.drawFrame()
+    waitTone(out, this.kWait, this.t)
+    return out
   }
 
   private state: State = 'rest'
@@ -2154,6 +2160,10 @@ abstract class LaunchSite extends SkyWorld {
     if (blue)
       for (let y = 2, k = 0; y < top - 1; y += this.tall ? 6 : 3, k++)
         if ((t + k * 5) % 24 < 14) this.paint(this.tx + (k & 1 ? 0 : s.towerW - 1), y, LIGHT.blue, 1)
+    // Waiting on the person: amber lights all the way up the tower, glowing and fading with each breath.
+    if (this.kWait > 0)
+      for (let y = 2, k = 0; y < top - 1; y += this.tall ? 6 : 3, k++)
+        this.paint(this.tx + (k & 1 ? 0 : s.towerW - 1), y, LIGHT.amber, this.kWait * (0.25 + 0.75 * breath(t)))
     // A light per few subagents, blinking out of step.
     const extra = this.coverageBoost <= 0 ? 0 : this.coverageBoost < 30 ? 1 : 2
     for (let k = 1; k <= extra; k++) {

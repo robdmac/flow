@@ -1,4 +1,4 @@
-// REVISION: flow-v81-scene-tools
+// REVISION: flow-v125-waiting
 //
 // Starts a new scene: writes hooks/<name>.ts from a template that already
 // moves with the level, shows the tints and (with --night) has a night,
@@ -40,7 +40,8 @@ writeFileSync(
   `// REVISION: flow-v1-${name}
 //
 // ${Class} (the \`${name}\` scene): ${blurb ?? 'TODO: what it shows, and how it changes with the level'}.
-// Painted as pixels (2 × 2 a cell) by PixelScene, which eases the level${night ? ' and\n// the night' : ''}, folds the pixels into glyphs and blanks it all at level 0.
+// Painted as pixels (2 × 2 a cell) by PixelScene, which eases the level${night ? ' and\n// the night' : ''}, folds the pixels into glyphs, blanks it all at level 0 and
+// breathes it in sepia while Claude waits on the person (settle your own way with \`d.wait\`).
 
 import { CLEAR, PixelScene, type Dials, type Painter } from './pixel-scene'
 import { defineScene } from './scene-def'
@@ -102,7 +103,7 @@ console.log(`new-scene: wrote hooks/${name}.ts and listed it in SCENES`)
 execFileSync('npx', ['tsx', join(import.meta.dirname, 'sync-manifest.ts')], { stdio: 'inherit' })
 console.log(`
 next:
-  npm run preview -- ${name}     see it at levels 1, 5 and 10, band and spine${night ? ', day and night' : ''}, each tint
+  npm run preview -- ${name}     see it at levels 1, 5 and 10, band and spine${night ? ', day and night' : ''}, each tint and waiting
   npm run check -- ${name}       colour pairs and timing
   claude --plugin-dir .         then /flow ${name}
   README.md                     add a row to the scenes table`)

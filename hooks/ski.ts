@@ -1,4 +1,4 @@
-// REVISION: flow-v105-free-turns
+// REVISION: flow-v125-waiting
 //
 // A skier on a mountain, on the fire's dials: the level is the speed and the
 // steepness. At 1 the skier stands at the top of the run, poles planted,
@@ -25,7 +25,9 @@
 // Dials: running subagents put more skiers on the slope (each in their own
 // jacket); a failed command makes the skier wipe out in a puff of snow (a
 // yard sale: skis crossed, one stuck upright) under a flurry until things
-// are fixed; a nearly-full context turns the light to dusk.
+// are fixed; a nearly-full context turns the light to dusk. While Claude
+// waits on the person the skier skids to a stop and stands, poles planted,
+// the whole view breathing in sepia (waiting.ts).
 
 import { Cells, DEFAULT_COLOR, Rng, isTall } from './cells'
 import type { Tint } from './styles'
@@ -33,6 +35,7 @@ import { MOON, moonCover, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, ST
 import { BRAILLE, clamp, fitQuad, hashMurmur as hash, mix, QUAD, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
 import type { Ambience, SoundEvent } from './sound'
+import { easeWait, waitTone } from './waiting'
 
 // ---------------------------------------------------------------- tables
 
@@ -287,6 +290,10 @@ export class Ski {
   tint: Tint = 'normal'
   /** Night: moonlit snow, stars and a moon; the hut's window lit. */
   night = false
+  /** Claude waits on the person: the skier stops and stands. */
+  waiting = false
+  /** How far into the wait's look (0..1), eased. */
+  private kWait = 0
   // The light, eased toward the dials (-1 until the first frame): night, overcast, dusk.
   private kNight = -1
   private kGrey = 0
@@ -455,6 +462,7 @@ export class Ski {
     if (this.columns === 0) return
     this.ease()
     this.t++
+    this.kWait = easeWait(this.kWait, this.waiting)
     const L = this.level
     if (L === 0) return
     // A failed command: down in a puff of snow until it's fixed, then up again.
@@ -469,9 +477,10 @@ export class Ski {
     this.fallT++
     if (this.fall === 2 && this.fallT > GET_UP) this.fall = 0
 
-    const vT = this.fall ? 0 : SPEED[L]!
+    // Waiting on the person: they skid to a stop and stand there till it's answered.
+    const vT = this.fall || this.waiting ? 0 : SPEED[L]!
     if (this.fall === 1) this.v *= 0.86
-    else this.v += (vT - this.v) * (vT > this.v ? 0.022 : 0.04)
+    else this.v += (vT - this.v) * (vT > this.v ? 0.022 : this.waiting ? 0.07 : 0.04)
     if (this.v < 0.004) this.v = vT > 0 ? this.v : 0
     this.steep += (L / 10 - this.steep) * 0.03
     const moving = Math.min(1, this.v / 0.35)
@@ -706,6 +715,7 @@ export class Ski {
     else this.drawBand()
     this.drawFlakes()
     this.composite()
+    waitTone(out, this.kWait, this.t)
     return out
   }
 

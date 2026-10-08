@@ -1,4 +1,4 @@
-// REVISION: flow-v123-train-faster
+// REVISION: flow-v125-chime
 //
 // Builds the soundscapes' clips into sounds/ (AAC, mono 22.05 kHz) and the
 // manifest hooks/sound-files.ts. Each recipe makes a WAV with sox (and Node,
@@ -9,8 +9,9 @@
 // crossfades at both ends, since Claude Code plays at most four clips at once.
 // Events are one-shots. Not part of the mod (Node): it needs sox and ffmpeg.
 //
-//   npm run sounds            every scene
-//   npm run sounds -- fire    just these folders
+//   npm run sounds                   every scene
+//   npm run sounds -- fire           just these folders
+//   npm run sounds -- events/chime   just these clips (the rest of their folder left as it is)
 
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -362,6 +363,49 @@ function clunk(path: string, seed: number): void {
   let max = 1e-6
   for (const v of x) max = Math.max(max, Math.abs(v))
   for (let i = 0; i < x.length; i++) x[i]! /= max
+  wav(path, x)
+}
+
+/**
+ * The chime as Claude starts waiting on you: two tubes struck softly, one
+ * after the other, rising a fourth (E5 to A5: a question's lift, not an
+ * alarm's two-tone). Each rings at a hung tube's partials (1, 2.76 and 5.40
+ * times its pitch, the higher dying sooner), each partial a pair a fraction
+ * of a hertz apart, so it shimmers as struck metal does; a felt mallet's
+ * soft strike, no click. Each take strikes a little differently.
+ */
+function chime(path: string, seed: number): void {
+  const r = rng(seed)
+  const x = new Float32Array(Math.ceil(3 * RATE))
+  const notes = [
+    [0, 659.25, 0.78 + 0.08 * r()],
+    [0.17 + 0.05 * r(), 880, 0.95 + 0.05 * r()],
+  ] as const
+  // Each partial: its ratio to the pitch, level and ring (s).
+  const parts = [
+    [1, 1, 1.1],
+    [2.756, 0.3, 0.45],
+    [5.404, 0.08, 0.18],
+  ] as const
+  for (const [at, hz, amp] of notes) {
+    const i0 = Math.floor(at * RATE)
+    for (const [ratio, level, ring] of parts) {
+      const f = hz * ratio
+      const beat = 0.35 + 0.5 * r()
+      const tau = ring * (0.9 + 0.2 * r())
+      const p1 = r() * 2 * Math.PI
+      const p2 = r() * 2 * Math.PI
+      for (let i = 0; i0 + i < x.length; i++) {
+        const t = i / RATE
+        const env = Math.min(1, t / 0.005) * Math.exp(-t / tau)
+        if (env < 1e-4 && t > 0.01) break
+        x[i0 + i]! += amp * level * env * 0.5 * (Math.sin(2 * Math.PI * f * t + p1) + Math.sin(2 * Math.PI * (f + beat) * t + p2))
+      }
+    }
+  }
+  let max = 1e-6
+  for (const v of x) max = Math.max(max, Math.abs(v))
+  for (let i = 0; i < x.length; i++) x[i]! *= 0.9 / max
   wav(path, x)
 }
 
@@ -800,6 +844,14 @@ const RECIPES: Record<string, Record<string, Recipe>> = {
         fx([t.tmp('c.wav')], out, 'reverb', 45, 90, 80, 'gain', '-n', -3)
       },
     },
+    chime: {
+      // Claude waiting on you: two soft struck tubes rising a fourth (see chime), in a little room, dying away.
+      variants: 3,
+      make: (out, t) => {
+        chime(t.tmp('c.wav'), 230 + t.v * 41)
+        fx([t.tmp('c.wav')], out, 'highpass', 180, 'reverb', 35, 60, 70, 'fade', 'q', 0.003, 3, 0.9, 'gain', '-n', -3)
+      },
+    },
   },
 }
 
@@ -809,15 +861,20 @@ if (full) rmSync(OUT, { recursive: true, force: true })
 mkdirSync(OUT, { recursive: true })
 mkdirSync(CACHE, { recursive: true })
 for (const [folder, clips] of Object.entries(RECIPES)) {
-  if (!full && !only.includes(folder)) continue
+  // A folder, or just some of its clips (`events/chime`: sox's dither makes every rebuild differ, so the rest stay as they are).
+  const picked = only.filter(o => o.startsWith(`${folder}/`)).map(o => o.slice(folder.length + 1))
+  if (!full && !only.includes(folder) && !picked.length) continue
+  const some = !full && !only.includes(folder)
   // Events ship as they are; bed layers only go into the cache, to be mixed.
   const ships = folder === 'events'
-  if (ships) {
+  if (ships && !some) {
     rmSync(join(OUT, folder), { recursive: true, force: true })
     mkdirSync(join(OUT, folder), { recursive: true })
   }
+  if (ships) mkdirSync(join(OUT, folder), { recursive: true })
   mkdirSync(join(CACHE, folder), { recursive: true })
   for (const [name, recipe] of Object.entries(clips)) {
+    if (some && !picked.includes(name)) continue
     // (Every bed layer has BED_TAKES takes; an event, its recipe's variants.)
     const n = ships ? recipe.variants ?? 1 : BED_TAKES
     const made: string[] = []
@@ -962,6 +1019,6 @@ const files = readdirSync(OUT)
 const sorted = Object.keys(gains).sort()
 writeFileSync(
   join(ROOT, 'hooks', 'sound-files.ts'),
-  `// REVISION: flow-v122-train-sounds\n//\n// Written by scripts/make-sounds.ts: every clip in sounds/, and the gain that\n// puts each mood's mixed bed back to its layers' level (0: silent). Don't edit.\n\nexport const SOUND_FILES: readonly string[] = [\n${files.map(f => `  '${f}',`).join('\n')}\n]\n\nexport const BED_GAINS: Readonly<Record<string, number>> = {\n${sorted.map(k => `  '${k}': ${gains[k]},`).join('\n')}\n}\n`,
+  `// REVISION: flow-v125-chime\n//\n// Written by scripts/make-sounds.ts: every clip in sounds/, and the gain that\n// puts each mood's mixed bed back to its layers' level (0: silent). Don't edit.\n\nexport const SOUND_FILES: readonly string[] = [\n${files.map(f => `  '${f}',`).join('\n')}\n]\n\nexport const BED_GAINS: Readonly<Record<string, number>> = {\n${sorted.map(k => `  '${k}': ${gains[k]},`).join('\n')}\n}\n`,
 )
 console.log(`hooks/sound-files.ts: ${files.length} clips, ${sorted.length} moods`)

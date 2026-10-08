@@ -1,11 +1,13 @@
-// REVISION: flow-v64-tool-spark
+// REVISION: flow-v125-waiting
 //
 // How busy the agent is: the work → scene mapping for `/flow auto`. Events
 // add "heat" (the metaphor from when the only scene was a fire), the heat
 // cools every frame, and `strength()` turns it into the scene's 0..=10 dial
 // (a fire's height, the swell, the balloon's altitude, ...), and a turn that
 // keeps going climbs a level every 30 s besides (its clock stopped while it
-// waits on the person: a permission, a question, a plan). It also says
+// waits on the person: a permission, a question, a plan). While one of those
+// is put to the person (a dialog is up for them) the level settles to a calm
+// 2 and the scenes show it (`isAwaitingPerson`, waiting.ts). It also says
 // which tint shows: smoke after a failure or a compaction, blue when the
 // context is nearly full. Pure: no `$`, so it is unit-tested directly.
 //
@@ -32,6 +34,13 @@ const TURN_STEP_MS = 30_000
 /** Frames of gray tips after a failed command / a compaction. */
 const FAIL_SMOKE = 30
 const COMPACT_SMOKE = 40
+/** The level a scene settles to while it waits on the person: calm, but above idle's glow (a rocket holds its stage there). */
+export const WAIT_LEVEL = 2
+/** A dialog seen with no ask before it waits under its tool's name: `prompt:Bash`. */
+const PROMPT = 'prompt:'
+
+/** A call waiting on the person: its tool and loop, and whether it has been put to them yet. */
+type Wait = { tool?: string; agent?: string; asked: boolean }
 
 export function effortFloor(effort: Effort): number {
   switch (effort) {
@@ -60,8 +69,8 @@ export class Activity {
   contextPercent = 0
   /** Frames this turn has been running (none between turns), not counting time it waited on the person. */
   turnFrames = 0
-  /** The calls waiting on the person (a permission ask, a question, a plan to approve), by tool_use_id. */
-  private waits = new Set<string>()
+  /** The calls waiting on the person (a permission ask, a question, a plan to approve), by tool_use_id, oldest first. */
+  private waits = new Map<string, Wait>()
   /** Streamed characters since the last tick, weighted. */
   private pendingChars = 0
 
@@ -77,22 +86,53 @@ export class Activity {
   turnEnded(): void {
     this.isTurnActive = false
     this.turnFrames = 0
+    this.forgetWaits()
+  }
+
+  /** Nothing waits on the person any more (the turn, or the session, is over). */
+  forgetWaits(): void {
     this.waits.clear()
   }
 
-  /** A call now waits on the person: the turn's clock stops till it's answered. */
-  waitingOn(id: string): void {
-    this.waits.add(id)
+  /**
+   * A call now waits on the person: the turn's clock stops till it's
+   * answered. `asked`: it's put to them now (Claude's question, a plan to
+   * approve). A permission ask isn't yet: the mode may settle it alone (auto
+   * mode's classifier), so it's only put to them once a dialog shows (`prompted`).
+   */
+  waitingOn(id: string, asked = true, tool?: string, agent?: string): void {
+    const w = this.waits.get(id)
+    this.waits.set(id, { tool: tool ?? w?.tool, agent: agent ?? w?.agent, asked: asked || w?.asked === true })
   }
 
-  /** The call is answered (or over): the clock goes on, unless another still waits. */
-  answered(id: string): void {
+  /**
+   * A permission dialog shows for a call of `tool` (in loop `agent`, none for
+   * the main one): the oldest ask of it not yet put to the person now is. One
+   * with no ask before it waits under the tool's name until a call of it ends.
+   */
+  prompted(tool: string, agent?: string): void {
+    let pick: Wait | undefined
+    for (const w of this.waits.values()) if (!w.asked && w.tool === tool && w.agent === agent && !pick) pick = w
+    for (const w of this.waits.values()) if (!w.asked && w.tool === tool && !pick) pick = w
+    if (pick) pick.asked = true
+    else this.waits.set(`${PROMPT}${tool}`, { tool, agent, asked: true })
+  }
+
+  /** The call is answered (or over, or running): the clock goes on, unless another still waits. */
+  answered(id: string, tool?: string): void {
     this.waits.delete(id)
+    if (tool !== undefined) this.waits.delete(`${PROMPT}${tool}`)
   }
 
-  /** Whether the turn is held up waiting on the person. */
+  /** Whether the turn is held up waiting on the person (or the mode deciding whether to ask them). */
   get isWaiting(): boolean {
     return this.waits.size > 0
+  }
+
+  /** Whether something is put to the person now (a dialog is up for them): the scenes settle and show it. */
+  get isAwaitingPerson(): boolean {
+    for (const w of this.waits.values()) if (w.asked) return true
+    return false
   }
 
   /** One model request. Only the main loop's sets the effort floor. */
@@ -178,12 +218,13 @@ export class Activity {
    * The dial for this frame. Idle: the idle floor (0 or 1) plus whatever is
    * still cooling. A turn: its effort floor + heat + the subagent boost + a
    * level for every 30 s it has run. Subagents alone (the turn over): from 1,
-   * + heat + their boost.
+   * + heat + their boost. Waiting on the person: no more than a calm 2.
    */
   strength(idleFloor: number): number {
-    if (!this.isWorking) return Math.max(0, Math.min(10, Math.round(idleFloor + this.heat)))
-    const base = this.isTurnActive ? this.floor : 1
-    return Math.max(1, Math.min(10, Math.round(base + this.heat + this.agentBoost) + this.turnBoost))
+    const s = this.isWorking
+      ? Math.max(1, Math.min(10, Math.round((this.isTurnActive ? this.floor : 1) + this.heat + this.agentBoost) + this.turnBoost))
+      : Math.max(0, Math.min(10, Math.round(idleFloor + this.heat)))
+    return this.isAwaitingPerson ? Math.min(s, WAIT_LEVEL) : s
   }
 
   /** How much company subagents add (a wider fire, more boats, wingmen): 15 per running subagent. */
