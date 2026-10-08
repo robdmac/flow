@@ -1,4 +1,4 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v140-mini-balloons
 //
 // The world the balloon and the rockets fly through, on the fire's dials: the
 // level is a target altitude, eased toward, and the world scrolls past the
@@ -131,6 +131,8 @@ export abstract class SkyWorld {
   protected columns = 0
   protected rows = 0
   protected out = new Cells(0, 0)
+  /** Lights per cell this frame (a color, -1: none): kept, breathing, through the wait's sepia (waitTone). */
+  protected lamps = new Int32Array(0)
   /** This frame's background per grid row. */
   protected rowBg: number[] = []
   protected alt = 0
@@ -150,6 +152,7 @@ export abstract class SkyWorld {
     this.columns = columns
     this.rows = rows
     this.out = new Cells(columns, rows)
+    this.lamps = new Int32Array(columns * rows)
   }
 
   /** The current altitude, in world rows (for tests and status). */
@@ -307,6 +310,7 @@ export abstract class SkyWorld {
       return out
     }
     const scroll = this.scroll
+    this.lamps.fill(-1)
     this.rowBg = []
     for (let r = 0; r < h; r++) {
       // Row r shows world row y: the bottom row is the grass (y = -1) until
@@ -334,7 +338,7 @@ export abstract class SkyWorld {
     }
     this.drawMoon(out)
     this.drawVehicle(out, this.vehicleTop)
-    waitTone(out, this.kWait, this.t)
+    waitTone(out, this.kWait, this.t, undefined, this.lamps)
     return out
   }
 

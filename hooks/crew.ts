@@ -1,4 +1,4 @@
-// REVISION: flow-v139-probes
+// REVISION: flow-v146-mini-balloons
 //
 // A scene's companions: one for each running subagent (the `agents` dial,
 // agents.ts), so a glance tells you which are busy, which have gone quiet or
