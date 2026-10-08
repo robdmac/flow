@@ -20,7 +20,7 @@ import { migrateOverrides, openSession, runScene, type SceneCtx } from '../hooks
 import { coverage, frameSvg, gridPixels, SVG_LIMIT } from '../hooks/svg'
 import { Cells, isTall } from '../hooks/cells'
 import { SceneDriver } from '../hooks/scene'
-import { BED_EVERY_MS, BED_FADE_MS, BED_MIN_MS, BED_MS, BURST_MAX, CHIME_DELAY_MS, CHIME_QUIET_MS, MAX_PLAYS, MOODS, PLAYER_DRAIN_MS, PLAYER_LEAD_MS, type BedTake, bedGap, bedPlays, bedStep, burst, chimePlay, chimeStep, EVENTS, eventPlay, gather, LAYERS, newChimeState } from '../hooks/sound'
+import { BED_EVERY_MS, BED_FADE_MS, BED_MIN_MS, BED_MS, BURST_MAX, CHIME_DELAY_MS, CHIME_QUIET_MS, MAX_PLAYS, MOODS, PLAYER_DRAIN_MS, PLAYER_LEAD_MS, type BedTake, bedGap, bedPlay, bedStep, burst, chimePlay, chimeStep, EVENTS, eventPlay, gather, LAYERS, newChimeState } from '../hooks/sound'
 import { DEFAULT_VOLUME, MAX_GAIN, master, VOLUME_DB, volumeGain } from '../hooks/sound'
 import { BREATH_FRAMES, breath, easeWait, waitTone } from '../hooks/waiting'
 import { SOUND_FILES } from '../hooks/sound-files'
@@ -710,7 +710,8 @@ test('soundscapes: the volume is 3 dB a step below the default, and above it a l
   for (const scene of STYLES)
     for (let level = 0; level <= 10; level++)
       for (let volume = 1; volume <= 10; volume++) {
-        for (const p of bedPlays({ scene, level, tint: 'normal', night: false, amb }, level) ?? []) expect(volumeGain(p.gain, volume)).toBeLessThanOrEqual(1.4)
+        const p = bedPlay({ scene, level, tint: 'normal', night: false, amb }, level)
+        if (p) expect(volumeGain(p.gain, volume)).toBeLessThanOrEqual(1.4)
         for (const kind of Object.keys(EVENTS) as (keyof typeof EVENTS)[])
           expect(volumeGain(eventPlay({ kind, v: 1 }, level, scene, level)!.gain, volume)).toBeLessThanOrEqual(1.4)
         expect(volumeGain(master(scene, level), volume)).toBeLessThanOrEqual(1.4)
@@ -746,7 +747,7 @@ test('the volume scales every clip as it plays, the bed and the bursts alike; a 
   await start($)
   const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
   // The fire's bed, and its sparks' bursts (synthesized here: no file), as tuned.
-  const bed = bedPlays({ scene: 'fire', level: 9, tint: 'normal', night: false, amb: {} }, 1)![0]!.gain
+  const bed = bedPlay({ scene: 'fire', level: 9, tint: 'normal', night: false, amb: {} }, 1)!.gain
   const sparks = master('fire', 9)
   const near = (a: number | undefined, b: number) => expect(Math.abs((a ?? Number.NaN) - b)).toBeLessThan(1e-9)
   const heard = async (ms: number) => {
@@ -988,13 +989,15 @@ test('soundscapes: every scene has a bed for every mood, every clip it and the e
     let heard = 0
     for (let level = 0; level <= 10; level++)
       for (const amb of ambs)
-        for (let seed = 0; seed < 6; seed++)
-          for (const p of bedPlays({ scene, level, tint: 'normal', night: false, amb }, seed) ?? []) {
+        for (let seed = 0; seed < 6; seed++) {
+          const p = bedPlay({ scene, level, tint: 'normal', night: false, amb }, seed)
+          if (p) {
             heard++
             expect(files.has(p.asset)).toBe(true)
             // Clips peak at -2 to -3 dBFS and afplay's gain multiplies: past MAX_GAIN it clips.
             expect(p.gain).toBeLessThanOrEqual(MAX_GAIN)
           }
+        }
     expect(heard).toBeGreaterThan(0)
   }
   for (const kind of Object.keys(EVENTS) as (keyof typeof EVENTS)[])

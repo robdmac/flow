@@ -1,4 +1,4 @@
-// REVISION: flow-v151-manual-company
+// REVISION: flow-v171-dry-adapter
 //
 // What every harness adapter (Claude Code's register.tsx, pi's pi/index.ts)
 // does the same way: one scene instance per style (so a switch resumes where
@@ -8,12 +8,12 @@
 // one cfg (each with its own scenes): the scene follows the shared style.
 // Pure: no engine imports.
 
-import { type Activity } from './activity'
+import { type Activity, FRAME_MS } from './activity'
 import { isNightAt, type Clock, type FlowConfig } from './settings'
 import { makeScene, type SceneName, type Scene } from './styles'
 
-/** Frame pace while busy (~14 fps), and when calm: a low glow or off (8 fps). */
-export const FRAME_MS = 70
+/** Frame pace while busy (~14 fps, the heat model's frame), and when calm: a low glow or off (8 fps). */
+export { FRAME_MS }
 const CALM_MS = 125
 
 export class SceneDriver {

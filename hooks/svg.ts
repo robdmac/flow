@@ -1,4 +1,4 @@
-// REVISION: flow-v84-desktop-shades
+// REVISION: flow-v171-dry-adapter
 //
 // A scene's frame as one SVG for Claude desktop, which has no Raster: the
 // cell grid is rasterized to a small RGBA image, 2 × 4 pixels a cell (each
@@ -9,7 +9,7 @@
 // 2 × 2 a cell, then 1 × 2, then 1 × 1, then one pixel for every few cells.
 // Pure: no engine imports, unit-tested directly.
 
-import { Cells, DEFAULT_COLOR } from './cells'
+import { Cells, DEFAULT_COLOR, toBase64 } from './cells'
 import { BRAILLE, mix, QUAD } from './pixels'
 
 /** The Svg element's limit on its markup. */
@@ -228,13 +228,7 @@ export function encodePng({ width, height, rgba }: Pixels): Uint8Array {
   return out
 }
 
-function base64(bytes: Uint8Array): string {
-  let s = ''
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
-  return btoa(s)
-}
-
-/** The SVG for one frame, `width` × `height` CSS pixels when given (else the image's own). */
+/** The SVG for one frame: the image (`png`, base64) at its own size, which the desktop scales to the site's. */
 function wrap(png: string, p: Pixels): string {
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${p.width} ${p.height}" preserveAspectRatio="none">` +
@@ -272,12 +266,12 @@ export function frameSvg(grid: Cells): string {
   ] as const) {
     if (estimate(grid.columns * sx, grid.rows * sy) > SVG_LIMIT) continue
     const p = gridPixels(grid, sx, sy)
-    const svg = wrap(base64(encodePng(p)), p)
+    const svg = wrap(toBase64(encodePng(p)), p)
     if (svg.length <= SVG_LIMIT) return svg
   }
   // Bigger still: one pixel for every k × k cells (the desktop scales it to the site's size).
   let k = 2
   while (estimate(Math.ceil(grid.columns / k), Math.ceil(grid.rows / k)) > SVG_LIMIT) k++
   const p = gridPixels(thin(grid, k), 1, 1)
-  return wrap(base64(encodePng(p)), p)
+  return wrap(toBase64(encodePng(p)), p)
 }
