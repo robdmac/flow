@@ -1,4 +1,4 @@
-// REVISION: flow-v133-volume-status
+// REVISION: flow-v135-someone-there
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -85,6 +85,8 @@ function engine(
   refuse?: (asset: string) => boolean,
 ) {
   on('session.id', () => ({ value: (captured.session ??= 'session-a') }))
+  // The prompt box: an edit lands as made.
+  on('prompt.edit', (_, e) => ({ text: e.text, cursor: e.cursor }))
   on('session.end', (_, e) => ({ sessionId: e.sessionId }))
   on('audio.play', (_, e) => {
     const clip = e.clip as { base64?: string; asset?: string }
@@ -141,8 +143,16 @@ function memoryStore(on: On, entries: Readonly<Record<string, unknown>> = {}): M
 
 type TestDollar = { session: { start: (a: { cwd: string; surface: 'terminal'; isInteractive: boolean }) => Promise<unknown> } }
 
+/** A session starting with someone at it: they press a key in the prompt (so its soundscape may play). */
 async function start($: TestDollar) {
   await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  await keyed($)
+}
+
+/** A key in the prompt box: someone's at the session. */
+async function keyed($: unknown) {
+  const edit = { origin: { kind: 'composer' }, text: '', cursor: 0, start: 0, end: 0, inputText: 'h' }
+  await ($ as { prompt: { edit: (e: object) => Promise<unknown> } }).prompt.edit(edit)
 }
 
 type RunInput = {
@@ -1060,6 +1070,20 @@ test('the session ending stops the soundscape for good (Claude Code quitting lea
   before = plays()
   await clock.advance(5000)
   expect(plays()).toBe(before)
+  await ui.unmount()
+})
+
+test('a session no one is at stays quiet (Claude Code warms spares in the background, a terminal no one sees); a key in the prompt, and it plays', { options: { mode: 'manual', level: 9, style: 'bubbles', sound: 'on' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  await ($ as unknown as TestDollar).session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(10_000)
+  expect(seen.plays ?? []).toEqual([])
+  await keyed($)
+  await clock.advance(3000)
+  expect((seen.plays ?? []).length).toBeGreaterThan(0)
   await ui.unmount()
 })
 

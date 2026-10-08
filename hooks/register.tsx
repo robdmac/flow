@@ -1,4 +1,4 @@
-// REVISION: flow-v130-picker
+// REVISION: flow-v135-someone-there
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -104,7 +104,7 @@ import {
 } from './picker'
 
 
-const FLOW_REVISION = 'flow-v130-picker'
+const FLOW_REVISION = 'flow-v135-someone-there'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -168,6 +168,22 @@ async function keepAltitude($: EngineInterface, altitude: number): Promise<void>
 async function savedAltitude($: EngineInterface): Promise<number> {
   const { value } = await $.state.get({ plugin: 'flow', key: 'altitude' } as const)
   return typeof value === 'number' ? value : 0
+}
+
+/**
+ * Whether someone has been seen at this session (a key in the prompt, a turn, a `/flow`), kept in session
+ * state so a reload (a /config change) doesn't silence it till the next key. Claude Code warms spare
+ * sessions in the background, with a terminal no one sees: until someone's there, nothing is heard.
+ */
+const presentAtom = atom({ plugin: 'flow', key: 'present' } as const, false)
+
+async function keepPresent($: EngineInterface): Promise<void> {
+  await update($, presentAtom, () => true)
+}
+
+async function wasPresent($: EngineInterface): Promise<boolean> {
+  const { value } = await $.state.get({ plugin: 'flow', key: 'present' } as const)
+  return value === true
 }
 
 /**
@@ -683,6 +699,11 @@ export const register: Register = (on, options) => {
      * start nothing, as a clip begun then outlives it and plays out in full.
      */
     over: false,
+    /**
+     * Someone has been seen at the session (`keepPresent`). A spare session Claude Code warms in the
+     * background has a terminal and shows its scene, but no one hears it: it stays quiet till then.
+     */
+    present: false,
   }
   /**
    * Whether what was scheduled in generation `gen` may still play: the soundscape hasn't stopped since, and
@@ -819,6 +840,7 @@ export const register: Register = (on, options) => {
     // who had Flow before they were kept is taken as having had them.
     const stale = staleRows(await storedRows($), PLUGIN)
     const altitude = await savedAltitude($)
+    sound.present = sound.present || (await wasPresent($))
     await seedTips($, stale.length > 0 || altitude > 0, readConfig(options))
 
     // /config rows holding a scene Flow no longer takes (renamed, dropped), written back as the one meant.
@@ -872,7 +894,7 @@ export const register: Register = (on, options) => {
       // The soundscape, while the scene is on screen: beds crossfading one
       // into the next, and what happens on screen heard as it happens.
       sound.clock += elapsed
-      const heard = !sound.over && cfg.sound === 'on' && (site || desk) && driver.isShown()
+      const heard = !sound.over && sound.present && cfg.sound === 'on' && (site || desk) && driver.isShown()
       // A wait on the person beginning: a soft chime (once a wait; not for one right behind another).
       const chime = chimeStep(sound.chime, driver.waiting(), sound.clock)
       const shownScene = site ? driver.scene : desk ? desktopDriver.scene : undefined
@@ -1131,6 +1153,10 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.start', ($, e, next) => {
+    if (!sound.present) {
+      sound.present = true
+      void keepPresent($)
+    }
     activity.turnStarted() // raised by the main loop only
     return next(e)
   })
@@ -1213,7 +1239,23 @@ export const register: Register = (on, options) => {
   })
 
 
-  on('command.run', { command: COMMAND }, ($, e) => runScene($, e, sceneCtx))
+  on('command.run', { command: COMMAND }, ($, e) => {
+    if (!sound.present) {
+      sound.present = true
+      void keepPresent($)
+    }
+    return runScene($, e, sceneCtx)
+  })
+
+  // Someone at the session (a key in the prompt, a turn, a /flow): the soundscape may play from the next frame.
+  // A key in the prompt: the first one is all it takes.
+  on('prompt.edit', ($, e, next) => {
+    if (!sound.present) {
+      sound.present = true
+      void keepPresent($)
+    }
+    return next(e)
+  })
 
   on('session.end', async ($, e, next) => {
     // The soundscape stops with the session, for good unless the process goes
