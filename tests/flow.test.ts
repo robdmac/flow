@@ -597,7 +597,13 @@ test('/flow says how to undo, and names tints in words', async () => {
   expect(statusText(cfg, 4, 'blue', { hour: 12, minute: 0 })).toContain('context nearly full')
   expect(statusText(cfg, 4, 'normal', { hour: 12, minute: 0 })).toContain('/flow help')
   expect(helpText()).toContain('band | spine')
-  expect(helpText("pi's", false)).not.toContain('spine')
+  expect(helpText("pi's", { panes: false, sound: false })).not.toContain('spine')
+  // pi has no player: neither the help nor the status speaks of sound there.
+  expect(helpText()).toContain('/flow sound')
+  expect(helpText("pi's", { panes: false, sound: false })).not.toContain('sound')
+  const loud = readConfig({ sound: 'on' })
+  expect(statusText(loud, 4, 'normal', { hour: 12, minute: 0 })).toContain('sound on')
+  expect(statusText(loud, 4, 'normal', { hour: 12, minute: 0 }, undefined, { panes: false, sound: false })).not.toContain('sound')
 })
 
 test('surf and ski: night darkens the sky, with stars or a moon in it', async () => {
@@ -973,7 +979,11 @@ test('soundscapes: every scene has a bed for every mood, every clip it and the e
   const files = new Set(SOUND_FILES)
   const ambs = [{}, { roar: 1, vent: 1, wind: 1, space: 0, burner: 1, swell: 1, curl: 1 }, { roar: 1, space: 1 }, { wind: 0.5 }, { sea: 1 }]
   for (const scene of STYLES) {
-    expect(LAYERS[scene]).toBeDefined()
+    // A scene without layers is silent (a new one, till it's given a soundscape): no moods either.
+    if (!LAYERS[scene]) {
+      expect(MOODS[scene]).toBeUndefined()
+      continue
+    }
     expect(MOODS[scene]).toBeDefined()
     let heard = 0
     for (let level = 0; level <= 10; level++)
@@ -982,8 +992,8 @@ test('soundscapes: every scene has a bed for every mood, every clip it and the e
           for (const p of bedPlays({ scene, level, tint: 'normal', night: false, amb }, seed) ?? []) {
             heard++
             expect(files.has(p.asset)).toBe(true)
-            // Clips peak at -2 to -3 dBFS and afplay's gain multiplies: past ~1.4 it clips.
-            expect(p.gain).toBeLessThanOrEqual(1.4)
+            // Clips peak at -2 to -3 dBFS and afplay's gain multiplies: past MAX_GAIN it clips.
+            expect(p.gain).toBeLessThanOrEqual(MAX_GAIN)
           }
     expect(heard).toBeGreaterThan(0)
   }
@@ -2161,7 +2171,7 @@ test('sessions: the pure parts (differences, a move to another session, pruning,
   expect(parseFlowArgs('default').kind).toBe('error')
   expect(changesFor(parseFlowArgs('save'), cfg)).toBeUndefined()
   expect(helpText()).toContain('/flow save')
-  expect(helpText("pi's", false)).toContain('/flow reset')
+  expect(helpText("pi's", { panes: false, sound: false })).toContain('/flow reset')
 })
 
 test('pi: a session\'s own settings are its latest flow entry on the branch', () => {
@@ -2876,8 +2886,8 @@ test('/flow pick: the grammar, the help, and where the status points', () => {
   expect(parseFlowArgs('pick surf').kind).toBe('error') // a scene by name is `/flow surf`
   expect(changesFor({ kind: 'pick' }, readConfig({}))).toBeUndefined()
   expect(helpText()).toContain('/flow pick')
-  expect(helpText("pi's", false)).toContain('/flow pick')
-  expect(helpText("pi's", false)).not.toContain('spine')
+  expect(helpText("pi's", { panes: false, sound: false })).toContain('/flow pick')
+  expect(helpText("pi's", { panes: false, sound: false })).not.toContain('spine')
   expect(statusText(readConfig({}), 3, 'normal', { hour: 12, minute: 0 })).toContain('`/flow pick`')
   // The one-time scenes tip names it too.
   expect(nextTip({}, readConfig({})).tip).toContain('`/flow pick`')

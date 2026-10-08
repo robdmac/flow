@@ -167,7 +167,7 @@ The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's edito
 | `session_compact` | so does a compaction |
 | `ctx.getContextUsage()` | a nearly-full context shows as blue |
 
-pi tells an extension nothing of a wait on you, so there the scenes never show one.
+pi tells an extension nothing of a wait on you, so there the scenes never show one. Nor has it a player, so the scenes are silent there: `/flow sound` says so.
 
 As in Claude Code, each session keeps its own settings, kept in the session itself (an entry the model never sees), so resuming or forking it brings them back. `~/.pi/agent/flow.json` holds the defaults new sessions start with; `/flow save` writes it. To try it without installing: `pi --extension ./pi/index.ts`.
 

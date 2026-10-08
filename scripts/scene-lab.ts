@@ -1,4 +1,4 @@
-// REVISION: flow-v127-agents
+// REVISION: flow-v150-review-fixes
 //
 // Shared by preview and check: build a scene at a size and a setting, warm it
 // up (with subagents' companions in every state, if asked), and count what
@@ -55,9 +55,10 @@ export function nightsOf(scene: SceneName): boolean[] {
 }
 
 /**
- * A scene at a size and setting, stepped `warm` frames so it has settled.
- * With `agents`, its companions arrive at the start, and in the last dozen
- * frames one of them is leaving.
+ * A scene at a size and setting, stepped `warm` frames so it has settled
+ * (and a wait's frames after, if waiting). With `agents`, its companions
+ * arrive at the start, and in the last dozen frames of all one of them is
+ * leaving; the coverage boost is the adapter's, 15 for each still running.
  */
 export function build(scene: SceneName, columns: number, rows: number, s: Setting, warm = 90) {
   const f = makeScene(scene, 7)
@@ -65,14 +66,22 @@ export function build(scene: SceneName, columns: number, rows: number, s: Settin
   f.tint = s.tint
   f.night = s.night
   f.ensure(columns, rows)
-  for (let i = 0; i < warm; i++) {
-    if (s.agents) f.agents = crew(i >= warm - 12)
+  const total = warm + (s.waiting ? WAIT_FRAMES : 0)
+  let frame = 0
+  const step = () => {
+    if (s.agents) {
+      const agents = crew(frame >= total - 12)
+      f.agents = agents
+      f.coverageBoost = 15 * agents.filter(a => a.state !== 'done').length
+    }
     f.step()
+    frame++
   }
+  for (let i = 0; i < warm; i++) step()
   if (s.waiting) {
     f.waiting = true
     f.strength = Math.min(s.level, WAIT_LEVEL)
-    for (let i = 0; i < WAIT_FRAMES; i++) f.step()
+    for (let i = 0; i < WAIT_FRAMES; i++) step()
   }
   return f
 }

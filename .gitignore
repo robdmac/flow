@@ -6,3 +6,12 @@ node_modules/
 
 # scripts/make-sounds.ts: the WAVs the clips are encoded from
 .sound-cache/
+
+# tsc's output, should it ever run without noEmit: nothing here is compiled
+hooks/**/*.js
+pi/*.js
+scripts/*.js
+tests/*.js
+
+# Claude Code's worktrees for agents
+.claude/worktrees/

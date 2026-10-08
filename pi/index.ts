@@ -1,4 +1,4 @@
-// REVISION: flow-v125-picker
+// REVISION: flow-v150-review-fixes
 //
 // Flow for pi (badlogic/pi-mono), by Rob Macrae: the same ambient
 // scenes as the Claude Code mod, in a widget above pi's editor. pi's events
@@ -24,7 +24,8 @@
 // older pi without session entries keeps one set for every session, in that
 // file, as before (session.ts). pi has no built-in subagents, so they never add to the scene here,
 // and no side panes, so there is no spine, and `/flow pick` is a plain list (pi's own select)
-// rather than thumbnails, its choice going the way `/flow <scene>` goes.
+// rather than thumbnails, its choice going the way `/flow <scene>` goes. Nor has it a player, so
+// there is no soundscape: `/flow sound` says so, and the help and the status leave it out.
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -32,7 +33,8 @@ import { dirname, join } from 'node:path'
 
 import { Activity } from '../hooks/activity'
 import { FRAME_MS, SceneDriver } from '../hooks/scene'
-import { changedText, changesFor, helpText, parseFlowArgs, readConfig, statusText, storedValue, type FlowConfig } from '../hooks/settings'
+import { pickBlurb } from '../hooks/picker'
+import { changedText, changesFor, helpText, type Host, parseFlowArgs, readConfig, statusText, storedValue, type FlowConfig } from '../hooks/settings'
 import { SCENES } from '../hooks/styles'
 import { gridToAnsi } from './ansi'
 import { COMMAND_TOOLS, effortOf, FLOW_ENTRY, piLinesWritten, READ_TOOLS } from './mapping'
@@ -45,6 +47,8 @@ const CONTEXT_EVERY_MS = 5000
 /** How often flow.json is read afresh while the scene runs: another session's save shows here as this one's own. */
 const DEFAULTS_EVERY_MS = 30_000
 const SETTINGS = join(homedir(), '.pi', 'agent', 'flow.json')
+/** What pi has of what `/flow` speaks of: no side panes, no player. */
+const PI: Host = { panes: false, sound: false }
 /** Where the settings lived before, newest first: as vista, then as ascii-fire. */
 const OLD_SETTINGS = [join(homedir(), '.pi', 'agent', 'vista.json'), join(homedir(), '.pi', 'agent', 'ascii-fire.json')]
 
@@ -186,10 +190,12 @@ export default function flow(pi: PiApi) {
   }
 
   pi.on('session_start', async (_e, ctx) => {
+    // A new session starts on the defaults; a resumed, forked or reloaded one on its own over them. (In every
+    // mode: `/flow` runs in any, and compares with the defaults as they're kept.)
+    await settings.open(entriesOf(ctx))
+    // The widget and its frames, only where there's a TUI to draw them.
     if (ctx.mode !== 'tui' || !ctx.hasUI) return
     ctxRef = ctx
-    // A new session starts on the defaults; a resumed, forked or reloaded one on its own over them.
-    await settings.open(entriesOf(ctx))
     width = 0
     readClock()
     stop()
@@ -257,7 +263,7 @@ export default function flow(pi: PiApi) {
         ctx.ui.notify(say('`/flow next` steps through the scenes, `/flow <name>` picks one'), 'warning')
         return
       }
-      const options = SCENES.map(d => `${d.name}${d.name === cfg.style ? ' (on now)' : ''}: ${d.blurb}`)
+      const options = SCENES.map(d => pickBlurb(d.name, cfg.style))
       let chosen: string | undefined
       try {
         chosen = await select('flow: pick a scene', options)
@@ -271,11 +277,11 @@ export default function flow(pi: PiApi) {
     if (cmd.kind === 'show') {
       // (Without session entries every session shares one set: none is "just this session".)
       const defaults = entries ? settings.defaults : undefined
-      ctx.ui.notify(say(statusText(cfg, driver.level(), driver.tint(), driver.clock, defaults)))
+      ctx.ui.notify(say(statusText(cfg, driver.level(), driver.tint(), driver.clock, defaults, PI)))
       return
     }
     if (cmd.kind === 'help') {
-      ctx.ui.notify(say(helpText("pi's", false)))
+      ctx.ui.notify(say(helpText("pi's", PI)))
       return
     }
     if (cmd.kind === 'error') {
@@ -284,6 +290,10 @@ export default function flow(pi: PiApi) {
     }
     if (cmd.kind === 'layout') {
       ctx.ui.notify('flow: pi has no side panes, so the scene stays in the band above the editor', 'warning')
+      return
+    }
+    if (cmd.kind === 'sound') {
+      ctx.ui.notify('flow: pi has no player for the soundscape, so the scenes are silent here', 'warning')
       return
     }
     if (cmd.kind === 'save') {
