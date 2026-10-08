@@ -1,4 +1,4 @@
-// REVISION: flow-v127-picker
+// REVISION: flow-v150-review-fixes
 //
 // Flow's settings and the `/flow` command's grammar, shared by every harness adapter (Claude Code's
 // register.tsx, pi's pi/index.ts). Pure: no engine imports. Replies carry no
@@ -263,7 +263,12 @@ const inWords = (cfg: FlowConfig, items: readonly Item[]) => items.map(i => item
  * time of day; then, where this session's settings differ from the default
  * (`defaults`, what new sessions start with), what the default has instead.
  */
-export function statusText(cfg: FlowConfig, levelNow: number, tint: string, clock: Clock, defaults?: FlowConfig): string {
+/** What the harness can do that `/flow` speaks of: side panes (the spine, the picker's thumbnails), and a player for the soundscape. */
+export type Host = { panes: boolean; sound: boolean }
+/** Claude Code: both. */
+export const CLAUDE_CODE: Host = { panes: true, sound: true }
+
+export function statusText(cfg: FlowConfig, levelNow: number, tint: string, clock: Clock, defaults?: FlowConfig, host: Host = CLAUDE_CODE): string {
   const parts = [`${cfg.style}`]
   parts.push(
     cfg.mode === 'auto'
@@ -276,7 +281,7 @@ export function statusText(cfg: FlowConfig, levelNow: number, tint: string, cloc
   if (hasNight(cfg.style)) parts.push(timeText(cfg, clock))
   else if (cfg.time !== 'clock') parts.push(`${cfg.time} pinned (${cfg.style} has no night)`)
   if (cfg.layout === 'spine') parts.push('spine')
-  if (cfg.sound === 'on') parts.push(`sound on at ${cfg.volume}/10`)
+  if (host.sound && cfg.sound === 'on') parts.push(`sound on at ${cfg.volume}/10`)
   const lines = [parts.join(', ')]
   const own = defaults ? differingItems(cfg, defaults) : []
   if (defaults && own.length) {
@@ -313,7 +318,8 @@ export function resetText(before: FlowConfig, defaults: FlowConfig): string {
 }
 
 /** `/flow help`: everything it takes (`panes`: whether the harness has panes: the spine, the picker's thumbnails). */
-export function helpText(agent = "Claude's", panes = true): string {
+export function helpText(agent = "Claude's", host: Host = CLAUDE_CODE): string {
+  const { panes } = host
   const lines = [
     'ambient scenes that move with the work; each session keeps its own settings',
     `  /flow <name>          pick a scene: ${SCENES}`,
@@ -327,9 +333,11 @@ export function helpText(agent = "Claude's", panes = true): string {
     `  /flow auto            move with ${agent} work (the default)`,
     '  /flow 1-10 | off      hold a level (10 is the busiest), or switch it off',
     '  /flow idle glow|dark  in auto mode while idle: a low glow, or nothing',
-    '  /flow sound [on|off]  a soundscape for each scene, swelling with the work (macOS); alone, toggles it',
-    `  /flow sound 1-10      its volume, also /flow volume 1-10 (${DEFAULT_VOLUME} plays as tuned); 0 turns it off`,
   ]
+  if (host.sound) {
+    lines.push('  /flow sound [on|off]  a soundscape for each scene, swelling with the work (macOS); alone, toggles it')
+    lines.push(`  /flow sound 1-10      its volume, also /flow volume 1-10 (${DEFAULT_VOLUME} plays as tuned); 0 turns it off`)
+  }
   if (panes) {
     lines.push('  /flow band | spine    above the prompt, or a tall pane beside the transcript')
     lines.push('                        (also horizontal, bar or flat; portrait, vertical or side)')

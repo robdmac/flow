@@ -1,4 +1,4 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v142-surf-riders
 //
 // Surf (the `surf` style): a surfer and the ocean on the same dials as the
 // fire; the level is the swell. At 1 the sea is glassy under a dawn sky and
@@ -16,14 +16,29 @@
 //
 // Everything solid is painted into a 2x2-a-cell pixel layer and folded into
 // quadrant glyphs with the two colors that best fit each cell; spray, foam
-// fizz and sun glints are a braille dot layer on top. Subagents (the
-// coverage boost) put more surfers in the line-up; smoke is a wipeout under
-// a grey overcast sky; a nearly-full context turns the sea storm-blue and
-// raises a red warning flag. While Claude waits on the person the swell
+// fizz and sun glints are a braille dot layer on top. Smoke is a wipeout
+// under a grey overcast sky; a nearly-full context turns the sea storm-blue
+// and raises a red warning flag. While Claude waits on the person the swell
 // settles and the surfer sits up on the board, bobbing, waiting for the next
 // wave, the whole view breathing in sepia (waiting.ts).
+//
+// Each subagent is a surfer of its own in the line-up, in its own wetsuit and
+// board (crew.ts): they paddle in from the edge when the agent starts, and
+// while it works paddle hard (or, on a building swell in the band, ride one
+// of the following waves); once the swell is big they catch the big wave and
+// ride it with the surfer, standing on its face (crouching in the barrel)
+// in the same pose, drawn the same way, each in a lane of its own along the
+// face so no two meet, carving at its own pace. The face is shared out by
+// its length, so the band (a short face) takes one beside the surfer, the
+// spine (a tall one) more; the rest ride the following swells or paddle.
+// They pop up as they reach their place on it and drop back to paddling as
+// the swell falls. Gone quiet they sit up on their board, bobbing, and while
+// it waits on you they wave an arm; when it's done they paddle off out of
+// sight. While the whole scene waits on you, they sit up with the surfer.
 
+import type { AgentDial } from './agents'
 import { Cells, Rng, isTall } from './cells'
+import { Crew, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
 import { MOON, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
 import { BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, noise1 as vnoise, QUAD, type QuadFit } from './pixels'
@@ -153,6 +168,15 @@ const SPRITES = {
     ['    hh', '  www ', '  ww  '],
     ['    hh', '  wwhh', ' wwww ', 'ww  w ', 'w   w '],
   ],
+  // Sitting up, waving an arm for attention (a companion whose agent waits on you): arm up, then out.
+  waveUp: [
+    [' whh  ', '  ww  ', '  ww  '],
+    ['w hh  ', 'w hh  ', 'wwwww ', ' wwww ', '  ww  '],
+  ],
+  waveOut: [
+    ['  hh  ', ' www  ', '  ww  '],
+    ['  hh  ', '  hh  ', 'wwwww ', ' wwww ', '  ww  '],
+  ],
 } as const
 type Pose = keyof typeof SPRITES
 
@@ -160,9 +184,22 @@ const PMAX = 480
 /** Set pixels in each quadrant mask. */
 const BITS = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4]
 
+/** Surfers in the line-up for subagents, at most (a wetsuit and a board each). */
+const CREW = 5
+/** The swell (eased level) from which working companions catch the big wave and ride it with the surfer. */
+const RIDE_S = 4.5
+/** The closest two riders on the big wave come, in pixels along its face: a rider and their board apart (the spine's stand taller). */
+const RIDE_GAP_BAND = 6.5
+const RIDE_GAP_SPINE = 9
+/** Points the face's length is measured at, crest to foot, to share it out by distance along it. */
+const ARC_N = 24
+
 export class Surf {
   strength = 8
   coverageBoost = 0
+  /** The subagents, one by one: each a surfer of their own. */
+  agents: readonly AgentDial[] = []
+  private crew = new Crew(CREW)
   sounds: SoundEvent[] = []
   /** The frame the next wave's sound comes in on. */
   private nextWave = 0
@@ -195,6 +232,8 @@ export class Surf {
   private ph = 0
   private pc = new Int32Array(0)
   private water = new Uint8Array(0)
+  /** Pixels of a surfer's head this frame: kept when a cell's colors are fitted, so no head drops out. */
+  private head = new Uint8Array(0)
   private surf = new Float32Array(0)
   private dots = new Uint8Array(0)
   private dotColor = new Int32Array(0)
@@ -226,6 +265,24 @@ export class Surf {
 
   // The surfer.
   private phase = 0
+
+  // Each companion, by slot: which way it faces (1 right, -1 left), and its ride on the big wave: whether it
+  // should be up on it, how far it is (0..1, eased), its own carve's phase, and where on the face it is (u) and
+  // which way it's carving.
+  private facing = new Float32Array(CREW)
+  private rideGoal = new Uint8Array(CREW)
+  private rideK = new Float32Array(CREW)
+  private ridePh = new Float32Array(CREW)
+  private rideU = new Float32Array(CREW)
+  private rideDu = new Float32Array(CREW)
+  /** Which following swell a working companion not on the big wave rides (the band), or -1. */
+  private follow = new Int8Array(CREW)
+  /** A lane on the face (`lane`'s answer): its middle and half its width, in u (0 the crest .. 1 the foot). */
+  private laneC = 0
+  private laneH = 0
+  /** The face's length from where riders start (`faceLo`) to each of ARC_N points down to `faceHi`, in pixels, and all of it. */
+  private arc = new Float32Array(ARC_N)
+  private arcLen = 1
   private u = 0.5
   private du = 0
   private wipe = 0
@@ -266,6 +323,7 @@ export class Surf {
     const n = this.pw * this.ph
     this.pc = new Int32Array(n)
     this.water = new Uint8Array(n)
+    this.head = new Uint8Array(n)
     this.surf = new Float32Array(this.pw)
     this.dots = new Uint8Array(columns * rows)
     this.dotColor = new Int32Array(columns * rows)
@@ -389,6 +447,8 @@ export class Surf {
 
   step(): void {
     if (this.columns === 0) return
+    this.crew.room = this.crewRoom()
+    this.crew.update(this.agents, this.coverageBoost)
     const level = this.level
     // A wave coming in: about every 12 s on a calm sea, every 5.5 s on a big one (as measured at real
     // beaches), never on a beat: each one sets the next at random around that.
@@ -430,9 +490,14 @@ export class Surf {
     const omega = 0.035 + 0.011 * s
     this.phase += omega
     const inTube = this.curl > 0.55
-    const amp = inTube ? 0.05 : clamp(0.08 + 0.04 * (s - 3), 0.06, 0.36)
-    const mid = inTube ? 0.4 : 0.52
-    const nu = mid - amp * Math.cos(this.phase)
+    const amp0 = inTube ? 0.05 : clamp(0.08 + 0.04 * (s - 3), 0.06, 0.36)
+    const mid0 = inTube ? 0.4 : 0.52
+    // Companions riding the wave with them: the face is shared out in lanes, the surfer carving in theirs.
+    const share = this.updateRiders(omega)
+    this.lane(-1)
+    const own = mid0 - amp0 * Math.cos(this.phase)
+    const shared = this.uAt(this.laneC - Math.min(this.laneAmp(), amp0 / (this.faceHi() - this.faceLo())) * Math.cos(this.phase))
+    const nu = own + (shared - own) * share
     const ndu = nu - this.u
     // Snapping off the top: a fan of spray from the tail.
     const k = this.vertical ? 1.6 : 1
@@ -480,6 +545,7 @@ export class Surf {
       const sx = this.surferX()
       this.emit(sx + (this.vertical ? 4 : 1.5) + this.rng.f(), this.surfaceAt(sx) - 0.3, 0.1, -0.25, 5, 1)
     }
+    this.placeCrew()
     // Sun glints on calm water.
     if (s < 4.5) {
       const n = (4.5 - s) * 0.5 * (this.vertical ? 1 : this.pw / 120)
@@ -862,6 +928,7 @@ export class Surf {
         if (ch !== 'h' && ch !== 'w') continue
         const pxl = facing > 0 ? x0 + c : x0 + width - 1 - c
         this.put(pxl, py, ch === 'h' ? SKIN : suit)
+        if (ch === 'h' && pxl >= 0 && py >= 0 && pxl < this.pw && py < this.ph) this.head[py * this.pw + pxl] = 1
       }
     }
   }
@@ -874,48 +941,309 @@ export class Surf {
       return
     }
     const pose = this.pose()
-    const x = this.surferX()
-    const surf = this.surfaceAt(x)
-    const lim = this.vertical ? 0.7 : 0.12
-    const slope = clamp((this.surfaceAt(x + 1) - this.surfaceAt(x - 1)) / 2, -lim, lim)
-    const bob = pose === 'sit' ? Math.sin(this.t * 0.12) * 0.35 : 0
-    const by = (Math.floor(surf - 0.6 + bob) | 1) + 0.5
-    const flat = pose === 'sit' || pose === 'paddle'
-    const facing = flat || this.du >= 0 || this.s < 5 ? 1 : -1
-    this.board(x, by, flat ? slope * 0.5 : slope, half, facing, BOARD)
-    const lean = !flat && large ? -slope * 0.8 : 0
-    this.sprite(pose, large, x + lean, by, facing, SUIT)
+    const facing = pose === 'sit' || pose === 'paddle' ? 1 : this.carveFacing(this.du)
+    this.rider(pose, this.surferX(), large, half, facing, pose === 'sit' ? Math.sin(this.t * 0.12) * 0.35 : 0, SUIT, BOARD)
   }
 
-  /** Subagents: more surfers in the line-up. */
-  private paintExtras(): void {
-    const n = Math.min(5, Math.round(this.coverageBoost / 12))
-    if (n === 0) return
-    let slot = 0
-    for (let i = 0; i < n; i++) {
-      let x: number
-      let pose: Pose = 'sit'
-      if (!this.vertical && i < this.nF && this.s >= 3) {
-        const u = 0.35 + 0.2 * Math.sin(this.phase * 0.8 + i * 2.1)
-        x = this.fx[i]! + u * this.fW[i]! * 0.7
-        pose = 'ride'
-      } else if (this.vertical) {
-        x = 3 + slot * 6
-        slot++
-        if (x > this.cx - 6) break
-      } else {
-        x = this.cx + this.Wf * 1.6 + 10 + slot * 14 + hash(slot * 3 + 1) * 10
-        if (x > this.pw - 4) x = this.cx - this.Wb - 6 - (x - this.pw) * 1.0
-        slot++
-        if (x < 3) break
-        pose = this.s >= 2 ? 'paddle' : 'sit'
-      }
-      const surf = this.surfaceAt(x)
-      const slope = (this.surfaceAt(x + 1) - this.surfaceAt(x - 1)) / 2
-      const by = (Math.floor(surf - 0.6 + (pose === 'sit' ? Math.sin(this.t * 0.11 + i * 1.7) * 0.3 : 0)) | 1) + 0.5
-      this.board(x, by, pose === 'ride' ? slope : slope * 0.5, 2.4, 1, EXTRA_BOARDS[i]!)
-      this.sprite(pose, false, x, by, 1, EXTRA_SUITS[i]!)
+  /** Which way a rider on the face looks: down the line, or back up it as they carve up a big face. */
+  private carveFacing(du: number): number {
+    return du >= 0 || this.s < 5 ? 1 : -1
+  }
+
+  /**
+   * A surfer on their board at pixel column x, on the water there (bobbing
+   * by `bob`): the board along the slope (flatter lying or sitting), the
+   * figure in its pose on top, leaning into a tall face. The surfer and every
+   * companion alike, each in their own wetsuit and board; returns the board's
+   * pixel row.
+   */
+  private rider(pose: Pose, x: number, large: boolean, half: number, facing: number, bob: number, suit: number, board: number): number {
+    const lim = this.vertical ? 0.7 : 0.12
+    const slope = clamp((this.surfaceAt(x + 1) - this.surfaceAt(x - 1)) / 2, -lim, lim)
+    const by = (Math.floor(this.surfaceAt(x) - 0.6 + bob) | 1) + 0.5
+    const standing = pose === 'ride' || pose === 'crouch'
+    this.board(x, by, standing ? slope : slope * 0.5, half, facing, board)
+    this.sprite(pose, large, x + (standing && large ? -slope * 0.8 : 0), by, facing, suit)
+    return by
+  }
+
+  /**
+   * How many companions this layout has a place for: the spine's narrow sea
+   * fits only a few on the back of the wave (5 pixels apart, clear of the
+   * crest, which in the spine stays at 0.3 of the width); the band has a spot
+   * for every one.
+   */
+  private crewRoom(): number {
+    if (!isTall(this.columns, this.rows)) return CREW
+    return Math.max(0, Math.min(CREW, Math.floor((this.pw * 0.3 - 7) / 5) + 1))
+  }
+
+  /**
+   * A companion's place in the line-up (its slot's). In the band: out ahead
+   * of the wave, then (when that water runs out) behind the following swell,
+   * spaced to fit them all, however big the swell and narrow the band. In
+   * the spine: on the back of the wave (`crewRoom` gives only slots that fit).
+   */
+  private lineup(slot: number): number {
+    if (this.vertical) return 3 + slot * 5
+    const ahead0 = this.cx + this.Wf * 1.6 + 10
+    const ahead = Math.max(0, this.pw - 4 - ahead0)
+    const behind0 = this.cx - this.Wb - 6
+    const behind = Math.max(0, behind0 - 3)
+    const step = Math.max(5, Math.min(14, (ahead + behind) / CREW))
+    const d = (slot + 0.3 + 0.4 * hash(slot * 3 + 1)) * step
+    return Math.max(3, d <= ahead ? ahead0 + d : behind0 - (d - ahead))
+  }
+
+  /** The edge nearer a place on the water: where a companion paddles in from, or off to. */
+  private edgeNear(x: number): number {
+    return x > this.cx ? this.pw + 8 : -8
+  }
+
+  /** The companion in a slot, if there is one. */
+  private mateIn(slot: number): Mate | undefined {
+    const mates = this.crew.mates
+    for (let i = 0; i < mates.length; i++) if (mates[i]!.slot === slot) return mates[i]
+    return undefined
+  }
+
+  /** The stretch of the big wave's face its riders share (u, 0 the crest .. 1 the foot): under a barrel, its open part. */
+  private faceLo(): number {
+    return 0.1 + 0.1 * this.curl
+  }
+
+  private faceHi(): number {
+    return 0.9 - 0.12 * this.curl
+  }
+
+  private rideGap(): number {
+    return this.vertical ? RIDE_GAP_SPINE : RIDE_GAP_BAND
+  }
+
+  /** The face's length along its surface (crest to foot, as riders share it): into `arc` and `arcLen`. */
+  private measureFace(): void {
+    const lo = this.faceLo()
+    const span = this.faceHi() - lo
+    let px = 0
+    let py = 0
+    let len = 0
+    for (let i = 0; i < ARC_N; i++) {
+      const x = this.cx + (lo + (span * i) / (ARC_N - 1)) * this.Wf
+      const y = this.seaY - this.mainHump(x)
+      if (i > 0) len += Math.hypot(x - px, y - py)
+      this.arc[i] = len
+      px = x
+      py = y
     }
+    this.arcLen = Math.max(1, len)
+  }
+
+  /** The place on the face (u) a fraction `f` of the way along it, crest to foot. */
+  private uAt(f: number): number {
+    const want = clamp(f) * this.arcLen
+    let i = 1
+    while (i < ARC_N - 1 && this.arc[i]! < want) i++
+    const a = this.arc[i - 1]!
+    const b = this.arc[i]!
+    const t = b > a ? clamp((want - a) / (b - a)) : 0
+    return this.faceLo() + ((this.faceHi() - this.faceLo()) * (i - 1 + t)) / (ARC_N - 1)
+  }
+
+  /**
+   * How many companions the big wave has room for beside the surfer, each a
+   * rider apart along the face (the spine's runs down as well as across):
+   * none till the swell is big, more as it builds.
+   */
+  private rideRoom(): number {
+    if (this.s < RIDE_S) return 0
+    return Math.max(0, Math.floor(this.arcLen / this.rideGap()) - 1)
+  }
+
+  /**
+   * Once a frame, before the surfer's line: which companions ride the big
+   * wave with the surfer (working, the swell big enough, room on the face,
+   * the scene not waiting on the person: one arriving paddles in from the
+   * nearer edge straight to its place on it), each easing up onto it
+   * and back off as the swell drops or its agent rests; and each rider's own
+   * carve along its lane, at its own pace. Returns how far the face is shared
+   * out (0: the surfer has it to themselves).
+   */
+  private updateRiders(omega: number): number {
+    this.measureFace()
+    const room = this.rideRoom()
+    let given = 0
+    let share = 0
+    for (let slot = 0; slot < CREW; slot++) {
+      const m = this.mateIn(slot)
+      if (!m) {
+        this.rideGoal[slot] = 0
+        this.rideK[slot] = 0
+        continue
+      }
+      if (m.age === 0) {
+        this.rideK[slot] = 0
+        this.ridePh[slot] = m.seed * 6.283
+        this.rideU[slot] = this.faceHi()
+      }
+      const wants = !this.waiting && !m.leaving && m.busy >= 0.5 && given < room
+      if (wants) given++
+      this.rideGoal[slot] = wants ? 1 : 0
+      const k = this.rideK[slot]! + ((wants ? 1 : 0) - this.rideK[slot]!) * 0.06
+      this.rideK[slot] = k < 0.01 && !wants ? 0 : k > 0.99 && wants ? 1 : k
+      share += this.rideK[slot]!
+    }
+    // The rest of those working ride the following swells in the band, one each, while there are any.
+    let f = 0
+    for (let slot = 0; slot < CREW; slot++) {
+      const m = this.mateIn(slot)
+      const free = m && !m.leaving && m.busy >= 0.5 && !this.rideGoal[slot] && this.rideK[slot]! < 0.5
+      this.follow[slot] = free && !this.vertical && this.s >= 3 && f < this.nF ? f++ : -1
+    }
+    for (let slot = 0; slot < CREW; slot++) {
+      if (!this.rideGoal[slot] && this.rideK[slot] === 0) continue
+      const seed = this.mateIn(slot)!.seed
+      this.lane(slot)
+      this.ridePh[slot]! += omega * (0.8 + 0.4 * seed)
+      const u = this.uAt(this.laneC - this.laneAmp() * (0.55 + 0.45 * hash(seed * 9973 + 5)) * Math.cos(this.ridePh[slot]!))
+      this.rideDu[slot] = u - this.rideU[slot]!
+      this.rideU[slot] = u
+    }
+    return clamp(share)
+  }
+
+  /**
+   * A rider's lane on the face (`slot`, or -1 for the surfer) into `laneC`
+   * and `laneH`, as fractions of the way along it (`uAt` finds the place):
+   * the face shared out by its length, by how far each companion is up on the
+   * wave, the surfer in the middle, even slots further down the face, odd
+   * ones further up, each keeping its side so none ever crosses another.
+   */
+  private lane(slot: number): void {
+    let before = 0
+    let after = 0
+    let at = 0
+    for (let s = 0; s < CREW; s++) {
+      const k = this.rideK[s]!
+      if (s % 2) {
+        before += k
+        if (slot >= 0 && slot % 2 && s <= slot) at += k
+      } else {
+        after += k
+        if (slot >= 0 && slot % 2 === 0 && s < slot) at += k
+      }
+    }
+    const w = slot < 0 ? 1 : this.rideK[slot]!
+    const a = slot < 0 ? before : slot % 2 ? before - at : before + 1 + at
+    const total = 1 + before + after
+    this.laneC = (a + w / 2) / total
+    this.laneH = w / 2 / total
+  }
+
+  /** How far a rider may carve either side of the middle of the lane `lane` found (a fraction of the face), staying a rider clear of the next. */
+  private laneAmp(): number {
+    return Math.max(0, this.laneH - this.rideGap() / 2 / this.arcLen)
+  }
+
+  /** Where a companion's place on the big wave is (pixel column). */
+  private waveX(slot: number): number {
+    return this.cx + this.rideU[slot]! * this.Wf
+  }
+
+  /** A companion up on the big wave: caught it, and at its place on the face. */
+  private onWave(m: Mate): boolean {
+    return this.rideK[m.slot]! > 0.5 && Math.abs(m.x - this.waveX(m.slot)) < 3
+  }
+
+  /**
+   * A companion's pose: while its agent works, riding the big wave with the
+   * surfer (as the surfer does, crouching in a barrel), or a following swell,
+   * or paddling; sitting up (waving, if it waits on you) while it rests, and
+   * while the whole scene waits on you.
+   */
+  private matePose(m: Mate): Pose {
+    if (m.leaving || m.here < 1) return 'paddle'
+    if (m.busy < 0.5) return m.waiting ? (((this.t + m.slot * 3) >> 2) % 2 ? 'waveUp' : 'waveOut') : 'sit'
+    if (this.onWave(m)) return this.curl > 0.55 ? 'crouch' : 'ride'
+    if (this.waiting && this.s < 2.7) return 'sit'
+    return this.rides(m) ? 'ride' : 'paddle'
+  }
+
+  /** Where a working companion rides its following swell (pixel column), or NaN when it has none. */
+  private followX(slot: number): number {
+    const i = this.follow[slot]!
+    if (i < 0) return Number.NaN
+    return this.fx[i]! + (0.35 + 0.2 * Math.sin(this.phase * 0.8 + slot * 2.1)) * this.fW[i]! * 0.7
+  }
+
+  /** Whether a working companion is up riding a following swell (the band, once there's a swell, if not on the big wave): there, not paddling over. */
+  private rides(m: Mate): boolean {
+    return Math.abs(m.x - this.followX(m.slot)) < 4
+  }
+
+  /**
+   * Each companion's place this frame (`x`, and which way it faces):
+   * paddling in from the edge to its spot, there (or on its swell), over to
+   * its place on the big wave and up riding it, or paddling off from
+   * wherever it is to the nearer edge, out of sight just as it's gone; and a
+   * paddler's splashes.
+   */
+  private placeCrew(): void {
+    const k = this.vertical ? 1.6 : 1
+    for (const m of this.crew.mates) {
+      const slot = m.slot
+      const big = !m.leaving && (this.rideGoal[slot] === 1 || this.rideK[slot]! > 0.5)
+      let target = this.lineup(slot)
+      if (big) target = this.waveX(slot)
+      else if (!m.leaving && this.follow[slot]! >= 0) target = this.followX(slot)
+      let facing = 1
+      if (m.leaving) {
+        if (Number.isNaN(m.x)) continue
+        const edge = this.edgeNear(m.x)
+        m.x += (edge - m.x) / Math.max(1, m.p * this.crew.leave)
+        facing = edge > m.x ? 1 : -1
+      } else if (m.here < 1) {
+        const edge = this.edgeNear(target)
+        m.x = edge + (target - edge) * m.here
+        facing = edge > target ? -1 : 1
+      } else if (Number.isNaN(m.x)) m.x = target
+      else if (big && Math.abs(target - m.x) < 3) {
+        // On its place on the wave: carving with it.
+        m.x = target
+        facing = this.rideK[slot]! > 0.5 ? this.carveFacing(this.rideDu[slot]!) : 1
+      } else {
+        // Paddling over (hard, no faster than a paddler goes; flat out to catch the big wave), or settling at its spot.
+        const d = target - m.x
+        const v = (big ? 2.4 : 1.2) * k
+        m.x += clamp(d * 0.08, -v, v)
+        if (big) facing = d < 0 ? -1 : 1
+      }
+      this.facing[slot] = facing
+      if (this.matePose(m) === 'paddle' && (this.t + slot) % 5 === 0 && m.x > 0 && m.x < this.pw) {
+        this.emit(m.x + facing * 1.5 + this.rng.f(), this.surfaceAt(m.x) - 0.3, 0.1 * facing, -0.25, 5, 1)
+      }
+    }
+  }
+
+  /** The subagents' surfers, each in their own wetsuit and board, and where each is for desktop's hover. */
+  private paintExtras(): void {
+    this.crew.clearMarks()
+    for (const m of this.crew.mates) {
+      const x = m.x
+      if (Number.isNaN(x) || x < -4 || x > this.pw + 4) continue
+      const pose = this.matePose(m)
+      const sitting = pose === 'sit' || pose === 'waveUp' || pose === 'waveOut'
+      const bob = sitting ? Math.sin(this.t * 0.11 + m.slot * 1.7) * 0.3 : 0
+      // Up on the big wave in the spine, as big as the surfer beside them (it's the same face, up close).
+      const large = this.vertical && this.ph >= 32 && (pose === 'ride' || pose === 'crouch')
+      const suit = EXTRA_SUITS[m.slot % EXTRA_SUITS.length]!
+      const by = this.rider(pose, x, large, large ? 4 : 2.4, this.facing[m.slot]!, bob, suit, EXTRA_BOARDS[m.slot % EXTRA_BOARDS.length]!)
+      const top = Math.floor(by) - SPRITES[pose][large ? 1 : 0].length
+      this.crew.mark(m, Math.floor((x - 3) / 2), Math.floor(top / 2), 4, Math.ceil((by + 1) / 2) - Math.floor(top / 2), this.columns, this.rows)
+    }
+  }
+
+  agentMarks(): readonly AgentMark[] {
+    return this.level > 0 ? this.crew.marks : []
   }
 
   /** A nearly-full context: a red warning flag on a buoy. */
@@ -950,8 +1278,11 @@ export class Surf {
       q[1] = this.pc[k0 + 1]!
       q[2] = this.pc[k0 + pw]!
       q[3] = this.pc[k0 + pw + 1]!
+      const hd = this.head
+      const keep = hd[k0] ? 0 : hd[k0 + 1] ? 1 : hd[k0 + pw] ? 2 : hd[k0 + pw + 1] ? 3 : -1
+      if (keep >= 0) hd[k0] = hd[k0 + 1] = hd[k0 + pw] = hd[k0 + pw + 1] = 0
       const f = this.fit
-      fitQuad(q, f)
+      fitQuad(q, f, undefined, keep)
       if (f.spread === 0) {
         out.set(cell, 0x20, q[0]!, q[0]!)
         this.dominant[cell] = q[0]!

@@ -1,4 +1,4 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v147-slim-probes
 //
 // A colony ship on the same dials as the fire: the level is its speed. A
 // long ship like the Avalon holds steady (nose to the right in the band,
@@ -7,19 +7,46 @@
 // blades twisted round that spine, turning (the helix slides along the ship
 // and each blade brightens as it swings to face us, its windows showing,
 // and darkens as it passes behind). Ahead of the bow a deflector shield
-// arcs across the lane. Rocks drift in from ahead, strike the shield and
-// burn up: an orange-white flash where they hit, embers sprayed off the
-// shield that cool and fade, and a ripple of light running along it.
+// arcs across the lane, the ship small behind it. Now and then a rock drifts
+// in from ahead, strikes the shield and burns up: an orange-white flash
+// where it hits, embers sprayed off the shield that cool and fade, and a
+// ripple of light running along it.
 //
-// At 1 the stars barely move, a slow rock comes by now and then and the
-// shield is faint. As the level climbs the stars stretch into streaks and
-// the rocks come thicker and faster; by 10 the stars blur past, the plume
-// burns long and impacts keep the shield lit. Subagents light more of the
-// habitat windows; smoke dims the engine to gray, coughs puffs out behind
-// it, and leaves the shield flickering weakly; a nearly-full context turns
-// the shield a hard-glowing cyan and the stars a deep blue. While Claude waits on
-// the person the ship comes to a stop among still stars, breathing in sepia
-// (waiting.ts).
+// At 1 the stars barely move, a slow rock comes by once in a long while and
+// the shield is faint. As the level climbs the stars stretch into streaks
+// and the rocks come more often and faster; by 10 the stars blur past, the
+// plume burns long and a rock strikes every few seconds. Subagents light more of the
+// habitat windows, and each one flies a probe of its own (below); smoke
+// dims the engine to gray, coughs puffs out behind it, leaves the shield
+// flickering weakly and makes the probes' drives misfire gray; a
+// nearly-full context turns the shield a hard-glowing cyan and the stars a
+// deep blue. While Claude waits on the person the ship comes to a stop among
+// still stars, breathing in sepia (waiting.ts).
+//
+// The voyage goes on behind it all: long stretches of open stars (two to
+// five minutes), then a passage of two to four minutes, eased in and out, drawn
+// from the scene's seed. Sometimes a sun drifts by (a yellow, an orange or a
+// red one: a glowing disc as big as the band is tall, its corona fading out,
+// no stars through it), warming the ship's hull as it passes near; sometimes
+// a nebula fills the whole background, soft clouds shading between two
+// colors and drifting past. Their light is held to a few steps, so the frame
+// stays well within the Raster's pairs. Smoke turns the backdrop a gray
+// haze and a full context a deep blue, as strong as its light (the dark
+// between the clouds stays dark); stopped for the person, the passage holds
+// where it is, in sepia.
+//
+// Each subagent's probe is a little craft like the Hail Mary's Beetles, in its
+// own hull color with its own bright drive (crew.ts; four at most, two up by
+// the bow and two along the habitat, on the band's top and bottom rows or
+// either side of the spine): it's launched from a bay at the habitat's aft
+// hub (the hatch glowing in its drive's color as it slides out sideways from
+// behind the hull, then flies up to its station), holds station beside the
+// ship on a flickering burn while its agent works, cuts
+// its drive and falls back along the ship while it's quiet (a running light
+// blinking slowly; an amber beacon flashing, a light through the waiting
+// sepia, while it waits on you), and when its agent is done turns about and
+// burns away aft, off toward home; if it failed, its drive goes dead and it
+// tumbles away dark, out of the lane.
 //
 // Everything is placed in a flight frame (a = along the direction of
 // travel, c = across it, both in braille dots: square, two a cell across and
@@ -27,9 +54,11 @@
 // spine share every rule. The hull is a pixel layer folded into quadrant
 // glyphs; the bare spine, the shield, rocks and embers are braille dots.
 
+import type { AgentDial } from './agents'
 import { Cells, DEFAULT_COLOR, Rng, isTall } from './cells'
+import { Crew, smooth, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
-import { BRAILLE, clamp, fitQuad, g, hash1 as hash, mix, NEAR, QUAD, type QuadFit } from './pixels'
+import { BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, NEAR, noise2, QUAD, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
 import { hear, leadFrames, type SoundEvent } from './sound'
 import { easeWait, waitTone } from './waiting'
@@ -72,6 +101,73 @@ const C = {
   starBlue: [0x1c4f9c, 0x2d7fe0, 0x86c4ff] as const,
 }
 
+/** Probes for subagents, at most: the Beetles, four of them. */
+const PROBES = 4
+/** Each probe's hull and its drive's glow, by slot; and what every one shares. */
+const PROBE = {
+  hull: [0xf0903c, 0x36c4b0, 0xa47cff, 0xb4dc4c] as const,
+  drive: [0xffd27a, 0x8cf2ff, 0xf0b4ff, 0xe6ff8c] as const,
+  nozzle: 0x4e545c,
+  dead: 0x4a4d52,
+  light: 0xffffff,
+  beacon: 0xffb020,
+}
+
+/** A probe's pixel kinds: nozzle (its drive's glow trails from it), hull, the hull's lit side, nose. */
+const PK = { nozzle: 1, hull: 2, light: 3, nose: 4 } as const
+/**
+ * A probe's pixels as (along, across, kind) triples, nose toward +along,
+ * from a picture: the band's (pixels twice as tall as wide) drawn as it
+ * flies, rear on the left; the spine's nose up, rear at the bottom.
+ */
+function sprite(rows: readonly string[], tall: boolean): Int8Array {
+  const kinds: Record<string, number> = { Z: PK.nozzle, H: PK.hull, L: PK.light, N: PK.nose }
+  const out: number[] = []
+  rows.forEach((row, r) =>
+    [...row].forEach((ch, col) => {
+      if (kinds[ch]) out.push(tall ? 1 - r : col - 2, tall ? col - 2 : r - 1, kinds[ch]!)
+    }),
+  )
+  return Int8Array.from(out)
+}
+/** The band's probe: a slim craft, 2½ cells long, half a row tall (the band's rows are few). */
+const PROBE_WIDE = sprite(['.....', 'ZHLLN'], false)
+/** The spine's: two cells across, two rows tall, a rounded nose and its drive below. */
+const PROBE_TALL = sprite(['.NN.', 'HLLH', 'HHHH', '.ZZ.'], true)
+
+/** What the ship flies through: open stars, mostly; now and then a sun drifting by, or a nebula. */
+export type Passage = 'stars' | 'sun' | 'nebula'
+/** The voyage's pace, in frames at the ship's cruising speed (about 14 a second). */
+const VOYAGE = {
+  /** Open stars before the first passage, and between passages. */
+  first: [400, 1000],
+  gap: [1600, 4000],
+  /** How long a sun takes to drift by, and a nebula to pass. */
+  sun: [1300, 1900],
+  nebula: [1700, 2800],
+  /** The share of a passage spent fading in, and again fading out. */
+  fade: 0.25,
+} as const
+/** A passing sun's light by kind (a yellow star, an orange one, a red giant): corona, limb, core. */
+const SUNS = [
+  [0xd0782a, 0xffc860, 0xfff6dc],
+  [0xb85020, 0xff9a40, 0xffe2b0],
+  [0x8c2414, 0xf06a3a, 0xffc8a0],
+] as const
+/** A nebula's two colors (it shades between them) by kind: violet and rose, teal and blue, red and amber. */
+const NEBULAE = [
+  [0x4a1c6a, 0x6a1c48],
+  [0x0e4a58, 0x1c2c70],
+  [0x5a1810, 0x5a3a12],
+] as const
+/** Steps a backdrop's light is held to (its colors stay few: the Raster's 1024 pairs). */
+const BACK_STEPS = 16
+/** Under the smoke and blue tints the backdrop goes gray and dim, or deep blue. */
+const BACK_BLUE = 0x2858d0
+const BACK_SMOKE = 0x9c9ca0
+
+/** Chance a frame of a rock coming in, at level 1 and at 10. */
+const ROCK_RATE = [0.0009, 0.028] as const
 /** Rock radii in dots, smallest first. */
 const ROCK_R = [2.2, 3.8, 6.2] as const
 /** Draw order when a braille cell holds two things: the higher wins its color. */
@@ -91,8 +187,12 @@ type Mote = { a: number; c: number; va: number; vc: number; life: number; max: n
 /** A strike on the shield: where, how long ago, and how big the rock was. */
 type Hit = { a: number; c: number; age: number; size: number }
 
-/** The ship and its shield, scaled from their original size. */
-const SHIP_SCALE = 0.9
+/** The ship, scaled from its original size: small against its shield. */
+const SHIP_SCALE = 0.65
+/** The shield (and where the ship's nose stands behind it), scaled from its original size. */
+const SHIELD_SCALE = 0.9
+/** The ship's proportions that scale with it (its bow, its habitat's ends) from the original. */
+const SHRINK = SHIP_SCALE / SHIELD_SCALE
 
 /** The ship's layout in the flight frame (dots), fixed per grid size. */
 type Geo = {
@@ -115,6 +215,8 @@ type Geo = {
 export class Colony {
   strength = 8
   coverageBoost = 0
+  /** The subagents, one by one: each flies a probe. */
+  agents: readonly AgentDial[] = []
   sounds: SoundEvent[] = []
   tint: Tint = 'normal'
   /** Claude waits on the person: the ship comes to a stop. */
@@ -153,10 +255,49 @@ export class Colony {
   private spin = 0
   private q = [0, 0, 0, 0]
   private fit: QuadFit = { mask: 0, fg: 0, bg: 0, spread: 0 }
+  /** (A probe takes a while to launch: out of its bay, then up to its station.) */
+  private crew = new Crew(PROBES, 34)
+  // The probes' pixel layer, 2 × 2 a cell (0 = none), the pixel each cell must keep, and the cells it touches.
+  private probePx = new Int32Array(0)
+  private probeKeep = new Int8Array(0)
+  private probeCells = new Int32Array(0)
+  private probeCount = 0
+  /** Per cell: a light that shines through the waiting sepia (a probe's beacon); -1 none. */
+  private lamps = new Int32Array(0)
+  /** The bay's hatch, lit as a probe slides out: how brightly (0..1), and in its drive's color. */
+  private bayGlow = 0
+  private bayColor = 0
+  // The voyage: which passage, how far through it (0..1), how long it lasts (frames), the stars before the
+  // next one, and the passage's own draw (its kind, where it crosses, its size, its noise's seed).
+  private voyage: Rng
+  private passage: Passage = 'stars'
+  private passageAt = 0
+  private passageLen = 1
+  private gapLeft = 0
+  private pick = 0
+  private across = 0.5
+  private size = 1
+  private nebulaSeed = 0
+  /** How far the nebula has drifted past (cells). */
+  private drift = 0
+  /** The backdrop, per cell: a glyph over it (0: none; a sun's edge), its color, and the color behind. */
+  private backGlyph = new Int32Array(0)
+  private backFg = new Int32Array(0)
+  private backBg = new Int32Array(0)
+  /** Cells a sun's disc fills: no star shows through it. */
+  private backHide = new Uint8Array(0)
+  private backOn = false
+  /** A near sun's warm light on the ship and the probes (0..1, in steps). */
+  private sunLight = 0
+  /** A probe's station, worked out by `station`. */
+  private sa = 0
+  private sc = 0
 
   constructor(seed?: number) {
     this.rng = new Rng(seed)
     this.seedBase = (seed ?? this.rng.int()) % 100_000
+    this.voyage = new Rng(this.seedBase * 7919 + 17)
+    this.gapLeft = this.between(VOYAGE.first)
   }
 
   /** Tall grids (the spine) fly nose-up with the stars streaming down. */
@@ -179,11 +320,23 @@ export class Colony {
     this.puff = new Int32Array(n)
     this.puffColor = new Int32Array(n)
     this.solid = new Uint8Array(n)
+    this.probePx = new Int32Array(n * 4)
+    this.probeKeep = new Int8Array(n).fill(-1)
+    this.probeCells = new Int32Array(n)
+    this.probeCount = 0
+    this.lamps = new Int32Array(n).fill(-1)
+    this.backGlyph = new Int32Array(n)
+    this.backFg = new Int32Array(n)
+    this.backBg = new Int32Array(n)
+    this.backHide = new Uint8Array(n)
     this.rocks = []
     this.embers = []
     this.smoke = []
     this.hits = []
     this.geo = this.layout()
+    // Every probe fits beside the ship in both layouts. Placed afresh for this one.
+    this.crew.room = PROBES
+    for (const m of this.crew.mates) m.x = m.y = Number.NaN
     // u runs along the direction of travel, v across it; both in cells.
     const along = this.isVertical ? rows : columns
     const across = this.isVertical ? columns : rows
@@ -206,15 +359,16 @@ export class Colony {
     // The shield holds its place; the ship stands well back from it, small
     // against it (the shield spans the whole frame across).
     const aV = Math.round(A * (v ? 0.52 : 0.45)) + (v ? 7 : 8)
-    const aN = aV - Math.round((v ? 18 : 22) * SHIP_SCALE)
+    const aN = aV - Math.round((v ? 18 : 22) * SHIELD_SCALE)
     const Ls = Math.round(SHIP_SCALE * (v ? A * 0.25 : clamp(A * 0.22, 22, 66)))
     const E = Math.round((v ? 5 : 4) * SHIP_SCALE)
     const h0 = E + Math.round(Ls * 0.1)
-    const b0 = Ls - Math.max(6, Math.round(Ls * 0.11))
-    const h1 = b0 - Math.max(4, Math.round(Ls * 0.07))
-    const R = SHIP_SCALE * (v ? Math.min(Cd * 0.19, 8) : Cd * 0.22)
-    // The shield spans a fixed width beside the ship, however wide the frame.
-    const sw = Math.min(Cd / 2, R * 2.6)
+    const b0 = Ls - Math.max(Math.round(6 * SHRINK), Math.round(Ls * 0.11))
+    const h1 = b0 - Math.max(Math.round(4 * SHRINK), Math.round(Ls * 0.07))
+    const radius = (scale: number) => scale * (v ? Math.min(Cd * 0.19, 8) : Cd * 0.22)
+    const R = radius(SHIP_SCALE)
+    // The shield spans a fixed width beside the ship, however wide the frame (its size, not the ship's).
+    const sw = Math.min(Cd / 2, radius(SHIELD_SCALE) * 2.6)
     return {
       A,
       Cd,
@@ -226,11 +380,11 @@ export class Colony {
       h1,
       b0,
       R,
-      hw: (v ? 2.5 : 2) * SHIP_SCALE,
+      hw: Math.max(2, (v ? 2.5 : 2) * SHIP_SCALE),
       aV,
       sw,
       // How far the arc bends back at its ends: about 2 rows in the spine, 2-3 cells in the band.
-      Rc: (sw * sw) / (2 * (v ? 9 : 6) * SHIP_SCALE),
+      Rc: (sw * sw) / (2 * (v ? 9 : 6) * SHIELD_SCALE),
     }
   }
 
@@ -260,6 +414,7 @@ export class Colony {
     this.level += Math.abs(want - this.level) < 0.01 ? want - this.level : (want - this.level) * 0.05
     const speed = this.speed
     const along = this.isVertical ? this.rows : this.columns
+    this.crew.update(this.agents, this.coverageBoost)
     // Stars stream past the ship: leftward in the band (it flies right),
     // downward in the spine (it flies up).
     const dir = this.isVertical ? 1 : -1
@@ -268,6 +423,7 @@ export class Colony {
       if (s.u < 0) s.u += along
       if (s.u >= along) s.u -= along
     }
+    this.stepVoyage(speed)
     if (this.columns === 0 || this.rows === 0) return
     // The habitat turns at its own steady pace, whatever the speed.
     this.spin = (this.spin + 0.022) % TAU
@@ -275,6 +431,232 @@ export class Colony {
     this.hits = this.hits.filter(hit => hit.age < RIPPLE)
     this.stepRocks()
     this.stepMotes()
+    this.stepProbes()
+  }
+
+  agentMarks(): readonly AgentMark[] {
+    return this.strength > 0 ? this.crew.marks : []
+  }
+
+  /** A whole number of frames drawn from `[lo, hi]`. */
+  private between(range: readonly [number, number]): number {
+    return Math.round(range[0] + this.voyage.f() * (range[1] - range[0]))
+  }
+
+  /**
+   * The voyage goes on: long stretches of open stars, then a passage (a sun
+   * drifting by, or a nebula) that takes a minute or two, then stars again.
+   * It keeps the ship's pace: slower when it cruises slow, held while it's
+   * stopped for the person.
+   */
+  private stepVoyage(speed: number): void {
+    const l = clamp(this.level, 0, 10)
+    const pace = l < 0.5 ? 0 : (0.35 + 0.65 * clamp(l / 6)) * (1 - this.kWait)
+    this.drift += speed * 0.15
+    if (this.passage === 'stars') {
+      this.gapLeft -= pace
+      if (this.gapLeft <= 0) this.voyageTo(this.voyage.f() < 0.45 ? 'sun' : 'nebula', 0, this.voyage.int())
+      return
+    }
+    this.passageAt += pace / this.passageLen
+    if (this.passageAt >= 1) this.voyageTo('stars', 0, this.voyage.int())
+  }
+
+  /**
+   * Set the voyage to a passage `at` (0..1) of the way through, its draw
+   * from `draw` (a sun's kind, where it crosses and its size; a nebula's
+   * colors and clouds). The voyage does this itself; previews and checks
+   * call it to see each backdrop.
+   */
+  voyageTo(passage: Passage, at = 0.5, draw = 0): void {
+    const u = (k: number) => hash(draw * 31 + k)
+    this.passage = passage
+    this.passageAt = clamp(at)
+    if (passage === 'stars') {
+      this.gapLeft = this.between(VOYAGE.gap)
+      return
+    }
+    this.pick = Math.floor(u(1) * (passage === 'sun' ? SUNS.length : NEBULAE.length))
+    this.passageLen = Math.round(VOYAGE[passage][0] + u(2) * (VOYAGE[passage][1] - VOYAGE[passage][0]))
+    this.across = 0.12 + u(3) * 0.76
+    this.size = 0.8 + u(4) * 0.45
+    this.nebulaSeed = Math.floor(u(5) * 10_000)
+  }
+
+  /** How strongly the passage shows now (0..1): eased in at its start and out at its end. */
+  private get passageK(): number {
+    if (this.passage === 'stars') return 0
+    const f = VOYAGE.fade
+    return smooth(clamp(this.passageAt / f)) * smooth(clamp((1 - this.passageAt) / f))
+  }
+
+  /**
+   * A backdrop color, `v` (0..1) its light, as the tint has it: a gray haze
+   * for smoke, a deep blue for a full context; each as strong as the light
+   * there, so the dark between the clouds stays dark.
+   */
+  private backTint(c: number, v: number): number {
+    if (this.tint === 'smoke') return mix(grey(c, 1), mix(0, BACK_SMOKE, v * 2.5), 0.55)
+    if (this.tint === 'blue') return mix(c, mix(0, BACK_BLUE, v * 2.5), 0.65)
+    return c
+  }
+
+  /**
+   * The backdrop for this frame, into `back*`: a sun drifting by (a glowing
+   * disc, its edge in quadrant pixels, its corona fading out) or a nebula's
+   * soft clouds over the whole frame, its light held to `BACK_STEPS` steps.
+   */
+  private drawBackdrop(): void {
+    const k = this.passageK
+    this.sunLight = 0
+    this.backOn = k > 0.02
+    if (!this.backOn) return
+    this.backGlyph.fill(0)
+    this.backFg.fill(DEFAULT_COLOR)
+    this.backBg.fill(DEFAULT_COLOR)
+    this.backHide.fill(0)
+    if (this.passage === 'sun') this.drawSun(k)
+    else this.drawNebula(k)
+  }
+
+  /** The light at `v` (0..1) of a sun's: corona, limb, core; black below. */
+  private sunColor(v: number): number {
+    const ramp = SUNS[this.pick]!
+    const x = Math.round(clamp(v) * BACK_STEPS) / BACK_STEPS
+    if (x <= 0) return 0
+    const c = x < 0.6 ? mix(0, ramp[0], x / 0.6) : x < 0.8 ? mix(ramp[0], ramp[1], (x - 0.6) / 0.2) : mix(ramp[1], ramp[2], (x - 0.8) / 0.2)
+    return this.backTint(c, x)
+  }
+
+  /** A sun drifting by: it comes in ahead, passes beside the ship and goes out behind, `k` its fade. */
+  private drawSun(k: number): void {
+    const { A, Cd } = this.geo
+    const v = this.isVertical
+    const w = this.columns
+    const h = this.rows
+    // Its disc: as big as the band is tall, a third or so of the spine's width.
+    const rc = this.size * (v ? Math.min(10, Cd * 0.22) : Cd * 0.5)
+    const ro = rc * 2.8
+    const sa = A + ro - this.passageAt * (A + 2 * ro)
+    const sc = this.across * Cd
+    const X = v ? sc : sa
+    const Y = v ? h * 4 - sa : sc
+    // Cells within the corona.
+    const c0 = Math.max(0, Math.floor((X - ro) / 2))
+    const c1 = Math.min(w - 1, Math.floor((X + ro) / 2))
+    const r0 = Math.max(0, Math.floor((Y - ro) / 4))
+    const r1 = Math.min(h - 1, Math.floor((Y + ro) / 4))
+    const q = this.q
+    const f = this.fit
+    for (let row = r0; row <= r1; row++)
+      for (let col = c0; col <= c1; col++) {
+        let core = 0
+        for (let p = 0; p < 4; p++) {
+          // Each quadrant pixel's center in dots.
+          const dx = col * 2 + (p & 1) + 0.5 - X
+          const dy = row * 4 + (p & 2 ? 3 : 1) - Y
+          const d = Math.sqrt(dx * dx + dy * dy)
+          let light = 0
+          if (d < rc) {
+            core++
+            light = 0.8 + 0.2 * (1 - (d / rc) * (d / rc)) // brightest at its middle, the limb a little darker
+          } else if (d < ro) {
+            const g = (ro - d) / (ro - rc)
+            light = 0.62 * g * g
+          }
+          q[p] = this.sunColor(light * k)
+        }
+        const cell = row * w + col
+        if (core === 4) this.backHide[cell] = 1
+        fitQuad(q, f, NEAR)
+        if (f.spread === 0) {
+          this.backBg[cell] = q[0] === 0 ? DEFAULT_COLOR : q[0]!
+          continue
+        }
+        // The disc's edge: the brighter side as the glyph, over the corona.
+        this.backGlyph[cell] = QUAD[f.mask]!
+        this.backFg[cell] = f.fg === 0 ? DEFAULT_COLOR : f.fg
+        this.backBg[cell] = f.bg === 0 ? DEFAULT_COLOR : f.bg
+        if (f.fg === 0) {
+          this.backGlyph[cell] = QUAD[f.mask ^ 15]!
+          this.backFg[cell] = f.bg
+          this.backBg[cell] = DEFAULT_COLOR
+        }
+      }
+    // Its light on the ship, as near as it passes.
+    const ship = (this.geo.aS + this.geo.aN) / 2
+    const near = clamp(1 - Math.hypot(sa - ship, sc - this.geo.c0) / (ro * 2.2))
+    this.sunLight = Math.round(k * near * 4) / 4
+  }
+
+  /** A nebula: two octaves of soft clouds over the whole frame, shading between its two colors, drifting past. */
+  private drawNebula(k: number): void {
+    const v = this.isVertical
+    const w = this.columns
+    const h = this.rows
+    const [ca, cb] = NEBULAE[this.pick]!
+    const seed = this.nebulaSeed
+    const drift = this.drift
+    for (let row = 0; row < h; row++)
+      for (let col = 0; col < w; col++) {
+        // Cells are twice as tall as wide: rows count double. The clouds drift the way the stars do.
+        const x = v ? col : col + drift
+        const y = v ? row * 2 - drift : row * 2
+        const n = 0.65 * noise2(x / 11, y / 7, seed) + 0.35 * noise2(x / 4.5, y / 3, seed + 1)
+        const dense = clamp((n - 0.28) / 0.5)
+        const light = Math.round(dense * dense * (3 - 2 * dense) * k * BACK_STEPS) / BACK_STEPS
+        if (light <= 0) continue
+        const hue = Math.round(noise2(x / 15, y / 9, seed + 2) * 3) / 3
+        this.backBg[row * w + col] = this.backTint(mix(0, mix(ca, cb, hue), light), light)
+      }
+  }
+
+  /** The backdrop behind everything drawn: where a cell left the terminal's own color, the backdrop's shows. */
+  private applyBackdrop(out: Cells): void {
+    if (!this.backOn) return
+    const n = this.columns * this.rows
+    for (let i = 0; i < n; i++) {
+      if (out.background(i) !== DEFAULT_COLOR) continue
+      const cp = out.codePoint(i)
+      if (cp === 0x20 && this.backGlyph[i]) out.set(i, this.backGlyph[i]!, this.backFg[i]!, this.backBg[i]!)
+      else if (this.backBg[i] !== DEFAULT_COLOR) out.set(i, cp, out.foreground(i), this.backBg[i]!)
+    }
+  }
+
+  /**
+   * Where a probe holds station (dots, into `sa`, `sc`): beside the ship, two
+   * up by the bow and two along the habitat, on the band's top and bottom
+   * rows or either side of the spine. Resting, drive off, it has fallen back
+   * along the ship (and, in the spine, out a little).
+   */
+  private station(m: Mate): void {
+    const { aS, aN, c0, Cd, R } = this.geo
+    const v = this.isVertical
+    const side = m.slot & 1 ? 1 : -1
+    const a = m.slot < 2 ? aN + (v ? 2 : 3) : aS + (aN - aS) * (v ? 0.32 : 0.4)
+    const c = v ? c0 + side * (R + 5) : side < 0 ? 2 : Cd - 2
+    const rest = 1 - m.busy
+    this.sa = a - (v ? 14 : 12) * rest
+    this.sc = clamp(c + (v ? side * 2 * rest : 0), 2, Cd - 2)
+  }
+
+  /** The probes ease toward their stations; the bay's hatch glows while one comes out of it. */
+  private stepProbes(): void {
+    this.bayGlow = 0
+    for (const m of this.crew.mates) {
+      this.station(m)
+      if (Number.isNaN(m.x)) {
+        m.x = this.sa
+        m.y = this.sc
+      } else {
+        m.x += (this.sa - m.x) * 0.05
+        m.y += (this.sc - m.y) * 0.05
+      }
+      if (!m.leaving && 1 - m.p > this.bayGlow) {
+        this.bayGlow = 1 - m.p
+        this.bayColor = PROBE.drive[m.slot % PROBES]!
+      }
+    }
   }
 
   /** Rocks: spawn at the leading edge (rarely at 1, every second or so at 10), drift in, burn up on the shield. */
@@ -284,7 +666,8 @@ export class Colony {
     const lo = Math.max(0, c0 - sw)
     const hi = Math.min(Cd, c0 + sw)
     const l = clamp(this.level, 0, 10)
-    const rate = l < 0.5 ? 0 : 0.0022 * Math.pow(0.075 / 0.0022, (l - 1) / 9)
+    // Rare: one now and then at 1, every two or three seconds at 10.
+    const rate = l < 0.5 ? 0 : ROCK_RATE[0] * Math.pow(ROCK_RATE[1] / ROCK_RATE[0], (l - 1) / 9)
     if (this.rng.f() < rate) {
       const pick = this.rng.f()
       const size = pick < 0.4 ? 2 : pick < 0.75 ? 1 : 0
@@ -371,7 +754,8 @@ export class Colony {
   private starColor(layer: number, fade: number): number {
     const ramp = this.tint === 'blue' ? C.starBlue : C.star
     const base = ramp[layer]!
-    const k = Math.max(0.15, Math.min(1, fade))
+    // (In eighths: few colors, so a backdrop behind them stays within the Raster's pairs.)
+    const k = Math.round(Math.max(0.15, Math.min(1, fade)) * 8) / 8
     const ch = (sh: number) => Math.round(((base >> sh) & 255) * k)
     return (ch(16) << 16) | (ch(8) << 8) | ch(0)
   }
@@ -390,6 +774,8 @@ export class Colony {
     const dir = vertical ? 1 : -1
     // The narrow spine gets shorter trails, or they fill the column.
     const maxTrail = along * (vertical ? 0.25 : 0.6)
+    this.drawBackdrop()
+    const hide = this.backOn && this.passage === 'sun' ? this.backHide : undefined
 
     // Stars, far layers first; a fast star smears into a trail behind it.
     for (let layer = 0; layer < LAYERS.length; layer++) {
@@ -399,10 +785,12 @@ export class Colony {
         const twinkle = level <= 2 ? 0.7 + 0.3 * Math.sin(this.t * 0.3 + s.tw) : 1
         const head = Math.floor(s.u)
         const glyph = trail < 0.6 ? (layer === 2 ? '*' : '·') : vertical ? '│' : '─'
-        out.set(at(head, s.v), g(glyph), this.starColor(layer, twinkle))
+        const cell = at(head, s.v)
+        if (!hide || !hide[cell]) out.set(cell, g(glyph), this.starColor(layer, twinkle))
         for (let k = 1; k <= Math.floor(trail); k++) {
           const u = (head - dir * k + along) % along // the trail lies behind the star's travel
-          out.set(at(u, s.v), g(vertical ? '│' : '─'), this.starColor(layer, (1 - k / (trail + 1)) * 0.8))
+          const ti = at(u, s.v)
+          if (!hide || !hide[ti]) out.set(ti, g(vertical ? '│' : '─'), this.starColor(layer, (1 - k / (trail + 1)) * 0.8))
         }
       }
     }
@@ -434,8 +822,12 @@ export class Colony {
       else if (bg !== DEFAULT_COLOR) out.set(i, out.codePoint(i), out.foreground(i), bg)
     }
     this.drawFlashes(out)
+    // The probes go behind the ship: one sliding out of its bay shows only as it clears the hull.
+    this.lamps.fill(-1)
+    this.drawProbes(out)
     this.drawShip(out, level)
-    waitTone(out, this.kWait, this.t)
+    this.applyBackdrop(out)
+    waitTone(out, this.kWait, this.t, undefined, this.lamps)
     return out
   }
 
@@ -639,7 +1031,8 @@ export class Colony {
       // Hubs at both ends of the habitat, where the blades meet the spine.
       if ((s < geo.h0 + 2 || s >= geo.h1 - 2) && ad < geo.R * 0.4) {
         px.kind = K.hull
-        px.color = C.hub
+        // The aft hub's bay: its hatch lit while a probe comes out.
+        px.color = s < geo.h0 + 2 && this.bayGlow > 0.05 ? mix(C.hub, this.bayColor, Math.ceil(this.bayGlow * 3) / 3) : C.hub
         return
       }
       const twist = (TAU * 0.55) / (geo.h1 - geo.h0)
@@ -707,7 +1100,6 @@ export class Colony {
     const y1 = Math.min(h - 1, Math.floor((vertical ? Hd - a0 : cHi) / 4))
     const px = { color: 0, kind: 0 }
     const q = this.q
-    const f = this.fit
     for (let row = y0; row <= y1; row++)
       for (let col = x0; col <= x1; col++) {
         const cell = row * w + col
@@ -734,21 +1126,7 @@ export class Colony {
         }
         if (hull) {
           for (let p = 0; p < 4; p++) q[p] = this.pk[cell * 4 + p] ? this.pc[cell * 4 + p]! : 0
-          fitQuad(q, f, NEAR, keep)
-          if (f.spread === 0) {
-            out.set(cell, 0x2588, q[0]!)
-            continue
-          }
-          let mask = f.mask
-          let fg = f.fg
-          let bg = f.bg
-          if (fg === 0) {
-            // The empty pixels are the background: the hull is the glyph.
-            mask ^= 15
-            fg = bg
-            bg = 0
-          }
-          out.set(cell, QUAD[mask]!, fg, bg === 0 ? DEFAULT_COLOR : bg)
+          this.putQuad(out, cell, keep)
         } else if (spine) {
           // An open truss: two rails and a zigzag between them.
           let bits = 0
@@ -768,6 +1146,168 @@ export class Colony {
           if (bits) out.set(cell, 0x2800 | bits, C.truss)
         }
       }
+  }
+
+  /** A cell's four pixels in `q` (0: none, the terminal's own color) folded into one quadrant glyph. */
+  private putQuad(out: Cells, cell: number, keep: number): void {
+    const q = this.q
+    const f = this.fit
+    fitQuad(q, f, NEAR, keep)
+    if (f.spread === 0) {
+      out.set(cell, 0x2588, this.sunLight > 0 ? mix(q[0]!, SUNS[this.pick]![1], this.sunLight * 0.3) : q[0]!)
+      return
+    }
+    let mask = f.mask
+    let fg = f.fg
+    let bg = f.bg
+    if (this.sunLight > 0) {
+      // A sun passing near: its warm light on the hull.
+      const warm = SUNS[this.pick]![1]
+      if (fg !== 0) fg = mix(fg, warm, this.sunLight * 0.3)
+      if (bg !== 0) bg = mix(bg, warm, this.sunLight * 0.3)
+    }
+    if (fg === 0) {
+      // The empty pixels are the background: the drawing is the glyph.
+      mask ^= 15
+      fg = bg
+      bg = 0
+    }
+    out.set(cell, QUAD[mask]!, fg, bg === 0 ? DEFAULT_COLOR : bg)
+  }
+
+  /**
+   * The probes, each where its state has it: sliding out of the bay as it
+   * arrives, on station or fallen back, turned for home and burning away
+   * aft when its agent is done, or tumbling off dark when it failed.
+   */
+  private drawProbes(out: Cells): void {
+    this.crew.clearMarks()
+    const mates = this.crew.mates
+    if (mates.length === 0) return
+    const geo = this.geo
+    const t = this.t
+    const bayA = geo.aS + geo.h0 + 1
+    for (const m of mates) {
+      if (Number.isNaN(m.x)) continue
+      const side = m.slot & 1 ? 1 : -1
+      const away = 1 - m.here
+      // Holding station it bobs a little on its burn; coasting, it drifts slowly to and fro.
+      const phase = m.seed * TAU
+      let a = m.x + Math.sin(t * 0.08 + phase) * 0.7 * m.busy + Math.sin(t * 0.025 + phase) * 1.5 * (1 - m.busy)
+      let c = m.y
+      let turn = 0
+      let drive = m.busy
+      let dead = false
+      if (!m.leaving) {
+        if (away > 0) {
+          // Launched: out of the bay sideways, clear of the habitat, then up to its station under its own drive.
+          a = bayA + (a - bayA) * smooth(clamp((m.p - 0.35) / 0.65))
+          c = geo.c0 + (c - geo.c0) * smooth(clamp(m.p / 0.55))
+          drive = Math.max(drive, 0.6)
+        }
+      } else if (m.ok) {
+        // Done: turned about for home, burning hard aft till it's out of sight.
+        turn = 2
+        drive = 1
+        a -= away * away * (a + 18)
+      } else {
+        // Failed: its drive dead, it tumbles out of the lane into the dark.
+        dead = true
+        drive = 0
+        turn = ((t + m.slot * 3) >> 2) & 3
+        a -= away * 18
+        c += away * (side < 0 ? -(c + 12) : geo.Cd + 12 - c)
+      }
+      this.stampProbe(m, a, c, turn, drive, dead)
+    }
+    // Fold what they painted into glyphs, and clear the layer for the next frame.
+    const q = this.q
+    for (let k = 0; k < this.probeCount; k++) {
+      const cell = this.probeCells[k]!
+      for (let p = 0; p < 4; p++) {
+        q[p] = this.probePx[cell * 4 + p]!
+        this.probePx[cell * 4 + p] = 0
+      }
+      this.putQuad(out, cell, this.probeKeep[cell]!)
+      this.probeKeep[cell] = -1
+    }
+    this.probeCount = 0
+  }
+
+  /**
+   * One probe, centered at (a, c) in dots, its nose along the flight (turned
+   * a quarter at a time by `turn`): its sprite for the layout, the drive's
+   * glow trailing behind its nozzle while lit.
+   */
+  private stampProbe(m: Mate, a: number, c: number, turn: number, drive: number, dead: boolean): void {
+    const v = this.isVertical
+    // Pixels are 2 a cell each way: the band's run along x with the flight, the spine's up.
+    const x0 = Math.round(v ? c : a)
+    const y0 = Math.round((v ? this.rows * 4 - a : c) / 2)
+    // The nose's way and across it, in pixels, turned.
+    let ux = v ? 0 : 1
+    let uy = v ? -1 : 0
+    for (let k = 0; k < turn; k++) {
+      const tx = ux
+      ux = -uy
+      uy = tx
+    }
+    const bx = -uy
+    const by = ux
+    const slot = m.slot % PROBES
+    const smoke = this.tint === 'smoke'
+    const flick = hash(this.seedBase + this.t * 7 + slot * 131)
+    // Smoke: its drive misfires and burns grey, like the ship's.
+    const lit = !dead && !(smoke && flick < 0.3) && drive > 0.3
+    const glow = smoke ? C.plumeSmoke[0] : PROBE.drive[slot]!
+    const hull = dead ? PROBE.dead : PROBE.hull[slot]!
+    const resting = !m.leaving && m.busy < 0.5
+    const beacon = resting && m.waiting && ((this.t + slot * 3) >> 2) % 2 === 0
+    const running = resting && !m.waiting && (this.t + slot * 9) % 30 < 3
+    const sprite = v ? PROBE_TALL : PROBE_WIDE
+    let minX = x0
+    let maxX = x0
+    let minY = y0
+    let maxY = y0
+    let noses = 0
+    for (let k = 0; k < sprite.length; k += 3) {
+      const i = sprite[k]!
+      const j = sprite[k + 1]!
+      const kind = sprite[k + 2]!
+      const x = x0 + i * ux + j * bx
+      const y = y0 + i * uy + j * by
+      minX = Math.min(minX, x)
+      maxX = Math.max(maxX, x)
+      minY = Math.min(minY, y)
+      maxY = Math.max(maxY, y)
+      if (kind === PK.nozzle) {
+        this.probePixel(x, y, lit ? mix(glow, 0xffffff, 0.6) : PROBE.nozzle, false)
+        if (!lit) continue
+        // The glow behind it: longer as it burns harder, flickering.
+        const len = m.leaving ? 3 + (flick > 0.5 ? 1 : 0) : drive > 0.8 ? 2 + (flick > 0.6 ? 1 : 0) : 1 + (flick > 0.7 ? 1 : 0)
+        for (let d = 1; d <= len; d++) {
+          if (d === len && len > 2 && j === 0) continue // a tapering tail
+          this.probePixel(x - d * ux, y - d * uy, d === 1 ? glow : mix(glow, 0, Math.min(0.8, (d - 1) * 0.35)), false)
+        }
+      } else if (kind === PK.hull) this.probePixel(x, y, hull, false)
+      else if (kind === PK.light) this.probePixel(x, y, dead ? hull : mix(hull, 0xffffff, 0.3), false)
+      else if (beacon) this.probePixel(x, y, PROBE.beacon, true, true)
+      else if (running && noses++ === 0) this.probePixel(x, y, PROBE.light, true)
+      else this.probePixel(x, y, dead ? hull : mix(hull, 0xffffff, 0.6), false)
+    }
+    this.crew.mark(m, minX >> 1, minY >> 1, (maxX >> 1) - (minX >> 1) + 1, (maxY >> 1) - (minY >> 1) + 1, this.columns, this.rows)
+  }
+
+  /** One of a probe's pixels; `keep`, it must survive its cell's fit; `lamp`, it shines through the waiting sepia. */
+  private probePixel(x: number, y: number, color: number, keep: boolean, lamp = false): void {
+    if (x < 0 || y < 0 || x >= this.columns * 2 || y >= this.rows * 2) return
+    const cell = (y >> 1) * this.columns + (x >> 1)
+    const k = cell * 4
+    const px = this.probePx
+    if (px[k] === 0 && px[k + 1] === 0 && px[k + 2] === 0 && px[k + 3] === 0) this.probeCells[this.probeCount++] = cell
+    px[k + (((y & 1) << 1) | (x & 1))] = color
+    if (keep) this.probeKeep[cell] = ((y & 1) << 1) | (x & 1)
+    if (lamp) this.lamps[cell] = color
   }
 
   /** Whether a cell's center lies inside the ship's silhouette (the habitat as a solid drum). */

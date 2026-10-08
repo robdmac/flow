@@ -59,7 +59,7 @@ Every scene has a level from 0 (off) to 10 (as busy as it gets).
 |---|---|---|
 | `fire` | a low glow of embers | a roaring fire throwing sparks |
 | `warp` | stars drifting past | hyperspace streaks |
-| `avalon` | a colony ship among still stars, its habitat turning, the odd rock burning up on its shield | stars streaking past, rocks flaring on the shield every second |
+| `avalon` | a colony ship among still stars, its habitat turning, now and then a rock burning up on its shield; every few minutes it passes a sun or flies through a nebula | stars streaking past, a rock flaring on the shield every few seconds |
 | `balloon` | a hot-air balloon on the grass | up through the clouds to the edge of space |
 | `engine` | a steampunk engine standing still | cogs, belts and pistons at full speed |
 | `falcon`, `starship` | the rocket on its pad | climbing through the sky (2–7), separating at about 7, the upper stage in orbit (8–10); as it stages the screen splits, one side following the booster back down (falcon's lands on its legs, starship's is caught by the tower's arms), the other staying with the upper stage; brought home, falcon's Dragon capsule comes down under parachutes to a splashdown and the view slides back to the pad, and starship's Ship splashes down at sea and is carried back for the arms to lift on |
@@ -85,7 +85,7 @@ Balloon, falcon, starship, surf, ski and train also have a **night** version: st
 | editing files | pushes higher, scaled by the lines written |
 | running commands | sparks; a slow command keeps it ticking over |
 | reading or searching, or using any other tool (an MCP server's too) | a small spark each |
-| running subagents | busier with each one (with diminishing returns); some scenes add company: more balloons, surfers or skiers, a wider fire, more lights on the launch tower, trains running alongside |
+| running subagents | busier with each one (with diminishing returns), and each one gets a companion of its own (see below); the rest add company: more stars, more lit windows, more streams of bubbles, more lights on the launch tower |
 | hitting a failed command, or compacting | smoke for a moment: smoky flame tips, sooty steam, a grey sky, a wipeout, a rocket's plume sputtering grey, black smoke pouring from the train's diesel |
 | near a full context (≥85%) | blue: a blue-white flame, a storm, dusk on the slopes, a blue gas flame, rain driving past the train |
 | waiting on you: a permission to grant, its question, a plan to approve | settles to a calm 2 and holds, the whole scene turned a warm sepia that breathes slowly, about every 4 s: the fire banks to a bed of glowing coals, the stars stop, the colony ship comes to rest, the balloon hovers with its pilot light glowing, the engine runs down and lets off steam, a rocket holds its stage with amber lights up the tower, the surfer sits up waiting for a wave, the skier stops, the bubbles slow, the train draws up at a red signal or a platform, its headlight and the signal glowing with each breath. With sound on, a soft chime as the wait begins |
@@ -93,6 +93,23 @@ Balloon, falcon, starship, surf, ski and train also have a **night** version: st
 A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes several subagents editing in parallel, or a long turn: it climbs a level every 30 s it keeps going.
 
 Waiting on you shows only while a dialog is actually up for you: a permission ask that auto mode's classifier settles by itself, or that a hook answers, isn't one. It ends when you answer (once the call is over, or as soon as a long command shows it's running). Like the tints, it shows in auto mode only, and only in the session that waits.
+
+### Subagents, one by one
+
+In fire, surf, ski, balloon, falcon, starship, engine, train and avalon, each running subagent has a companion of its own, in its own colors or its own place, so you can tell at a glance which are busy, which have gone quiet or are waiting on you, and when each finishes:
+
+| Scene | Arrives | Working | Quiet (nothing for 20 s) | Waiting on you (a permission dialog, its question) | Done |
+|---|---|---|---|---|---|
+| `fire` | the main fire narrows to make room and a small fire of its own kindles beside it, sparks catching (on alternate sides, a dark gap between each) | burns bright and lively, taller the busier the scene | dies down to low, glowing embers | its embers pulse a bright glow, quicker than the waiting fire's breath | burns out with a last puff of smoke and the gap closes, the main fire widening back (failed: snuffed out at once, in grey smoke) |
+| `surf` | paddles in from the edge | paddles hard, or rides a following wave; on a big swell, rides the big wave with the surfer | sits up on its board, bobbing | sits up waving an arm | paddles off out of sight |
+| `ski` | skis in from behind | carves S-turns, throwing spray | pulls over to the side, standing on its poles | waves a pole overhead | tucks and skis off ahead (failed: drops back) |
+| `balloon` | a small balloon in stripes of its own rises into view from below | flies high, bobbing on blasts of its burner | burner out, sinks low | its envelope blinks | climbs away off the top (failed: sinks away below) |
+| `falcon`, `starship` | a mini rocket (the same rocket, smaller) on a little launch site of its own beside the big one | flies the mission with the big one, a beat behind: lifts off, stages (its booster coming home beside the big one's: falcon's on its legs, starship's into its own tower's arms), keeps formation into orbit and comes home with it (Dragon under its own chutes; the Ship belly-first, carried home and stacked) | coasts, dropped back, a light blinking on its nose; on the ground it doesn't launch | an amber beacon flashes | fades as it pulls away ahead (failed: tumbles away in smoke) |
+| `engine` | its lamps on the bed plate warm up | a light runs along its lamps | its lamps glow low | its lamps flash together | its lamps fade out (failed: fading red) |
+| `train` | a short train of its own draws up alongside from out of sight | keeps pace on the next track, gaining and losing a little, headlamp lit | drops back a little, headlamp out | its cab flashes amber | falls back out of sight |
+| `avalon` | a probe launches from a bay on the ship's hull (the hatch glowing in its color) and flies up beside it | holds station by the ship on its own flickering drive | drive off, falls back along the ship, a running light blinking | an amber beacon flashes | turns about and burns away aft, off toward home (failed: drive dead, tumbles away dark) |
+
+A scene has room for a few (the fire 4 to 6 small fires across the band, 1 or 2 in the spine, surf 5, ski 4, balloon 4, the rockets 3 mini rockets (one of them behind the big launch site in the spine; 1 in a spine narrower than 19 columns), the engine 6 lamp groups, the train up to 4 trains, avalon 4 probes; fewer in the narrow spine or a narrow band: only as many as it shows whole); more wait for a place to come free. Warp and bubbles keep the plain company above: they're a stream of stars, a glass of anonymous bubbles, with nothing that stays put long enough to be someone. In the Claude desktop app, put the pointer over a companion to see its subagent's task, what it's doing and for how long.
 
 ## The command
 
@@ -138,7 +155,7 @@ Run `/flow off`, or `/flow idle dark` to stay in auto mode but show nothing whil
 
 ## pi
 
-The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's editor, drawn as 24-bit ANSI lines. It shares the scenes, the activity model and the `/flow` command with the Claude Code version. pi has no side panes, so there is no spine there, and no built-in subagents. pi's events drive it:
+The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's editor, drawn as 24-bit ANSI lines. It shares the scenes, the activity model and the `/flow` command with the Claude Code version. pi has no side panes, so there is no spine there, and no built-in subagents (so no companions). pi's events drive it:
 
 | pi event | The scene |
 |---|---|
@@ -150,7 +167,7 @@ The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's edito
 | `session_compact` | so does a compaction |
 | `ctx.getContextUsage()` | a nearly-full context shows as blue |
 
-pi tells an extension nothing of a wait on you, so there the scenes never show one.
+pi tells an extension nothing of a wait on you, so there the scenes never show one. Nor has it a player, so the scenes are silent there: `/flow sound` says so.
 
 As in Claude Code, each session keeps its own settings, kept in the session itself (an entry the model never sees), so resuming or forking it brings them back. `~/.pi/agent/flow.json` holds the defaults new sessions start with; `/flow save` writes it. To try it without installing: `pi --extension ./pi/index.ts`.
 

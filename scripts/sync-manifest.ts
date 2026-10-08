@@ -1,9 +1,9 @@
-// REVISION: flow-v81-scene-defs
+// REVISION: flow-v150-review-fixes
 //
 // Writes the scene list into .claude-plugin/plugin.json from SCENES
 // (hooks/styles.ts): the `style` options and description, and the `time`
 // description's night scenes. plugin.json has to be literal JSON, so this
-// copies; a test fails when the two drift. Not part of the mod (Node).
+// copies; `npm run check` fails when the two drift. Not part of the mod (Node).
 //
 //   npm run sync
 

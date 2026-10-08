@@ -1,4 +1,4 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v151-manual-company
 //
 // What every harness adapter (Claude Code's register.tsx, pi's pi/index.ts)
 // does the same way: one scene instance per style (so a switch resumes where
@@ -20,6 +20,8 @@ export class SceneDriver {
   private readonly scenes = new Map<SceneName, Scene>()
   /** The local time, which the adapter keeps current (noon until it first reads the clock). */
   clock: Clock = { hour: 12, minute: 0 }
+  /** Called with each scene as it's built (the adapter resumes the balloon's altitude there). */
+  onMake?: (style: SceneName, scene: Scene) => void
 
   constructor(
     readonly cfg: FlowConfig,
@@ -34,8 +36,16 @@ export class SceneDriver {
   /** The one instance of a style, built on first use. */
   sceneFor(style: SceneName): Scene {
     let f = this.scenes.get(style)
-    if (!f) this.scenes.set(style, (f = makeScene(style)))
+    if (!f) {
+      this.scenes.set(style, (f = makeScene(style)))
+      this.onMake?.(style, f)
+    }
     return f
+  }
+
+  /** The instance of a style if it's been built, without building it. */
+  built(style: SceneName): Scene | undefined {
+    return this.scenes.get(style)
   }
 
   /** Apply settings changes here at once (the caller saves and redraws). */
@@ -78,7 +88,10 @@ export class SceneDriver {
   dial(): Scene {
     const f = this.scene
     f.strength = this.level()
-    f.coverageBoost = this.cfg.mode === 'auto' ? this.activity.coverageBoost : 0
+    // The subagents show in manual too: holding a level holds how busy it looks, not who's about.
+    f.coverageBoost = this.activity.coverageBoost
+    // Each subagent on its own, for the scenes that give each a companion.
+    f.agents = this.activity.roster.dials()
     f.tint = this.tint()
     f.night = this.isNight()
     f.waiting = this.waiting()

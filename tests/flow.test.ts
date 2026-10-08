@@ -1,4 +1,4 @@
-// REVISION: flow-v135-someone-there
+// REVISION: flow-v160-mini-rockets
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -26,6 +26,8 @@ import { BREATH_FRAMES, breath, easeWait, waitTone } from '../hooks/waiting'
 import { SOUND_FILES } from '../hooks/sound-files'
 import { PixelScene, type Dials, type Painter } from '../hooks/pixel-scene'
 import { hotkeyFor, labelWidth, PICK_LEVEL, pickLayout, pickRows, sceneOfKey, Thumbnails } from '../hooks/picker'
+import { agentLine, DONE_MS, QUIET_MS, Roster, runTime } from '../hooks/agents'
+import { Crew, type AgentMark } from '../hooks/crew'
 
 const BAND = {
   component: 'AbovePrompt',
@@ -60,6 +62,8 @@ type Captured = {
   toasts?: string[]
   /** What `$.ui.log` was given, and where to. */
   logs?: { text: string; to?: string }[]
+  /** Set: every blit is refused with it (the band is no longer mounted there). */
+  blitDeny?: string
   /** The session's id, as `$.session.id()` answers it (change it to move the process to another session). */
   session?: string
   /**
@@ -116,7 +120,7 @@ function engine(
   on('ui.blit', (_, e) => {
     captured.blits.push(e.requestId)
     ;(captured.blitKeys ??= []).push(`${e.requestId}/${e.key}`)
-    return { value: {} }
+    return { value: captured.blitDeny ? { deny: captured.blitDeny } : {} }
   })
   on('config.set', (_, e) => {
     captured.config.push([e.key, e.value])
@@ -447,6 +451,39 @@ test("a turn's 30 s clock stops while it waits on the person (a permission, a qu
   expect(h.isWaiting).toBe(false)
 })
 
+test("a turn's clock goes on while a subagent's ask is with the mode's decider; a dialog up for the person (any loop's) stops it", async () => {
+  const h = new Activity()
+  h.roster.listed([{ id: 'agent-1', status: 'running', type: 'Explore', description: 'look around' }])
+  h.turnStarted()
+  const run = (seconds: number) => {
+    for (let i = 0; i < Math.round(seconds / 0.07); i++) h.tick()
+  }
+  h.waitingOn('sub', false, 'Bash', 'agent-1') // auto mode's classifier deciding a subagent's ask
+  expect(h.isWaiting).toBe(false)
+  run(31)
+  expect(h.turnBoost).toBe(1)
+  h.prompted('Bash', 'agent-1') // its dialog is up: the person is asked, the whole session waits on them
+  expect(h.isWaiting).toBe(true)
+  run(60)
+  expect(h.turnBoost).toBe(1)
+  h.answered('sub', 'Bash', 'agent-1')
+  h.waitingOn('main', false, 'Bash') // the main loop's own ask, still with the decider: its turn is held up
+  expect(h.isWaiting).toBe(true)
+})
+
+test("the main turn ending forgets only its own waits: a subagent's dialog still up keeps waiting on you", async () => {
+  const h = new Activity()
+  h.roster.listed([{ id: 'bg', status: 'running', type: 'Explore', description: 'in the background' }])
+  h.turnStarted()
+  h.waitingOn('main', true, 'AskUserQuestion')
+  h.waitingOn('sub', true, 'AskUserQuestion', 'bg')
+  h.turnEnded()
+  expect(h.isAwaitingPerson).toBe(true)
+  expect(h.roster.dials()[0]!.state).toBe('waiting')
+  h.answered('sub', 'AskUserQuestion', 'bg')
+  expect(h.isAwaitingPerson).toBe(false)
+})
+
 test("a subagent's model step never moves the main turn's effort floor", async () => {
   const h = new Activity()
   h.turnStarted()
@@ -560,7 +597,13 @@ test('/flow says how to undo, and names tints in words', async () => {
   expect(statusText(cfg, 4, 'blue', { hour: 12, minute: 0 })).toContain('context nearly full')
   expect(statusText(cfg, 4, 'normal', { hour: 12, minute: 0 })).toContain('/flow help')
   expect(helpText()).toContain('band | spine')
-  expect(helpText("pi's", false)).not.toContain('spine')
+  expect(helpText("pi's", { panes: false, sound: false })).not.toContain('spine')
+  // pi has no player: neither the help nor the status speaks of sound there.
+  expect(helpText()).toContain('/flow sound')
+  expect(helpText("pi's", { panes: false, sound: false })).not.toContain('sound')
+  const loud = readConfig({ sound: 'on' })
+  expect(statusText(loud, 4, 'normal', { hour: 12, minute: 0 })).toContain('sound on')
+  expect(statusText(loud, 4, 'normal', { hour: 12, minute: 0 }, undefined, { panes: false, sound: false })).not.toContain('sound')
 })
 
 test('surf and ski: night darkens the sky, with stars or a moon in it', async () => {
@@ -858,6 +901,45 @@ test('soundscapes: a bed never has more than two takes going, leaving the player
     expect(most).toBeLessThanOrEqual(2)
     expect(MAX_PLAYS - most).toBeGreaterThanOrEqual(2)
   }
+  // Silent just after a take renewed (the one before still fading out), back at once, then a new mood: every
+  // take is stopped with the silence, so the bed still never holds more than two.
+  const takes: (BedTake | undefined)[] = []
+  const live = new Map<number, number>()
+  const roaring = { scene: 'falcon', level: 5, tint: 'normal' as const, night: false, amb: { roar: 1 } }
+  let seed = 1
+  let most = 0
+  let renewed = -1
+  let silent = -1
+  for (let ms = 0; ms < 40_000; ms += 70) {
+    const quiet = silent >= 0 && ms < silent + 140
+    const amb = quiet ? {} : silent >= 0 && ms >= silent + 3500 ? { roar: 1, wind: 1 } : roaring.amb
+    const level = silent >= 0 && ms >= silent + 3500 ? 10 : 5
+    const { play, stop } = bedStep(takes, { ...roaring, level, amb }, ms, seed++)
+    for (const id of stop) if (live.has(id)) live.set(id, Math.min(live.get(id)!, ms + 100))
+    for (const p of play) {
+      live.set(p.id, ms + BED_MS + PLAYER_DRAIN_MS)
+      if (ms > 0 && renewed < 0) renewed = ms
+    }
+    if (renewed >= 0 && silent < 0 && ms >= renewed + 500) silent = ms
+    for (const [id, end] of live) if (end <= ms) live.delete(id)
+    most = Math.max(most, live.size)
+  }
+  expect(silent).toBeGreaterThan(0)
+  expect(most).toBeLessThanOrEqual(2)
+})
+
+test('soundscapes: a bed take the player refuses for good is replaced at once, not left silent till it would renew', { options: { mode: 'manual', level: 5, sound: 'on' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  let refusals = 5
+  const seen = engine(on, undefined, asset => asset.includes('/bed-') && refusals-- > 0)
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const beds = () => (seen.played ?? []).filter(p => p.asset?.includes('/bed-')).length
+  await clock.advance(2000)
+  // Tried five times (refused), then a fresh take, well before the ~10 s a take lasts before it renews.
+  expect(beds()).toBe(6)
+  await ui.unmount()
 })
 
 test('soundscapes: a scene holds only a few events for the adapter, so one that never takes them (pi) stays bounded', () => {
@@ -897,7 +979,11 @@ test('soundscapes: every scene has a bed for every mood, every clip it and the e
   const files = new Set(SOUND_FILES)
   const ambs = [{}, { roar: 1, vent: 1, wind: 1, space: 0, burner: 1, swell: 1, curl: 1 }, { roar: 1, space: 1 }, { wind: 0.5 }, { sea: 1 }]
   for (const scene of STYLES) {
-    expect(LAYERS[scene]).toBeDefined()
+    // A scene without layers is silent (a new one, till it's given a soundscape): no moods either.
+    if (!LAYERS[scene]) {
+      expect(MOODS[scene]).toBeUndefined()
+      continue
+    }
     expect(MOODS[scene]).toBeDefined()
     let heard = 0
     for (let level = 0; level <= 10; level++)
@@ -906,8 +992,8 @@ test('soundscapes: every scene has a bed for every mood, every clip it and the e
           for (const p of bedPlays({ scene, level, tint: 'normal', night: false, amb }, seed) ?? []) {
             heard++
             expect(files.has(p.asset)).toBe(true)
-            // Clips peak at -2 to -3 dBFS and afplay's gain multiplies: past ~1.4 it clips.
-            expect(p.gain).toBeLessThanOrEqual(1.4)
+            // Clips peak at -2 to -3 dBFS and afplay's gain multiplies: past MAX_GAIN it clips.
+            expect(p.gain).toBeLessThanOrEqual(MAX_GAIN)
           }
     expect(heard).toBeGreaterThan(0)
   }
@@ -2085,7 +2171,7 @@ test('sessions: the pure parts (differences, a move to another session, pruning,
   expect(parseFlowArgs('default').kind).toBe('error')
   expect(changesFor(parseFlowArgs('save'), cfg)).toBeUndefined()
   expect(helpText()).toContain('/flow save')
-  expect(helpText("pi's", false)).toContain('/flow reset')
+  expect(helpText("pi's", { panes: false, sound: false })).toContain('/flow reset')
 })
 
 test('pi: a session\'s own settings are its latest flow entry on the branch', () => {
@@ -2429,7 +2515,7 @@ test('waiting on the person: a question shows at once; a permission ask only onc
   expect(h.isAwaitingPerson).toBe(false)
 })
 
-test("waiting on the person: a dialog takes its own loop's ask first, and one seen with no ask before it lasts till a call of its tool ends", () => {
+test("waiting on the person: a dialog takes its own loop's ask, never another's, and one seen with no ask before it lasts till a call of its tool in its loop ends", () => {
   const h = new Activity()
   h.turnStarted()
   h.waitingOn('main', false, 'Bash')
@@ -2443,6 +2529,24 @@ test("waiting on the person: a dialog takes its own loop's ask first, and one se
   expect(h.isAwaitingPerson).toBe(true)
   h.answered('toolu_9', 'WebFetch')
   expect(h.isAwaitingPerson).toBe(false)
+  // A dialog in a loop with no ask of its own isn't the main loop's ask: that one is still with the decider.
+  h.waitingOn('main2', false, 'Bash')
+  h.prompted('Bash', 'agent-2')
+  h.answered('toolu_x', 'Bash', 'agent-2') // a call of Bash in agent-2 ends: its dialog with it
+  expect(h.isAwaitingPerson).toBe(false)
+  // ...while a call of the tool in another loop ending leaves it up.
+  h.prompted('Bash', 'agent-2')
+  h.answered('main2', 'Bash')
+  expect(h.isAwaitingPerson).toBe(true)
+})
+
+test('the driver gives the scene its subagents in manual mode too: a held level, the company still shows', () => {
+  const a = new Activity()
+  const d = new SceneDriver(readConfig({ style: 'surf', mode: 'manual', level: 4 }), a)
+  a.roster.listed([{ id: 'ag1', status: 'running', type: 'Explore', description: 'map it' }])
+  const f = d.dial()
+  expect(f.agents?.map(x => x.id)).toEqual(['ag1'])
+  expect(f.strength).toBe(4) // the level stays held
 })
 
 test('the driver shows waiting in auto mode only (as it does the tints), settling the level to 2', () => {
@@ -2791,8 +2895,8 @@ test('/flow pick: the grammar, the help, and where the status points', () => {
   expect(parseFlowArgs('pick surf').kind).toBe('error') // a scene by name is `/flow surf`
   expect(changesFor({ kind: 'pick' }, readConfig({}))).toBeUndefined()
   expect(helpText()).toContain('/flow pick')
-  expect(helpText("pi's", false)).toContain('/flow pick')
-  expect(helpText("pi's", false)).not.toContain('spine')
+  expect(helpText("pi's", { panes: false, sound: false })).toContain('/flow pick')
+  expect(helpText("pi's", { panes: false, sound: false })).not.toContain('spine')
   expect(statusText(readConfig({}), 3, 'normal', { hour: 12, minute: 0 })).toContain('`/flow pick`')
   // The one-time scenes tip names it too.
   expect(nextTip({}, readConfig({})).tip).toContain('`/flow pick`')
@@ -3051,4 +3155,775 @@ test('/flow pick where no surface places panes says what to do instead, and leav
   await start($)
   expect(await flow($, 'pick')).toContain('/flow next')
   expect(closes).toContain('flow-pick')
+})
+
+// ── Subagents, one by one ────────────────────────────────────────────────
+
+const listed = (id: string, status = 'running', description = `task ${id}`) => ({ id, status, type: 'Explore', description })
+
+test('roster: a listed subagent works, goes quiet when nothing is heard, works again when it is', () => {
+  const r = new Roster()
+  r.listed([listed('a')])
+  expect(r.dials().map(d => [d.id, d.state])).toEqual([['a', 'working']])
+  r.tick(QUIET_MS - 1000)
+  expect(r.dials()[0]!.state).toBe('working')
+  r.tick(2000)
+  expect(r.dials()[0]!.state).toBe('idle') // gone quiet
+  r.heard('a') // a step, or streamed output
+  expect(r.dials()[0]!.state).toBe('working')
+  // A long tool keeps it working, however long it runs.
+  r.toolStarted('a')
+  r.tick(QUIET_MS * 5)
+  expect(r.dials()[0]!.state).toBe('working')
+  r.toolEnded('a')
+  r.tick(QUIET_MS + 1)
+  expect(r.dials()[0]!.state).toBe('idle')
+  // Held (its own background work, a plan) or between turns: resting, whatever it last did.
+  r.heard('a')
+  r.listed([listed('a', 'waiting')])
+  expect(r.dials()[0]!.state).toBe('idle')
+})
+
+test('roster: a subagent waits on you only once a dialog is put to you; an ask the mode settles alone never shows', () => {
+  // (The waits are Activity's, one tracker for every loop: the roster reads its subagents' there.)
+  const h = new Activity()
+  const r = h.roster
+  r.listed([listed('a'), listed('b')])
+  const states = () => r.dials().map(d => d.state)
+  // tool.check's ask goes to the mode's decider: auto mode's classifier allows it, and the call runs and ends.
+  h.waitingOn('tu1', false, 'Bash', 'a')
+  expect(states()).toEqual(['working', 'working'])
+  h.answered('tu1', 'Bash', 'a')
+  expect(states()).toEqual(['working', 'working'])
+  // This time a dialog shows (classic.PermissionRequest, no hook answering it): it waits, however long.
+  h.waitingOn('tu2', false, 'Bash', 'a')
+  h.prompted('Bash', 'a')
+  expect(states()).toEqual(['waiting', 'working'])
+  r.tick(QUIET_MS * 2)
+  expect(states()).toEqual(['waiting', 'idle'])
+  // Approved, the command shows its progress pill (ToolProgress carries only the call's id): it's running.
+  h.answered('tu2')
+  expect(states()).toEqual(['working', 'idle'])
+  // Claude's question, a plan to approve: put to you from the start, till the call ends.
+  h.waitingOn('tu3', true, 'AskUserQuestion', 'b')
+  expect(states()).toEqual(['working', 'waiting'])
+  h.answered('tu3', 'AskUserQuestion', 'b')
+  expect(states()).toEqual(['working', 'working'])
+  // A dialog with no ask before it waits under its tool's name till a call of it ends.
+  h.prompted('Edit', 'a')
+  expect(states()).toEqual(['waiting', 'working'])
+  h.answered('tu4', 'Edit', 'a')
+  expect(states()).toEqual(['working', 'working'])
+  // Refused, the call ends all the same (the permission prompt runs beneath tool.call): its finally answers it.
+  h.waitingOn('tu5', false, 'Bash', 'a')
+  h.prompted('Bash', 'a')
+  r.heard('a') // another model step of its own changes nothing: the dialog is still up
+  expect(states()).toEqual(['waiting', 'working'])
+  h.answered('tu5', 'Bash', 'a')
+  expect(states()).toEqual(['working', 'working'])
+  // The main loop's own dialogs and questions are not a subagent's.
+  h.waitingOn('tu6', false, 'Bash')
+  h.prompted('Bash')
+  h.waitingOn('tu7', true, 'AskUserQuestion')
+  expect(states()).toEqual(['working', 'working'])
+})
+
+test("roster: what a subagent does before a poll names it counts once one does: a tool still running, a dialog up", () => {
+  const h = new Activity()
+  const r = h.roster
+  // Its first tool, and the other's permission dialog, before any poll has named them.
+  r.toolStarted('a')
+  h.waitingOn('tu1', false, 'Bash', 'b')
+  h.prompted('Bash', 'b')
+  r.tick(25_000)
+  r.listed([listed('a'), listed('b')])
+  expect(r.dials().map(d => [d.id, d.state])).toEqual([
+    ['a', 'working'], // 25 s with nothing heard, but its tool is still running
+    ['b', 'waiting'],
+  ])
+  r.toolEnded('a')
+  h.answered('tu1', 'Bash', 'b')
+  r.tick(QUIET_MS + 1)
+  expect(r.dials().map(d => d.state)).toEqual(['idle', 'idle'])
+  // A loop no poll names for long (the engine's own forks) is forgotten, its waits with it.
+  r.heard('fork')
+  h.waitingOn('tu2', true, 'AskUserQuestion', 'fork')
+  r.tick(40_000)
+  expect(h.isAwaitingPerson).toBe(false)
+  r.listed([listed('a'), listed('b'), listed('fork')])
+  expect(r.dials().find(d => d.id === 'fork')!.state).toBe('working') // named at last: a fresh start, no stale wait
+})
+
+test('roster: done when its run completes (or it stops being listed), kept a while for its companion to leave, then dropped', () => {
+  const r = new Roster()
+  r.listed([listed('a'), listed('b'), listed('c')])
+  r.tick(5000)
+  r.finished('a', true)
+  r.listed([listed('a'), listed('b', 'failed'), listed('c')]) // a: a poll behind the news, still "running"
+  r.tick(1000)
+  r.listed([listed('a', 'completed'), listed('b', 'failed')]) // c: dropped by the engine
+  const d = r.dials()
+  expect(d.map(x => [x.id, x.state, x.ok])).toEqual([
+    ['a', 'done', true],
+    ['b', 'done', false],
+    ['c', 'done', true],
+  ])
+  expect(d[0]!.ms).toBe(5000) // its run time stops when it's done
+  expect(r.active).toBe(0)
+  r.tick(DONE_MS + 100)
+  expect(r.dials()).toEqual([])
+})
+
+test('roster: a finished agent a poll still lists held or between turns stays done; only listed running again (or heard from) is it back', () => {
+  const r = new Roster()
+  r.listed([listed('a'), listed('b')])
+  r.finished('a', true)
+  r.finished('b', true)
+  r.tick(4000) // past the moment a poll may be behind the news
+  r.listed([listed('a', 'idle'), listed('b', 'waiting')])
+  expect(r.dials().map(d => [d.id, d.state])).toEqual([
+    ['a', 'done'],
+    ['b', 'done'],
+  ])
+  r.listed([listed('a', 'running'), listed('b', 'waiting')])
+  expect(r.dials().map(d => [d.id, d.state])).toEqual([
+    ['b', 'done'],
+    ['a', 'working'], // a new run: last in line
+  ])
+})
+
+test('roster: the dial is worked out once a change (and a tick), the same for every scene that asks between', () => {
+  const h = new Activity()
+  const r = h.roster
+  expect(r.dials()).toBe(r.dials())
+  expect(r.dials()).toEqual([])
+  r.listed([listed('a')])
+  const first = r.dials()
+  expect(r.dials()).toBe(first)
+  h.waitingOn('tu1', true, 'AskUserQuestion', 'a')
+  const asked = r.dials()
+  expect(asked).not.toBe(first)
+  expect(asked[0]!.state).toBe('waiting')
+  r.tick(70)
+  expect(r.dials()).not.toBe(asked)
+  expect(r.dials()[0]!.ms).toBe(70)
+})
+
+test('roster: one first seen already ended is never shown; one heard from after its run is back, a new run', () => {
+  const r = new Roster()
+  r.listed([listed('old', 'completed'), listed('a')])
+  expect(r.dials().map(d => d.id)).toEqual(['a'])
+  r.finished('a', true)
+  r.tick(500)
+  r.heard('a') // resumed by a message
+  expect(r.dials().map(d => [d.id, d.state, d.ms])).toEqual([['a', 'working', 0]])
+  // Heard from before any poll named it: counted from then, once a poll does.
+  r.heard('new')
+  r.tick(QUIET_MS + 10)
+  r.listed([listed('a'), listed('new')])
+  expect(r.dials().find(d => d.id === 'new')!.state).toBe('idle')
+})
+
+test('roster: a hover card line says the task, what it is doing, and for how long', () => {
+  const d = { id: 'a', state: 'waiting' as const, ok: true, task: 'map the auth flow', type: 'Explore', ms: 125_000 }
+  expect(agentLine(d)).toBe('Explore: map the auth flow · waiting on you, 2m 05s')
+  expect(agentLine({ ...d, state: 'done', ok: false, ms: 9000 })).toBe('Explore: map the auth flow · stopped, 9s')
+  expect(runTime(3_725_000)).toBe('1h 02m')
+})
+
+const dial = (id: string, state: 'working' | 'idle' | 'waiting' | 'done', ok = true) => ({ id, state, ok, task: '', type: '', ms: 0 })
+
+test('crew: a companion eases in, rests and works with its agent, eases out, and frees its place for the next', () => {
+  const c = new Crew(2, 10, 20)
+  c.update([dial('a', 'working'), dial('b', 'idle'), dial('c', 'working')])
+  expect(c.mates.map(m => [m.id, m.slot])).toEqual([['a', 0], ['b', 1]]) // c waits for room
+  const here: number[] = []
+  for (let i = 0; i < 12; i++) {
+    c.update([dial('a', 'working'), dial('b', 'idle'), dial('c', 'working')])
+    here.push(c.mates[0]!.here)
+  }
+  // No popping in: it arrives over the frames, never jumping more than a fifth at once.
+  for (let i = 1; i < here.length; i++) expect(here[i]! - here[i - 1]!).toBeLessThan(0.2)
+  expect(here.at(-1)).toBe(1)
+  expect(c.mates[0]!.busy).toBe(1)
+  expect(c.mates[1]!.busy).toBe(0)
+  // Quiet, then waiting on you: it rests, easing down.
+  c.update([dial('a', 'waiting'), dial('b', 'idle'), dial('c', 'working')])
+  expect(c.mates[0]!.waiting).toBe(true)
+  expect(c.mates[0]!.busy).toBeGreaterThan(0.8)
+  for (let i = 0; i < 60; i++) c.update([dial('a', 'idle'), dial('b', 'idle'), dial('c', 'working')])
+  expect(c.mates[0]!.busy).toBe(0)
+  // Done: it leaves over the frames (failed, it says so), and only then is its place c's.
+  const out: number[] = []
+  for (let i = 0; i < 19; i++) {
+    c.update([dial('a', 'done', false), dial('b', 'idle'), dial('c', 'working')])
+    out.push(c.mates.find(m => m.id === 'a')!.here)
+  }
+  expect(c.mates.find(m => m.id === 'a')!.leaving).toBe(true)
+  expect(c.mates.find(m => m.id === 'a')!.ok).toBe(false)
+  for (let i = 1; i < out.length; i++) expect(out[i - 1]! - out[i]!).toBeLessThan(0.15)
+  expect(c.mates.some(m => m.id === 'c')).toBe(false)
+  for (let i = 0; i < 3; i++) c.update([dial('b', 'idle'), dial('c', 'working')])
+  expect(c.mates.map(m => [m.id, m.slot])).toEqual([['b', 1], ['c', 0]])
+})
+
+test('crew: an adapter that only counts subagents (coverage) still gets that many companions, working, with no hover card', () => {
+  const c = new Crew(4)
+  for (let i = 0; i < 30; i++) c.update([], 30)
+  expect(c.mates.map(m => [m.slot, m.busy])).toEqual([[0, 1], [1, 1]])
+  c.mark(c.mates[0]!, 3, 1, 2, 2, 80, 5)
+  expect(c.marks).toEqual([])
+  for (let i = 0; i < 60; i++) c.update([], 0)
+  expect(c.mates).toEqual([])
+})
+
+test('crew: only places the layout can show are given; less room sends the rest back to wait, and each comes in as one frees', () => {
+  const c = new Crew(6, 10, 10)
+  const six = ['a', 'b', 'c', 'd', 'e', 'f']
+  const run = (done: string[], n: number) => {
+    for (let i = 0; i < n; i++) c.update(six.map(id => dial(id, done.includes(id) ? 'done' : 'working')))
+    return c.mates.map(m => `${m.id}${m.slot}`).sort()
+  }
+  c.room = 3 // a narrow spine
+  expect(run([], 20)).toEqual(['a0', 'b1', 'c2'])
+  // Three finish: the other three come in, into places the spine shows.
+  expect(run(['a', 'b', 'c'], 40)).toEqual(['d0', 'e1', 'f2'])
+  // The band has room for all of them; back to the spine, the ones it can't show wait again.
+  c.room = 6
+  expect(run(['a'], 30)).toEqual(['b3', 'c4', 'd0', 'e1', 'f2'])
+  c.room = 3
+  expect(run(['a'], 1)).toEqual(['d0', 'e1', 'f2'])
+  expect(run(['a', 'd'], 40)).toEqual(['b0', 'e1', 'f2'])
+})
+
+/** The scenes that give each subagent a companion of its own. */
+const CREW_SCENES = ['fire', 'surf', 'ski', 'balloon', 'falcon', 'starship', 'engine', 'train', 'avalon'] as const
+
+test('companion scenes: each agent gets one that arrives, is marked where it is, and leaves when done, in the band and the spine', () => {
+  for (const style of CREW_SCENES) {
+    for (const [columns, rows] of [[120, 5], [22, 40]] as const) {
+      const f = makeScene(style, 7)
+      f.strength = 5
+      f.ensure(columns, rows)
+      for (let i = 0; i < 60; i++) f.step()
+      f.grid()
+      expect(f.agentMarks?.() ?? []).toEqual([])
+      const run = (agents: ReturnType<typeof dial>[], n: number) => {
+        for (let i = 0; i < n; i++) {
+          f.agents = agents
+          f.step()
+        }
+        f.grid()
+        return (f.agentMarks?.() ?? []).map(m => m.id)
+      }
+      const at = `${style} at ${columns}×${rows}`
+      // Just arrived: not there yet (it eases in), so not marked.
+      expect([at, run([dial('a', 'working')], 1)]).toEqual([at, []])
+      expect([at, run([dial('a', 'working')], 60)]).toEqual([at, ['a']])
+      for (const m of f.agentMarks!()) {
+        expect([at, m.col >= 0 && m.row >= 0 && m.col + m.w <= columns && m.row + m.h <= rows]).toEqual([at, true])
+      }
+      expect([at, run([dial('a', 'idle')], 40)]).toEqual([at, ['a']])
+      expect([at, run([dial('a', 'waiting')], 10)]).toEqual([at, ['a']])
+      expect([at, run([dial('a', 'done')], 80)]).toEqual([at, []])
+    }
+  }
+})
+
+test('companion scenes: every companion given a place is on screen, in the band and the spine, however many agents run', () => {
+  const ids = ['a', 'b', 'c', 'd', 'e', 'f']
+  for (const style of CREW_SCENES) {
+    for (const [columns, rows] of [[250, 5], [80, 5], [22, 40], [13, 30]] as const) {
+      for (const level of [1, 5, 10]) {
+        const f = makeScene(style, 7)
+        const crew = (f as unknown as { crew: Crew }).crew
+        f.strength = level
+        f.ensure(columns, rows)
+        const at = `${style} at ${columns}×${rows} level ${level}`
+        const check = (done: string[]) => {
+          // (Long enough for those done to leave and those waiting to come in: a train takes its time.)
+          for (let i = 0; i < 160; i++) {
+            f.agents = ids.map(id => dial(id, done.includes(id) ? 'done' : 'working'))
+            f.step()
+          }
+          f.grid()
+          const marked = new Set((f.agentMarks?.() ?? []).map(m => m.id))
+          const shown = crew.mates.map(m => m.id)
+          expect([at, shown.length > 0, shown.filter(id => !marked.has(id))]).toEqual([at, true, []])
+        }
+        check([])
+        check(['a', 'b'])
+      }
+    }
+  }
+})
+
+test('engine: six agents in the spine show three lamps at a time; as those finish, the others light; band to spine and back', () => {
+  const f = makeScene('engine', 7)
+  f.strength = 5
+  const six = ['a', 'b', 'c', 'd', 'e', 'f']
+  const run = (done: string[], n: number) => {
+    for (let i = 0; i < n; i++) {
+      f.agents = six.map(id => dial(id, done.includes(id) ? 'done' : 'working'))
+      f.step()
+    }
+    f.grid()
+    return f.agentMarks!().map(m => m.id).sort()
+  }
+  f.ensure(22, 40)
+  expect(run([], 60)).toEqual(['a', 'b', 'c'])
+  expect(run(['a', 'b', 'c'], 80)).toEqual(['d', 'e', 'f'])
+  f.ensure(120, 5) // the band: room for six groups
+  expect(run(['a'], 60)).toEqual(['b', 'c', 'd', 'e', 'f'])
+  f.ensure(22, 40) // back to the spine: three show, the rest wait
+  expect(run(['a'], 60).length).toBe(3)
+})
+
+test('companion scenes: a working companion and a resting one look different', () => {
+  for (const style of CREW_SCENES) {
+    const look = (state: 'working' | 'idle') => {
+      const f = makeScene(style, 7)
+      f.strength = 5
+      f.ensure(120, 5)
+      for (let i = 0; i < 120; i++) {
+        f.agents = [dial('a', state)]
+        f.step()
+      }
+      const g = f.grid()
+      const m = f.agentMarks!()[0]
+      return m ? `${m.row}:${m.col}` : `none ${g.columns}`
+    }
+    // Where it is (aloft or sunk, on station or dropped back, its spot): the scenes move a resting one.
+    // (The engine's lamps and the fire's own fires stay put: see below.)
+    const staysPut = style === 'engine' || style === 'fire'
+    if (!staysPut) expect(`${style} ${look('working')}`).not.toBe(`${style} ${look('idle')}`)
+  }
+  // The engine's lamps stay put: a working group runs a light along it, a quiet one glows low.
+  const lit = (state: 'working' | 'idle') => {
+    const f = makeScene('engine', 7)
+    f.strength = 5
+    f.ensure(120, 5)
+    for (let i = 0; i < 60; i++) {
+      f.agents = [dial('a', state)]
+      f.step()
+    }
+    const g = f.grid()
+    const m = f.agentMarks!()[0]!
+    const colors: number[] = []
+    for (let c = m.col; c < m.col + m.w; c++) colors.push(g.foreground(4 * 120 + c), g.background(4 * 120 + c))
+    return colors.join()
+  }
+  expect(lit('working')).not.toBe(lit('idle'))
+  // A companion's fire burns tall while its agent works and dies down to embers while it's quiet.
+  const flames = (state: 'working' | 'idle') => {
+    const f = makeScene('fire', 7)
+    f.strength = 6
+    f.ensure(120, 5)
+    let cells = 0
+    for (let i = 0; i < 160; i++) {
+      f.agents = [dial('a', state)]
+      f.step()
+      if (i < 100) continue
+      const g = f.grid()
+      const m = f.agentMarks!()[0]!
+      for (let r = 0; r < 4; r++) for (let c = m.col; c < m.col + m.w; c++) {
+        const cp = g.codePoint(r * 120 + c)
+        if (cp !== 0x20 && cp < 0x2800) cells++ // flame, not a spark
+      }
+    }
+    return cells
+  }
+  expect(flames('working')).toBeGreaterThan(flames('idle') * 2)
+})
+
+test('surf: on a big swell a working companion rides the wave with the surfer, standing on its face clear of them; a resting one does not', () => {
+  type Inner = {
+    cx: number
+    Wf: number
+    crew: Crew
+    surferX(): number
+    surfaceAt(x: number): number
+    matePose(m: unknown): string
+  }
+  for (const [columns, rows] of [[120, 5], [250, 5], [22, 40], [13, 30]] as const) {
+    for (const level of [8, 10]) {
+      const at = `${columns}×${rows} level ${level}`
+      const look = (state: 'working' | 'idle') => {
+        const f = makeScene('surf', 7)
+        const inner = f as unknown as Inner
+        f.strength = level
+        f.ensure(columns, rows)
+        const poses: string[] = []
+        for (let i = 0; i < 300; i++) {
+          f.agents = [dial('a', state)]
+          f.step()
+          if (i < 200) continue
+          const m = inner.crew.mates[0]!
+          const pose = inner.matePose(m)
+          poses.push(pose)
+          if (pose !== 'ride' && pose !== 'crouch') continue
+          // On the face (ahead of the crest, short of the foot), on its surface, and a rider apart from the surfer.
+          expect([at, m.x > inner.cx && m.x < inner.cx + inner.Wf]).toEqual([at, true])
+          const sx = inner.surferX()
+          expect([at, Math.hypot(m.x - sx, inner.surfaceAt(m.x) - inner.surfaceAt(sx)) >= 4]).toEqual([at, true])
+        }
+        return poses
+      }
+      const working = look('working')
+      expect([at, working.every(p => p === 'ride' || p === 'crouch')]).toEqual([at, true])
+      expect([at, look('idle').some(p => p === 'ride' || p === 'crouch')]).toEqual([at, false])
+    }
+  }
+})
+
+test('desktop: the pointer over a subagent\'s companion shows its task and what it is doing', { options: { style: 'surf' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  engine(on)
+  const agents = [{ id: 'ag1', description: 'map the auth flow', type: 'Explore', status: 'running' }]
+  on('agent.list', () => ({ value: agents as never }))
+  on('tool.check', () => ({ decision: 'ask' }) as never)
+  // No settings hook answers a permission request for the person: the dialog shows.
+  on('classic.PermissionRequest', () => ({}))
+  on('ui.render', { component: 'ToolProgress' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return Text({ children: e.props.hint })
+  })
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'desktop', ...BAND })
+  const after = async (ms: number) => {
+    for (let t = 0; t < ms; t += 250) {
+      await clock.advance(250)
+      // (The engine stand-in takes the plugin's invalidations: draw again as desktop would.)
+      await ui.redraw()
+    }
+    return JSON.stringify(await ui.drawn())
+  }
+  let drawn = await after(4000)
+  const zone = await ui.find({ key: 'agent:ag1' })
+  expect(zone?.type).toBe('Box')
+  expect(zone?.props.position).toBe('absolute')
+  expect(await ui.find({ type: 'Svg' })).toBeDefined()
+  expect(drawn).toContain('Explore: map the auth flow · working')
+  expect(drawn).toContain('"display":"none"') // the card is hidden until the pointer is over it
+
+  drawn = await after(22_000)
+  expect(drawn).toContain('· quiet')
+
+  // An ask goes to the mode's decider: auto mode's classifier may settle it alone, so it's no wait on you yet.
+  await $.tool.check({ tool: 'Bash', input: { command: 'rm -rf build' }, tool_use_id: 'tu1', agentId: 'ag1' } as never)
+  drawn = await after(500)
+  expect(drawn).toContain('· quiet')
+  // The dialog shows: now it waits on you.
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'rm -rf build' }, agent_id: 'ag1' } as never)
+  drawn = await after(500)
+  expect(drawn).toContain('· waiting on you')
+  // Approved, the command runs and shows its progress pill: it's working again.
+  const pill = await $.ui.mount({
+    plugin: 'flow',
+    surface: 'terminal',
+    component: 'ToolProgress',
+    requestId: 'tu1',
+    props: { tool_use_id: 'tu1', kind: 'background_hint', hint: '(ctrl+b to run in background)' },
+  } as never)
+  drawn = await after(500)
+  expect(drawn).toContain('Explore: map the auth flow · working')
+  await pill.unmount()
+
+  agents[0]!.status = 'completed'
+  await after(8000)
+  expect(await ui.find({ key: 'agent:ag1' })).toBeUndefined() // it has left
+  await ui.unmount()
+})
+
+test("train: each subagent's train draws up from out of sight, keeps pace while it works, drops back with its headlamp out while quiet, flashes its cab while it waits on you, and falls back out of sight when done", () => {
+  const t = makeScene('train', 4) as Train
+  t.strength = 6
+  t.ensure(160, 5)
+  for (let i = 0; i < 20; i++) t.step()
+  const run = (agents: ReturnType<typeof dial>[], n: number) => {
+    for (let i = 0; i < n; i++) {
+      t.agents = agents
+      t.step()
+    }
+    t.grid()
+    return t.agentMarks!()
+  }
+  // Six agents, but the band at 160 columns shows three trains whole: the rest wait for a place.
+  const six = ['a', 'b', 'c', 'd', 'e', 'f']
+  expect(run(six.map(id => dial(id, 'working')), 3).length).toBe(0) // still out of sight: nothing pops in
+  expect(t.company).toBe(0)
+  const marks = run(six.map(id => dial(id, 'working')), 200)
+  expect(marks.map(m => m.id)).toEqual(['a', 'b', 'c'])
+  expect(t.company).toBe(3)
+  // Quiet, it drops back a little (and stays in view).
+  const at = (ms: readonly AgentMark[], id: string) => ms.find(m => m.id === id)!.col
+  const before = at(marks, 'a')
+  const quiet = run([dial('a', 'idle'), ...six.slice(1).map(id => dial(id, 'working'))], 120)
+  expect(at(quiet, 'a')).toBeLessThan(before - 6)
+  // Its cab: the headlamp lit while working, out while quiet, flashing (on, off) while it waits on you.
+  const inner = t as unknown as { crew: Crew; cab(m: unknown, t: number): number }
+  const cab = (id: string, frame: number) => inner.cab(inner.crew.mates.find(m => m.id === id)!, frame)
+  expect(cab('b', 0)).toBe(1)
+  expect(cab('a', 0)).toBe(0)
+  run([dial('a', 'waiting'), ...six.slice(1).map(id => dial(id, 'working'))], 1)
+  expect([...new Set(Array.from({ length: 16 }, (_, f) => cab('a', f)))].sort()).toEqual([0, 2])
+  // Done, the first three fall back out of sight and the next three draw up in their places.
+  const later = run([...['a', 'b', 'c'].map(id => dial(id, 'done')), ...['d', 'e', 'f'].map(id => dial(id, 'working'))], 300)
+  expect(later.map(m => m.id).sort()).toEqual(['d', 'e', 'f'])
+})
+
+test("fire: each subagent kindles a small fire of its own on alternate sides, the main fire narrowing to make room, a dark gap between; done, it burns out and the main fire widens back", () => {
+  const f = makeScene('fire', 5)
+  f.strength = 6
+  f.ensure(120, 5)
+  const lit = (g: ReturnType<typeof f.grid>, c: number) => {
+    for (let r = 0; r < 5; r++) {
+      const cp = g.codePoint(r * 120 + c)
+      if (cp !== 0x20 && cp < 0x2800) return true
+    }
+    return false
+  }
+  /** How often each column burns over `n` frames (0..1). */
+  const burning = (agents: ReturnType<typeof dial>[], n: number) => {
+    const seen = new Float32Array(120)
+    for (let i = 0; i < n; i++) {
+      f.agents = agents
+      f.step()
+      const g = f.grid()
+      for (let c = 0; c < 120; c++) if (lit(g, c)) seen[c]! += 1 / n
+    }
+    return seen
+  }
+  const alone = burning([], 80)
+  expect(alone[2]! > 0.5 && alone[117]! > 0.5).toBe(true) // the whole width burns
+  const two = [dial('a', 'working'), dial('b', 'working')]
+  burning(two, 60)
+  const marks = f.agentMarks!()
+  expect(marks.map(m => m.id).sort()).toEqual(['a', 'b'])
+  const a = marks.find(m => m.id === 'a')!
+  const b = marks.find(m => m.id === 'b')!
+  expect(a.col > 60 && b.col < 60).toBe(true) // one each side
+  const with2 = burning(two, 60)
+  // Each companion's own fire burns, with a gap no flame crosses between it and the main fire.
+  expect(with2[a.col + 2]!).toBeGreaterThan(0.5)
+  expect(with2[b.col + 2]!).toBeGreaterThan(0.5)
+  expect(with2[a.col - 1]!).toBe(0)
+  expect(with2[b.col + b.w]!).toBe(0)
+  // An adapter with only a count gets as many fires, unmarked (no hover card).
+  const g = makeScene('fire', 5)
+  g.strength = 6
+  g.ensure(120, 5)
+  g.coverageBoost = 30
+  for (let i = 0; i < 60; i++) g.step()
+  g.grid()
+  expect((g as unknown as { crew: Crew }).crew.mates.length).toBe(2)
+  expect(g.agentMarks!()).toEqual([])
+  // Done: they burn out, the gaps close, the main fire takes the whole width again.
+  burning([dial('a', 'done'), dial('b', 'done', false)], 80)
+  expect(f.agentMarks!()).toEqual([])
+  const after = burning([], 60)
+  expect(after[a.col - 1]! > 0.3 && after[b.col + b.w]! > 0.3).toBe(true)
+})
+
+// ── Review fixes: sessions, the adapter, the spine ───────────────────────
+
+/** `$.state` over a Map the test can look into (`flow.altitude`: 12), counting the writes to each key. */
+function memoryState(on: On, entries: Readonly<Record<string, unknown>> = {}) {
+  const values = new Map<string, unknown>(Object.entries(entries))
+  const writes = new Map<string, number>()
+  on('state.get', (_, e) => {
+    const k = `${e.plugin}.${e.key}`
+    return { value: { value: values.get(k), version: values.has(k) ? 1 : 0 } as never }
+  })
+  on('state.set', (_, e) => {
+    const k = `${e.plugin}.${e.key}`
+    values.set(k, (e as { value: unknown }).value)
+    writes.set(k, (writes.get(k) ?? 0) + 1)
+    return { value: { isSet: true, version: writes.get(k)! } as never }
+  })
+  return { values, writes }
+}
+
+test("/config's layout changed in the session places the pane as /flow would: spine opens it, band closes it", { options: { mode: 'manual', level: 5, layout: 'spine' } }, async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  engine(on)
+  const pane = panes(on)
+  await start($)
+  expect(pane.open.has('flow')).toBe(true)
+  await flow($, 'band') // the session's own: the pane goes
+  expect(pane.open.has('flow')).toBe(false)
+  const set = $.config.set as unknown as (e: object) => Promise<unknown>
+  await set({ key: 'flow.layout', value: 'spine', previous: 'spine', provider: { plugin: 'flow', tier: 'user' }, origin: { kind: 'composer' } })
+  expect(pane.open.has('flow')).toBe(true)
+  await set({ key: 'flow.layout', value: 'band', previous: 'spine', provider: { plugin: 'flow', tier: 'user' }, origin: { kind: 'composer' } })
+  expect(pane.open.has('flow')).toBe(false)
+})
+
+test('a /clear or a resume starts with the context empty: no blue left over from the conversation before', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  engine(on)
+  on('session.measure', (_, e) => ({ changed: e.changed }))
+  await start($)
+  const measure = ($ as unknown as { session: { measure: (e: object) => Promise<unknown> } }).session.measure
+  await measure({ context: { percent: 92 }, rateLimits: [], changed: ['context'] })
+  expect(await flow($)).toContain('context nearly full')
+  await endSession($, 'clear', 'session-a')
+  expect(await flow($)).not.toContain('context nearly full')
+})
+
+test('sessions: a poll reading the new id while the session that ended is still being put away knows it was a resume, not a /clear', { options: { style: 'surf' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  memoryStore(on)
+  const seen = engine(on)
+  // /config's rows: the first read once the session has ended is slow to answer.
+  let holding = false
+  let release: (() => void) | undefined
+  on('config.list', async () => {
+    if (holding) {
+      holding = false
+      await new Promise<void>(r => (release = r))
+    }
+    return { value: configRows({}) as never }
+  })
+  seen.session = 'a'
+  await start($)
+  await flow($, 'ski')
+  // Resumed into b (no settings of its own): a's end is still reading the defaults when a poll sees b.
+  holding = true
+  seen.session = 'b'
+  const ending = endSession($, 'resume', 'a')
+  await clock.advance(6000)
+  release?.()
+  await ending
+  expect((await flow($)).split('\n')[0]).toMatch(/^fire/) // the defaults (/config's), not a's ski carried over
+})
+
+test('a session whose start meets a failure (its state unreadable) still runs its frame loop', { options: { mode: 'manual', level: 5 } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  on('state.get', () => ({ deny: 'no state here' }) as never)
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  seen.blits.length = 0
+  await clock.advance(1000)
+  expect(seen.blits.length).toBeGreaterThan(3)
+  await ui.unmount()
+})
+
+test('a band no longer mounted (its blit refused) is no longer heard', { options: { mode: 'manual', level: 9, style: 'bubbles', sound: 'on' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(3000)
+  expect((seen.plays ?? []).length).toBeGreaterThan(0)
+  await ui.unmount()
+  seen.blitDeny = 'nothing of this plugin is mounted there'
+  await clock.advance(1000)
+  const before = (seen.plays ?? []).length
+  await clock.advance(10_000)
+  expect((seen.plays ?? []).length).toBe(before)
+})
+
+test("the balloon's altitude: kept while it's the balloon, never built or written for another scene", { options: { mode: 'manual', level: 8, style: 'fire' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  engine(on)
+  const state = memoryState(on, { 'flow.altitude': 3 })
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(5000)
+  expect(state.writes.get('flow.altitude') ?? 0).toBe(0)
+  await flow($, 'balloon')
+  await clock.advance(5000)
+  expect(state.writes.get('flow.altitude') ?? 0).toBeGreaterThan(0)
+  expect(state.values.get('flow.altitude')).not.toBe(3) // it climbed from where it was left
+  await ui.unmount()
+})
+
+test('someone seen at the session is remembered across a reload: the sound plays then with no key; a turn or a /flow marks them too', { options: { mode: 'manual', level: 9, style: 'bubbles', sound: 'on' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  const state = memoryState(on)
+  const begin = () => ($ as unknown as TestDollar).session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  await begin()
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(2000)
+  expect(seen.plays ?? []).toEqual([])
+  await keyed($)
+  await keyed($)
+  await flow($)
+  // Kept in the session's state (written once) for a reload to find: see the next test.
+  expect(state.values.get('flow.present')).toBe(true)
+  expect(state.writes.get('flow.present')).toBe(1)
+  await ui.unmount()
+})
+
+test('someone is there: after a reload that finds them in the state, the sound plays with no key', { options: { mode: 'manual', level: 9, style: 'bubbles', sound: 'on' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  memoryState(on, { 'flow.present': true })
+  await ($ as unknown as TestDollar).session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(3000)
+  expect((seen.plays ?? []).length).toBeGreaterThan(0)
+  await ui.unmount()
+})
+
+test('someone is there: a turn starting is someone at the session too, remembered for a reload', { options: { mode: 'manual', level: 9, style: 'bubbles', sound: 'on' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  const state = memoryState(on)
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  await ($ as unknown as TestDollar).session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(2000)
+  expect(seen.plays ?? []).toEqual([])
+  await ($ as unknown as { turn: { start: (e: object) => Promise<unknown> } }).turn.start({ turnId: 't1', text: 'hi' })
+  expect(state.values.get('flow.present')).toBe(true)
+  await clock.advance(3000)
+  expect((seen.plays ?? []).length).toBeGreaterThan(0)
+  await ui.unmount()
+})
+
+test('ski: in the spine at a fresh start, the companions stand clear of one another and of the skier', () => {
+  for (const [columns, rows] of [[22, 30], [22, 60], [13, 30]] as const) {
+    const f = makeScene('ski', 7)
+    f.ensure(columns, rows)
+    f.strength = 1
+    f.agents = ['a', 'b', 'c', 'd'].map(id => dial(id, 'working'))
+    for (let i = 0; i < 60; i++) f.step()
+    f.grid()
+    const marks = f.agentMarks?.() ?? []
+    expect(marks.length).toBe(4)
+    for (let i = 0; i < marks.length; i++) {
+      for (let j = i + 1; j < marks.length; j++) {
+        const [p, q] = [marks[i]!, marks[j]!]
+        // (Marks round outward to whole cells: touching by one is no overlap.)
+        const across = Math.min(p.col + p.w, q.col + q.w) - Math.max(p.col, q.col)
+        const down = Math.min(p.row + p.h, q.row + q.h) - Math.max(p.row, q.row)
+        expect(across <= 1 || down <= 1).toBe(true)
+      }
+    }
+  }
+})
+
+test("the picker on desktop counts its close Button's row: the grid and it fit the pane", () => {
+  for (let columns = 30; columns <= 200; columns += 11) {
+    for (let rows = 6; rows <= 60; rows += 2) {
+      const l = pickLayout(columns, rows, STYLES.length, undefined, 1)
+      if (!l) continue
+      const frame = l.framed ? 2 : 0
+      expect(Math.ceil(STYLES.length / l.across) * (l.rows + 1 + frame) + (l.lines ? 2 : 0) + 1).toBe(l.height)
+      expect(l.height).toBeLessThanOrEqual(rows)
+    }
+  }
 })

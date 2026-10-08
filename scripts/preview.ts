@@ -1,4 +1,4 @@
-// REVISION: flow-v126-picker
+// REVISION: flow-v128-agents
 //
 // Prints scenes into this terminal the way Flow draws them: the band at
 // levels 1, 5 and 10 with each tint and waiting on the person, then the spine
@@ -12,6 +12,7 @@
 //   npm run preview -- surf --waiting     only waiting on the person (and normal, beside it)
 //   npm run preview -- --pick             the picker (/flow pick), docked (64×44) and inline at this width
 //   npm run preview -- --pick --size 120x26 --focus surf --night
+//   npm run preview -- surf --agents      with subagents: two working, one quiet, one waiting on you, one leaving
 
 import { gridToAnsi } from '../pi/ansi'
 import { hotkeyFor, pickBlurb, pickHint, pickLabel, pickLayout, pickRows, Thumbnails } from '../hooks/picker'
@@ -34,6 +35,8 @@ const width = Math.max(40, Math.min(250, (process.stdout.columns || 120) - 2))
 const showBand = !rest.includes('--spine')
 const showSpine = !rest.includes('--band')
 const looks = rest.includes('--waiting') ? LOOKS.filter(l => l.name === 'normal' || l.waiting) : LOOKS
+const agents = rest.includes('--agents')
+const crewNote = agents ? ' · subagents: 2 working, 1 quiet, 1 waiting on you, 1 leaving' : ''
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`
 
 for (const scene of scenesFrom(rest)) {
@@ -44,8 +47,8 @@ for (const scene of scenesFrom(rest)) {
     if (showBand) {
       for (const level of levels) {
         for (const look of looks) {
-          console.log(dim(`band ${width}×${BAND.rows} · level ${level} · ${when} · ${look.name}`))
-          for (const line of gridToAnsi(build(scene, width, BAND.rows, { level, night, tint: look.tint, waiting: look.waiting }).grid())) console.log(line)
+          console.log(dim(`band ${width}×${BAND.rows} · level ${level} · ${when} · ${look.name}${crewNote}`))
+          for (const line of gridToAnsi(build(scene, width, BAND.rows, { level, night, tint: look.tint, waiting: look.waiting, agents }).grid())) console.log(line)
         }
       }
     }
@@ -55,8 +58,8 @@ for (const scene of scenesFrom(rest)) {
       const per = Math.max(1, Math.floor((width + 2) / (SPINE.columns + 2)))
       for (let at = 0; at < panels.length; at += per) {
         const row = panels.slice(at, at + per)
-        console.log(dim(row.map(p => `${p.level} ${p.look.name}`.padEnd(SPINE.columns + 2)).join('') + `(spine ${SPINE.columns}×${SPINE.rows}, ${when})`))
-        const grids = row.map(p => gridToAnsi(build(scene, SPINE.columns, SPINE.rows, { level: p.level, tint: p.look.tint, waiting: p.look.waiting, night }).grid()))
+        console.log(dim(row.map(p => `${p.level} ${p.look.name}`.padEnd(SPINE.columns + 2)).join('') + `(spine ${SPINE.columns}×${SPINE.rows}, ${when}${crewNote})`))
+        const grids = row.map(p => gridToAnsi(build(scene, SPINE.columns, SPINE.rows, { level: p.level, tint: p.look.tint, waiting: p.look.waiting, night, agents }).grid()))
         for (let r = 0; r < SPINE.rows; r++) console.log(grids.map(g => g[r]).join('  '))
       }
     }

@@ -1,4 +1,4 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v162-spine-minis
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -36,6 +36,25 @@
 // lattice and the plume are twice as fine as the grid, and soft things
 // (vapour, steam, the plume's tail) blend into whatever sky is behind them.
 //
+// Each running subagent (crew.ts) gets a mini rocket of its own: the same
+// rocket, smaller (its sprites the big one's pixel art with rows and columns
+// dropped), on a little launch site beside the big one, drawn behind it. A
+// mini rocket is a LaunchSite like the big one, running the same flight,
+// but hosted: it paints into the host's pixel layer, sees through its camera
+// and lives in its world (folded and unfolded with it). It flies the host's
+// level a few frames late, so it ignites, lifts off, stages, comes home and
+// is stacked again as the big one does, never in step: its booster comes
+// back on the split screen beside the big one's (Falcon's onto its legs on
+// a landing zone of its own, Starship's into its own tower's arms), and its
+// upper stage keeps formation with the big one's, in orbit too, and comes
+// home with it (Dragon under its own chutes; the Ship belly-first, flipping
+// to land, carried home and stacked). A working agent's rocket keeps
+// station; a quiet one's coasts, dropped back, a light blinking on its nose
+// (an amber beacon, shining through the waiting sepia, while it waits on
+// you), and on the ground it doesn't launch. Arriving, its site eases in (in
+// flight it climbs up into formation); done, it fades as it goes, in flight
+// pulling away ahead (failed: falling away, tumbling, in smoke).
+//
 // Dials: running subagents add vapour and more tower lights; a failed
 // command makes the engines sputter a grey, smoky plume (on the pad the
 // vents fume grey and the tower lights burn low; in orbit it coughs smoke
@@ -47,10 +66,12 @@
 // 2, and a dip holds), amber lights glow up the tower with each slow breath
 // and the whole view breathes in sepia (waiting.ts).
 
+import type { AgentDial } from './agents'
 import { type Cells, DEFAULT_COLOR, Rng } from './cells'
+import { Crew, type AgentMark, type Mate } from './crew'
 import { layered, snap } from './clouds/layered'
 import { STAR, STAR_DIM } from './night'
-import { fitQuad, g, hash, lowerBlock, mix, QUAD, type QuadFit } from './pixels'
+import { clamp, dist, fitQuad, g, hash, lowerBlock, mix, noise1, QUAD, type QuadFit } from './pixels'
 import { type SceneryCell, SkyWorld } from './sky'
 import { defineScene } from './scene-def'
 import { hear, type Ambience, type SoundEvent } from './sound'
@@ -181,6 +202,18 @@ const STARSHIP_TALL = [
   '..bbbbbb..',
   '..EEEEEE..',
 ]
+
+/** A smaller copy of a sprite: these of its columns, in these of its rows (the same pixel art, fewer pixels). */
+function pick(rows: readonly string[], cols: readonly number[], keep: readonly number[]): string[] {
+  return keep.map(r => cols.map(c => rows[r]![c]!).join(''))
+}
+
+// The mini rockets: in the band a pixel or two wide, in the spine about half the size.
+const MINI_FALCON_BAND = pick(FALCON_BAND, [2], [0, 2, 4, 5])
+const miniFalcon = (rows: readonly string[]) => pick(rows, [1, 4, 6, 8], [0, 2, 3, 4, 6, 8, 10, 13, 16, 19, 22, 24, 25, 27, 28])
+const MINI_FALCON_TALL = miniFalcon(FALCON_TALL)
+const MINI_STARSHIP_BAND = pick(STARSHIP_BAND, [2, 4], [1, 2, 4, 6])
+const MINI_STARSHIP_TALL = pick(STARSHIP_TALL, [1, 3, 5, 7, 8], [0, 2, 3, 5, 7, 9, 11, 13, 15, 16, 18, 20, 23, 26, 29, 32, 35, 36, 37])
 
 /** One rocket in one layout. All in pixels; rows of a sprite count from its top. */
 interface Spec {
@@ -320,6 +353,91 @@ const STARSHIP_SPECS: [band: Spec, tall: Spec] = [
   },
 ]
 
+/** A mini rocket's site, in the band (a two-pixel tower) or the spine. */
+const MINI_SITE_BAND = { grip: 1, mount: 0, towerW: 2, towerH: 4, armCatch: 3, armThick: 1, armStub: 1, plume: 3 }
+
+const MINI_FALCON_SPECS: [band: Spec, tall: Spec] = [
+  {
+    ...MINI_SITE_BAND,
+    fly: sprite(MINI_FALCON_BAND, FALCON_PAL),
+    fins: sprite(MINI_FALCON_BAND, FALCON_PAL),
+    land: sprite(MINI_FALCON_BAND, FALCON_PAL),
+    stage: firstRow(MINI_FALCON_BAND, 'K'),
+    dragon: 1,
+    capsule: 1,
+    bodyL: 0,
+    bodyW: 1,
+    vents: [
+      [0, 0, -1],
+      [0, 2, 1],
+    ],
+    puff: [0.4, 1.2],
+  },
+  {
+    fly: sprite(MINI_FALCON_TALL, FALCON_PAL),
+    fins: sprite(miniFalcon(FALCON_TALL_FINS), FALCON_PAL),
+    land: sprite(miniFalcon(FALCON_TALL_LAND), FALCON_PAL),
+    stage: firstRow(MINI_FALCON_TALL, 'K'),
+    dragon: firstRow(MINI_FALCON_TALL, 'P') + 1,
+    capsule: firstRow(MINI_FALCON_TALL, 'P'),
+    bodyL: 1,
+    bodyW: 2,
+    grip: 8,
+    mount: 0,
+    towerW: 3,
+    towerH: 20,
+    armCatch: 17,
+    armThick: 1,
+    armStub: 1,
+    plume: 11,
+    vents: [
+      [1, 4, -1],
+      [2, 9, 1],
+    ],
+    service: 1,
+    puff: [0.7, 2.2],
+  },
+]
+
+const MINI_STARSHIP_SPECS: [band: Spec, tall: Spec] = [
+  {
+    ...MINI_SITE_BAND,
+    fly: sprite(MINI_STARSHIP_BAND, STARSHIP_PAL),
+    fins: sprite(MINI_STARSHIP_BAND, STARSHIP_PAL),
+    land: sprite(MINI_STARSHIP_BAND, STARSHIP_PAL),
+    stage: firstRow(MINI_STARSHIP_BAND, 'B'),
+    bodyL: 0,
+    bodyW: 2,
+    vents: [
+      [0, 0, -1],
+      [1, 2, 1],
+    ],
+    puff: [0.4, 1.3],
+  },
+  {
+    fly: sprite(MINI_STARSHIP_TALL, STARSHIP_PAL),
+    fins: sprite(MINI_STARSHIP_TALL, STARSHIP_PAL),
+    land: sprite(MINI_STARSHIP_TALL, STARSHIP_PAL),
+    stage: firstRow(MINI_STARSHIP_TALL, 'D'),
+    bodyL: 1,
+    bodyW: 3,
+    grip: 8,
+    mount: 2,
+    towerW: 4,
+    towerH: 26,
+    armCatch: 18,
+    armThick: 1,
+    armStub: 2,
+    plume: 13,
+    vents: [
+      [0, 6, -1],
+      [4, 13, 1],
+    ],
+    service: 4,
+    puff: [0.8, 2.4],
+  },
+]
+
 /** A plume's colors from cold (0) to white-hot (1). */
 type Ramp = readonly [number, number, number, number, number]
 const RAMPS = {
@@ -352,6 +470,14 @@ const TRENCH: SceneryCell = { glyph: g('▀'), fg: 0x4a4c50, bg: 0x6b6e74 }
 const SEA: SceneryCell = { glyph: g('▀'), fg: 0x3a7cc0, bg: 0x1d4e8e }
 
 const LIGHT = { red: 0xff3b30, amber: 0xffb020, green: 0x5cff7a, blue: 0x4aa8ff }
+
+/** Mini rockets for subagents, at most (fewer where the pane has no room for their sites). */
+const MINIS = 3
+/** Each mini rocket's formation with the big one, by slot: upright, its nose this many pixels below the big one's; in orbit, its place off the big one's middle along its axis and across it (units: a pixel across, half one down). */
+const FORMATION = {
+  band: { gap: [1, 2, 3], orbit: [[-16, 4], [14, -4], [-30, -4]] },
+  tall: { gap: [8, 14, 20], orbit: [[-4, 18], [4, -18], [-14, 30]] },
+} as const
 
 /** Frames from ignition to liftoff: the hold-down while the engines spool up. */
 const IGNITE = 20
@@ -421,6 +547,30 @@ const OCEAN = 0x1d4e8e
 abstract class LaunchSite extends SkyWorld {
   /** What just happened, to be heard (the split screen's booster's too). */
   sounds: SoundEvent[] = []
+  /** The subagents, one by one: each flies a mini rocket. */
+  agents: readonly AgentDial[] = []
+  private crew = new Crew(MINIS)
+  /** The mini rockets this site hosts: each subagent's (and on the split screen, their boosters coming home). */
+  private minis: LaunchSite[] = []
+  /**
+   * A mini rocket's: the site it flies with (whose camera, world and pixel
+   * layer it shares), its subagent's companion (none for a booster on the
+   * split screen), its place beside the host's site, and how many frames
+   * late it acts out the host's level.
+   */
+  private host: LaunchSite | null = null
+  private mate: Mate | null = null
+  private slot = 0
+  private lag = 0
+  /** How strongly a mini rocket is drawn: its companion arriving or leaving. */
+  private alpha = 1
+  /** The acted-out level, frame by frame (the last 32), for the mini rockets acting it out late. */
+  private log = new Int8Array(32)
+  private logAt = 0
+  /** Lights this frame (a mini rocket's beacon): their cells and colors, kept through the sepia (see grid). */
+  private lampCell = new Int32Array(MINIS)
+  private lampColor = new Int32Array(MINIS)
+  private nLamps = 0
 
   /** What it's doing now: engines burning, fuel venting, air rushing past, the quiet of orbit. */
   ambience(): Ambience {
@@ -451,9 +601,11 @@ abstract class LaunchSite extends SkyWorld {
   }
 
   protected abstract readonly specs: [band: Spec, tall: Spec]
+  /** The same rocket, smaller: a mini rocket's. */
+  protected abstract readonly miniSpecs: [band: Spec, tall: Spec]
   protected abstract readonly look: Look
-  /** Another site like this one, for the split screen. */
-  protected abstract twin(): LaunchSite
+  /** Another site like this one: the split screen's, or a mini rocket's. */
+  protected abstract twin(seed?: number): LaunchSite
 
   /** The level being acted out: it walks toward the asked-for level a stage at a time. */
   private staged = -1
@@ -463,10 +615,14 @@ abstract class LaunchSite extends SkyWorld {
   override step(): void {
     const asked = Math.max(0, Math.min(10, Math.round(this.strength)))
     this.sinceStage++
-    if (asked === 0 || this.staged < 0) {
+    if (this.host) {
+      // A mini rocket is asked its host's level as acted out (late): it acts it out as it is.
+      this.staged = asked
+    } else if (asked === 0 || this.staged < 0) {
       // Off is instant; a fresh start (a reload, the first frame) resumes as asked.
       this.staged = asked
       this.descending = false
+      this.log.fill(asked)
     } else if (this.sinceStage >= STAGE_FRAMES) {
       // A mission only climbs: a dip in the work holds it where it is. Asked
       // all the way back to 1 it comes home, a level a second, all the way,
@@ -480,8 +636,58 @@ abstract class LaunchSite extends SkyWorld {
         this.sinceStage = 0
       }
     }
+    this.logAt = (this.logAt + 1) & 31
+    this.log[this.logAt] = this.staged
     this.strength = this.staged
     super.step()
+    this.geo()
+    this.crew.room = this.siteRoom
+    this.crew.update(this.agents, this.coverageBoost)
+    this.stepMinis()
+  }
+
+  /**
+   * The mini rockets: one in for each companion arriving (on its pad; in
+   * flight if this one's flying), gone once it has left; each acting out
+   * this one's level a few frames late (its own lag), but a quiet agent's
+   * rocket on the ground not starting a mission.
+   */
+  private stepMinis(): void {
+    const mates = this.crew.mates
+    const minis = this.minis
+    for (let i = minis.length - 1; i >= 0; i--) {
+      const m = minis[i]!.mate
+      if (m && !mates.includes(m)) minis.splice(i, 1)
+    }
+    for (const m of mates) if (!minis.some(r => r.mate === m)) this.addMini(m, m.slot, Math.floor(m.seed * 1e6))
+    for (const r of minis) {
+      const m = r.mate
+      const idle = m && m.busy < 0.5 && !r.fresh && r.state === 'rest' && r.part === 'full'
+      r.strength = idle ? 1 : this.log[(this.logAt - r.lag) & 31]!
+      r.tint = m && m.leaving && !m.ok ? 'smoke' : this.tint
+      r.step()
+      // Heard as the big one is, a little quieter (a smaller rocket): its ignition, sonic booms, its booster's
+      // landing or catch, chutes, splashdown. A beat behind the big one's, so they never land as one.
+      const k = 0.6 * (m ? m.here : 1)
+      for (const e of r.sounds) hear(this.sounds, { kind: e.kind, v: e.v * k })
+      r.sounds.length = 0
+    }
+  }
+
+  /** A mini rocket of this one's kind, on the site in `slot`, flying with it. */
+  private addMini(mate: Mate | null, slot: number, seed: number): LaunchSite {
+    const r = this.twin(seed)
+    r.host = this
+    r.mate = mate
+    r.slot = slot
+    r.lag = 3 + 5 * slot + (seed % 4)
+    r.ensure(this.columns, this.rows)
+    this.minis.push(r)
+    return r
+  }
+
+  agentMarks(): readonly AgentMark[] {
+    return this.strength > 0 ? this.crew.marks : []
   }
 
   /** Coming home: the acted-out level walking down to 1. */
@@ -490,8 +696,19 @@ abstract class LaunchSite extends SkyWorld {
   /** Drawn at the acted-out level too, even on a frame drawn without a step. */
   override grid(): Cells {
     if (this.staged >= 0 && this.strength > 0) this.strength = this.staged
+    this.nLamps = 0
     const out = this.drawFrame()
-    waitTone(out, this.kWait, this.t)
+    // A mini rocket's beacon keeps its color through the sepia: whichever of its cell's two is it.
+    const lamps = this.lamps
+    for (let n = 0; n < this.nLamps; n++) {
+      const i = this.lampCell[n]!
+      const c = this.lampColor[n]!
+      const fg = out.foreground(i)
+      const bg = out.background(i)
+      lamps[i] = dist(fg, c) <= dist(bg, c) ? fg : bg
+    }
+    waitTone(out, this.kWait, this.t, undefined, this.nLamps ? lamps : undefined)
+    for (let n = 0; n < this.nLamps; n++) lamps[this.lampCell[n]!] = -1
     return out
   }
 
@@ -640,11 +857,15 @@ abstract class LaunchSite extends SkyWorld {
     }
     this.pw = columns * 2
     this.ph = rows * 2
+    for (const r of this.minis) r.ensure(columns, rows)
+    // (A mini rocket paints into its host's pixel layer.)
+    if (this.host) return
     this.pc = new Uint32Array(this.pw * this.ph)
     this.pa = new Float32Array(this.pw * this.ph)
     this.touched = new Uint8Array(columns * rows)
     this.list = new Int32Array(columns * rows)
     this.nTouched = 0
+    this.lamps = new Int32Array(columns * rows).fill(-1)
   }
 
   override seed(altitude: number): void {
@@ -663,39 +884,107 @@ abstract class LaunchSite extends SkyWorld {
     if (key === this.geoKey) return
     this.geoKey = key
     this.tall = this.rows >= 16
-    const s = (this.spec = this.specs[this.tall ? 1 : 0])
+    const h = this.host
+    const s = (this.spec = (h ? this.miniSpecs : this.specs)[this.tall ? 1 : 0])
     const ox0 = -s.bodyL
     const tx0 = ceilEven(ox0 + s.fly.w)
     const pw = this.columns * 2
     let body: number
-    if (this.tall) body = 2 * Math.round((pw / 2 - (ox0 + tx0 + s.towerW) / 2) / 2)
-    else body = 2 * Math.floor(this.columns * 0.42)
-    body = Math.max(-ox0 + 2, Math.min(body, pw - tx0 - s.towerW - 2))
-    this.bodyPx = ceilEven(body)
+    if (h) {
+      h.geo()
+      body = h.siteX(this.slot)
+    } else {
+      if (this.tall) body = 2 * Math.round((pw / 2 - (ox0 + tx0 + s.towerW) / 2) / 2)
+      else body = 2 * Math.floor(this.columns * 0.42)
+      body = ceilEven(Math.max(-ox0 + 2, Math.min(body, pw - tx0 - s.towerW - 2)))
+    }
+    this.bodyPx = body
     this.ox = this.bodyPx + ox0
     this.tx = this.bodyPx + tx0
     this.padL = Math.floor((this.ox - 2) / 2)
     this.padR = Math.floor((this.tx + s.towerW + 1) / 2)
     // Falcon's booster lands on its legs on a landing zone off to the left,
     // and Starship's Ship splashes down in the sea there: far enough that the
-    // pad is out of sight.
-    this.lz = this.boosterOnly && this.look.catches ? 0 : -2 * Math.ceil((pw - this.ox + 4) / 2)
+    // pad is out of sight. A mini rocket's comes down beside its host's (see seaOff).
+    if (this.boosterOnly && this.look.catches) this.lz = 0
+    else if (!h) this.lz = -2 * Math.ceil((pw - this.ox + 4) / 2)
+    else this.lz = h.lz + (this.look.catches ? this.seaOff(h) - (this.bodyPx - h.bodyPx) : 0)
     if (this.state === 'rest') this.alt = s.mount / 2
+    if (h) return
+    // The mini rockets' sites: as many as fit on the grid.
+    this.siteRoom = 0
+    while (this.siteRoom < MINIS && Number.isFinite(this.siteX(this.siteRoom))) this.siteRoom++
+  }
+
+  /** How many mini rockets' sites fit beside this one on the grid. */
+  private siteRoom = 0
+
+  /**
+   * A mini rocket's site by slot: where its body starts (pixels), right of
+   * the tower, left of the rocket (in the band clear of where Starship's Ship
+   * is parked to be stacked), then further out each way; NaN where the grid has no
+   * room for its rocket (its tower may be cut off by the edge of a narrow pane).
+   */
+  private siteX(slot: number): number {
+    const m = this.miniSpecs[this.tall ? 1 : 0]
+    const s = this.spec
+    const pw = this.columns * 2
+    const gap = pw < 32 ? 0 : this.tall ? 3 : 4
+    // The site's extent from where its body starts: the rocket's left edge, the tower's right one.
+    const l = -m.bodyL
+    const r = ceilEven(l + m.fly.w) + m.towerW
+    let right = this.tx + s.towerW + gap
+    // (Clear of where Starship's Ship is parked to be stacked, in the band; the narrow spine has no room to spare,
+    // so there a mini site stands behind it: the minis are the background.)
+    let left = this.ox - (this.look.catches && !this.tall ? s.fly.w + 3 : 0) - gap
+    let x = 0
+    for (let k = 0; k <= slot; k++) {
+      if (k % 2 === 0) {
+        x = right - l
+        right = x + r + gap
+      } else {
+        x = left - r
+        left = x + l - gap
+      }
+    }
+    if (x >= 0 && x + m.bodyW <= pw) return x
+    // Out of room either side in the narrow spine: the next one stands right behind the big site, between its
+    // rocket and its tower, seen through the lattice (the minis are the background); one there, no more.
+    if (this.tall && slot === MINIS - 1) {
+      const behind = Math.floor(ceilEven((this.ox + this.spec.fly.w + this.tx) / 2) - m.bodyW)
+      if (behind >= 0) return behind
+    }
+    return NaN
   }
 
   /** The camera's place along the ground in whole cells' worth of pixels, so the pixels and the cells move together. */
   private viewX(): number {
+    // (A mini rocket is seen through its host's camera.)
+    if (this.host) return this.host.viewX()
     // With the split screen open, this side's view sits centered in the right-hand part.
     return 2 * Math.round((this.view - (this.splitTall ? 0 : this.splitW)) / 2)
   }
 
   /** Where the Ship or Dragon comes down in the sea, along the ground from the mount (pixels): past Falcon's landing zone. */
   private seaX(): number {
+    const h = this.host
+    if (h && !this.look.catches) return h.seaX() + this.seaOff(h) - (this.bodyPx - h.bodyPx)
     return this.look.catches ? this.lz : 2 * this.lz
+  }
+
+  /**
+   * A mini rocket comes down (on land, and at sea) as far along the ground
+   * from its host as its site is from its host's, so it comes home beside
+   * it; but at sea no nearer the shore than there's sea for.
+   */
+  private seaOff(h: LaunchSite): number {
+    const d = this.bodyPx - h.bodyPx
+    return Math.min(d, 2 * h.shore() - (h.ox + h.seaX()) - this.spec.fly.w - 2)
   }
 
   /** The sea: everything left of this column (cells), halfway out from the land (the pad, or Falcon's landing zone) to where it comes down. */
   private shore(): number {
+    if (this.host) return this.host.shore()
     if (!this.lz || this.boosterOnly) return -1e9
     return Math.floor((this.ox + (this.seaX() + (this.look.catches ? 0 : this.lz)) / 2) / 2)
   }
@@ -717,6 +1006,7 @@ abstract class LaunchSite extends SkyWorld {
 
   /** The world scrolls just enough to keep the rocket's nose on the grid. */
   protected override get scroll(): number {
+    if (this.host) return this.host.scroll
     this.geo()
     return Math.max(0, Math.ceil(this.scrollExact()))
   }
@@ -1312,6 +1602,7 @@ abstract class LaunchSite extends SkyWorld {
     else if (this.armY < 0) this.armY = armGoal
     else this.armY += Math.max(-0.6, Math.min(0.6, armGoal - this.armY))
 
+    if (this.host) thrGoal = this.formation(thrGoal, homeward)
     this.thr += (thrGoal - this.thr) * 0.35
     if (this.thr < 0.02 && thrGoal === 0) this.thr = 0
 
@@ -1331,13 +1622,12 @@ abstract class LaunchSite extends SkyWorld {
     const headroom = Math.min(Math.round(HEADROOM * visible * 2), Math.max(0, 2 * visible - (s.fly.h - this.partRows(this.part)[0]) - 6))
     const camGoal = this.tall && flying && (!homeward || this.alt - goal > 25) ? headroom : 0
     this.camP += Math.max(-0.6, Math.min(0.6, camGoal - this.camP))
-    // Fold away a tile once the real world below the layer is off the grid.
-    if (flying && !homeward) {
+    // Fold away a tile once the real world below the layer is off the grid (a mini rocket is folded with its host's world).
+    if (flying && !homeward && !this.host) {
       const a = this.layer - TILE / 2
       while (this.scroll - 1 - a >= 2 * TILE + 1) {
-        this.alt -= TILE
+        this.shift(-TILE)
         this.wraps++
-        for (let i = 0; i < PMAX; i++) this.py[i]! -= 2 * TILE
       }
     }
     // The stars stream past: down as it climbs, and down-and-back along its tilt in orbit.
@@ -1364,7 +1654,8 @@ abstract class LaunchSite extends SkyWorld {
   private settle(lv: number, layer: number, catchAlt: number): void {
     this.state = 'fly'
     this.flyTime = 120
-    this.alt = catchAlt + 200
+    // (A mini rocket joins its host where it's flying.)
+    this.alt = this.host ? this.host.alt : catchAlt + 200
     this.v = SPEED[lv]!
     this.thr = 1
     this.layer = layer
@@ -1394,9 +1685,10 @@ abstract class LaunchSite extends SkyWorld {
     this.ghost = { part: 'booster', d: 0, v: -0.05, acc: -0.025, life: 48, max: 48 }
     // The booster turns back: once it's fallen out of frame, a split screen
     // follows it down (side by side in the band, top and bottom in a tall
-    // pane), when there's room for one; else it's simply home in time.
+    // pane), when there's room for one; else it's simply home in time. (A
+    // mini rocket's comes home on its host's split screen, if it opens.)
     const room = this.tall ? Math.floor(this.rows / 2) >= 12 : Math.floor(this.columns / 2) >= 9
-    if (room) this.twinDue = true
+    if (room || this.host) this.twinDue = true
     else this.boosterHome = true
   }
 
@@ -1420,11 +1712,42 @@ abstract class LaunchSite extends SkyWorld {
 
   /** Falling through the folded sky: unfold a tile whenever the real world below would come into view. */
   private unfold(): void {
+    if (this.host) return
     const a = this.layer - TILE / 2
-    while (this.scroll - 1 - a < TILE + 1) {
-      this.alt += TILE
-      for (let i = 0; i < PMAX; i++) this.py[i]! += 2 * TILE
+    while (this.scroll - 1 - a < TILE + 1) this.shift(TILE)
+  }
+
+  /** The world folds (or unfolds) a tile under what's flying: it moves with it, its smoke, and the mini rockets in flight. */
+  private shift(rows: number): void {
+    this.alt += rows
+    for (let i = 0; i < PMAX; i++) this.py[i]! += 2 * rows
+    for (const r of this.minis) if (r.state === 'fly') r.shift(rows)
+  }
+
+  /**
+   * A mini rocket flying with its host keeps formation: upright, its nose a
+   * little below the host's (dropped back while its agent is quiet, up from
+   * below arriving, pulling away leaving, falling away if it failed), at its
+   * own drift. Its engines idle while it's quiet; leaving, they burn hard.
+   * (In orbit its place is its station: see pose.)
+   */
+  private formation(thrGoal: number, homeward: boolean): number {
+    const h = this.host!
+    const m = this.mate
+    if (this.state !== 'fly' || h.state !== 'fly') return thrGoal
+    const tall = this.tall
+    const quiet = m ? 1 - m.busy : 0
+    let gap = (tall ? FORMATION.tall : FORMATION.band).gap[this.slot % MINIS]! + quiet * (tall ? 10 : 3)
+    gap += (noise1(this.t * 0.02, this.slot * 31 + 7) - 0.5) * (tall ? 3 : 1)
+    if (m) {
+      const away = 1 - m.here
+      const run = this.ph + 20
+      gap += !m.leaving || !m.ok ? away * run : -away * away * run * 1.5
     }
+    const goal = h.alt + (h.topRow() - this.topRow() - gap) / 2
+    this.alt += (goal - this.alt) * 0.2
+    if (m && m.leaving && m.ok) return 1
+    return homeward ? thrGoal : thrGoal * (1 - 0.85 * quiet)
   }
 
   /** Where what's flying is in this site's own grid: the cell at its middle (column, row). */
@@ -1444,37 +1767,57 @@ abstract class LaunchSite extends SkyWorld {
     const w = this.splitTall ? this.columns : Math.floor(this.columns / 2)
     const h = this.splitTall ? Math.floor(this.rows / 2) : this.rows
     const t = this.twin()
-    t.boosterOnly = true
     t.night = this.night
     t.tint = this.tint
     t.strength = 1
     t.ensure(w, h)
-    t.geo()
-    t.fresh = false
-    t.part = 'booster'
-    t.returning = true
-    t.state = 'fly'
-    t.flyTime = 120
-    // It falls back down through the sky a layer a second, from where it separated.
-    t.staged = 7
-    t.sinceStage = 0
-    t.layer = LAYER[7]!
-    t.alt = t.layer + TILE
-    t.v = -0.6
-    t.service = 0
+    t.homeward()
     this.twinSite = t
     this.twinW = w
     this.twinH = h
     this.twinDone = 0
   }
 
-  /** Step the split screen's booster, and open or close the panel around it. */
+  /** Bring a booster home: the split screen's, falling back down through the sky from where it separated, a layer a second. */
+  private homeward(): void {
+    this.boosterOnly = true
+    this.geo()
+    this.fresh = false
+    this.part = 'booster'
+    this.returning = true
+    this.state = 'fly'
+    this.flyTime = 120
+    this.staged = 7
+    this.sinceStage = 0
+    this.log.fill(7)
+    this.layer = LAYER[7]!
+    this.alt = this.host ? this.host.alt : this.layer + TILE
+    this.v = -0.6
+    this.service = 0
+  }
+
+  /**
+   * Step the split screen's booster, and open or close the panel around it.
+   * The mini rockets' boosters come home on it too, each beside the big
+   * one's; with none open or coming, they're simply home.
+   */
   private stepTwin(): void {
+    if (this.host) return
     if (this.twinDue && !this.ghost) {
       this.twinDue = false
       this.openTwin()
     }
     const t = this.twinSite
+    for (const r of this.minis) {
+      if (!r.twinDue || r.ghost) continue
+      r.twinDue = false
+      if (t && t.state === 'fly' && Number.isFinite(t.siteX(r.slot))) {
+        const b = t.addMini(null, r.slot, r.t + 3)
+        b.homeward()
+        r.twinSite = b
+      } else if (!this.twinDue) r.boosterHome = true
+      else r.twinDue = true
+    }
     if (!t) return
     t.night = this.night
     t.tint = this.tint
@@ -1493,6 +1836,11 @@ abstract class LaunchSite extends SkyWorld {
       this.splitW = 0
       this.twinSite = null
       this.boosterHome = true
+      for (const r of this.minis) {
+        if (!r.twinSite) continue
+        r.twinSite = null
+        r.boosterHome = true
+      }
     }
   }
 
@@ -1528,8 +1876,8 @@ abstract class LaunchSite extends SkyWorld {
   /** The plume's length this frame, flickering (and sputtering on a failed command). */
   private plumeLen(): number {
     const p = this.part
-    // (No plume from the Ship while it's still turning upright.)
-    if (this.thr <= 0 || p === 'dragon' || p === 'capsule' || this.flop > 0.3) return 0
+    // (No plume from the Ship until it's all but upright: the plume falls straight down, and a tilted Ship over it looks wrong.)
+    if (this.thr <= 0 || p === 'dragon' || p === 'capsule' || this.flop > 0.06) return 0
     let len = this.spec.plume * this.thr * (0.85 + 0.3 * this.rng.f()) * (this.part === 'upper' ? 0.7 : 1)
     if (this.tint === 'smoke' && hash(this.t >> 1, 3, 43) < 0.35) len *= 0.25
     return len
@@ -1563,13 +1911,13 @@ abstract class LaunchSite extends SkyWorld {
     const s = this.spec
     const r = this.rng
     const [A, cx] = this.nozzle()
-    const scale = this.tall ? 1 : 0.6
+    const scale = this.big ? 1 : 0.6
     const smoky = this.tint === 'smoke'
     const len = this.thr > 0 ? s.plume * this.thr : 0
 
     // Steam and smoke billowing off the pad while the plume reaches it.
     if (len > 0 && A - len < 2) {
-      const n = (this.tall ? 6 : 2) + (this.state === 'ignite' ? 2 : 0)
+      const n = (this.big ? 6 : 2) + (this.state === 'ignite' ? 2 : 0)
       for (let k = 0; k < n; k++) {
         const side = r.f() < 0.5 ? -1 : 1
         const out = s.bodyW / 2 + r.f() * (len - A + 2) * 1.2
@@ -1609,7 +1957,7 @@ abstract class LaunchSite extends SkyWorld {
       (this.state === 'landed' && this.timer > 30) ||
       (this.state === 'release' && this.alt <= s.mount / 2)
     if (venting) {
-      const p = (0.16 + Math.min(60, this.coverageBoost) * 0.01 + (smoky ? 0.25 : 0)) * (this.tall ? 1 : 0.6)
+      const p = (0.16 + Math.min(60, this.coverageBoost) * 0.01 + (smoky ? 0.25 : 0)) * (this.big ? 1 : 0.6)
       const sp = s.fly
       // A stage on its own vents only from its own tanks.
       const [from, to] = this.partRows(this.part)
@@ -1618,11 +1966,11 @@ abstract class LaunchSite extends SkyWorld {
         this.spawn(
           this.ox + this.pos + col + dir * 0.5,
           this.apx() + (sp.h - 1 - row),
-          dir * (0.12 + r.f() * 0.3) * (this.tall ? 1 : 0.7),
+          dir * (0.12 + r.f() * 0.3) * (this.big ? 1 : 0.7),
           -(0.02 + r.f() * 0.05),
           22 + r.f() * 26,
           0.5,
-          (this.tall ? 2.2 : 1.1) * (0.7 + r.f() * 0.6),
+          (this.big ? 2.2 : 1.1) * (0.7 + r.f() * 0.6),
           smoky ? 0x8a8a8e : this.tint === 'blue' ? 0xbcd8ff : 0xf2f6fb,
           0.7,
         )
@@ -1631,7 +1979,7 @@ abstract class LaunchSite extends SkyWorld {
     // The Ship's end at sea: a fireball rolling up off the water.
     if (this.boom > 0) {
       if (this.boom < 5)
-        for (let k = 0; k < (this.tall ? 10 : 4); k++) {
+        for (let k = 0; k < (this.big ? 10 : 4); k++) {
           const hot = r.f()
           this.spawn(cx + (r.f() - 0.5) * s.stage, 1 + r.f() * 2, (r.f() - 0.5) * 1.2 * scale, 0.2 + r.f() * 0.8, 14 + r.f() * 16, s.puff[0], s.puff[1] * 1.4, hot < 0.3 ? 0xfff2c0 : hot < 0.7 ? 0xff9a2a : 0xd8402a, 1)
         }
@@ -1641,7 +1989,7 @@ abstract class LaunchSite extends SkyWorld {
     if (this.look.catches && this.part === 'upper' && this.burn > 6 && this.burn < 84 && this.flop > 0.5) {
       const len = s.stage
       const mid = this.apx() + (s.fly.h - s.stage) + s.stage / 2
-      for (let k = 0; k < (this.tall ? 4 : 2); k++) {
+      for (let k = 0; k < (this.big ? 4 : 2); k++) {
         const hot = r.f()
         this.spawn(cx + (r.f() - 0.5) * len * 2, mid - s.bodyW / 2 - 1 - r.f(), (r.f() - 0.5) * 0.4, 0.5 + r.f() * 1.1, 6 + r.f() * 8, 0.5, 1.2, hot < 0.4 ? 0xff5aa0 : hot < 0.75 ? 0xff7a2a : 0xffc46a, 0.85)
       }
@@ -1656,10 +2004,10 @@ abstract class LaunchSite extends SkyWorld {
     }
     // The Ship coming down in the sea: a burst of spray, then a little wash.
     if (this.splash > 0) {
-      const n = this.splash < 3 ? (this.tall ? 18 : 8) : this.splash < 40 && r.f() < 0.3 ? 1 : 0
+      const n = this.splash < 3 ? (this.big ? 18 : 8) : this.splash < 40 && r.f() < 0.3 ? 1 : 0
       for (let k = 0; k < n; k++) {
         const side = r.f() < 0.5 ? -1 : 1
-        this.spawn(cx + side * (s.bodyW / 2 + r.f() * 2), 0, side * (0.2 + r.f() * 0.6) * scale, 0.3 + r.f() * (this.tall ? 0.9 : 0.4), 10 + r.f() * 14, 0.6, s.puff[1] * 0.6, 0xeef6ff, 0.9)
+        this.spawn(cx + side * (s.bodyW / 2 + r.f() * 2), 0, side * (0.2 + r.f() * 0.6) * scale, 0.3 + r.f() * (this.big ? 0.9 : 0.4), 10 + r.f() * 14, 0.6, s.puff[1] * 0.6, 0xeef6ff, 0.9)
       }
       this.splash = this.state === 'landed' ? this.splash + 1 : 0
     }
@@ -1699,9 +2047,11 @@ abstract class LaunchSite extends SkyWorld {
 
   /** Paint a pixel by its grid-pixel position (row py from the top). */
   private paintP(x: number, py: number, color: number, a: number): void {
+    // (A mini rocket paints into its host's layer, as strongly as its companion is there.)
+    if (this.host) return this.host.paintP(x, py, color, a * this.alpha)
     // World pixels (whole ones: a fraction would index nothing), seen from where the camera is along the ground.
     x = Math.floor(x) - this.viewX()
-    if (x < 0 || x >= this.pw || py < 0 || py >= this.ph || a <= 0.03) return
+    if (!(x >= 0 && x < this.pw && py >= 0 && py < this.ph) || a <= 0.03) return
     const k = py * this.pw + x
     const old = this.pa[k]!
     if (a >= 1) {
@@ -1726,21 +2076,107 @@ abstract class LaunchSite extends SkyWorld {
     return this.boosterOnly && !this.look.catches
   }
 
+  /** The launch site and its rocket (a mini rocket's into its host's pixel layer); for the host, Earth below and the mini rockets behind first. */
   protected drawVehicle(out: Cells, _top: number): void {
     this.geo()
     this.base = 2 * (this.scroll + this.rows - 2) + 1
+    const h = this.host
+    if (h) {
+      if (!Number.isFinite(this.bodyPx)) return
+      this.alpha = this.mate ? this.mate.here : 1
+      this.drawDecks()
+    } else {
+      this.crew.clearMarks()
+      this.drawEarth(out)
+      for (const r of this.minis) r.drawVehicle(out, 0)
+    }
     if (!this.siteHidden) {
       this.drawTower()
       this.drawMount()
     }
-    this.drawEarth(out)
     this.drawParticles()
-    if (this.orbit > 0.02) this.drawTiltedPlume()
+    if (this.orbit > 0.02 || this.tumble) this.drawTiltedPlume()
     else this.drawPlume()
     this.drawRocket()
     if (this.look.catches) this.drawArms()
     if (!this.siteHidden) this.drawLights()
-    this.composite(out)
+    if (h) this.drawBeacon(h)
+    else this.composite(out)
+  }
+
+  /** A mini rocket's concrete (the big one's is the ground's own): under its site, and Falcon's landing zone. Whole cells, so no grass is lost beside it. */
+  private drawDecks(): void {
+    const s = this.spec
+    const deck = (x0: number, x1: number) => {
+      for (let x = x0 & ~1; x <= (x1 | 1); x++) {
+        this.paint(x, -1, PAD.fg, 1)
+        this.paint(x, -2, PAD.bg!, 1)
+      }
+    }
+    if (!this.siteHidden) deck(this.ox - 1, this.tx + s.towerW)
+    if (!this.look.catches) deck(this.ox + this.lz - 1, this.ox + this.lz + s.land.w)
+  }
+
+  /**
+   * A mini rocket's companion: resting, a light blinking on the nose of
+   * what's flying (an amber beacon while its agent waits on you, kept through
+   * the sepia); and where it is, for its agent's hover card.
+   */
+  private drawBeacon(h: LaunchSite): void {
+    const m = this.mate
+    if (!m) return
+    const s = this.spec
+    const sp = s.fly
+    const [r0, r1] = this.partRows(this.part)
+    const [cx, cy, th, sc] = this.pose(sp)
+    const sn = Math.sin(th)
+    const cs = Math.cos(th)
+    // A point on the sprite (column, row) as drawn: grid pixels, before the camera.
+    const px = (col: number, row: number) => cx + (col - sp.w / 2) * sc * cs - 2 * (row - sp.h / 2) * sc * sn
+    const py = (col: number, row: number) => cy + ((col - sp.w / 2) * sc * sn + 2 * (row - sp.h / 2) * sc * cs) / 2
+    if (m.busy < 0.5 && !m.leaving) {
+      const on = m.waiting ? ((this.t >> 2) & 1) === 0 : this.t % 21 < 3
+      const col = s.bodyL + s.bodyW / 2
+      const x = Math.floor(px(col, r0 - 0.5))
+      const y = Math.floor(py(col, r0 - 0.5))
+      if (on && m.waiting) h.lampP(x, y, LIGHT.amber)
+      else if (on) this.paintP(x, y, 0xffffff, 1)
+    }
+    // Its box: the corners of what's flying.
+    let x0 = Infinity
+    let x1 = -Infinity
+    let y0 = Infinity
+    let y1 = -Infinity
+    for (let k = 0; k < 4; k++) {
+      const col = k & 1 ? sp.w : 0
+      const row = k & 2 ? r1 : r0
+      x0 = Math.min(x0, px(col, row))
+      x1 = Math.max(x1, px(col, row))
+      y0 = Math.min(y0, py(col, row))
+      y1 = Math.max(y1, py(col, row))
+    }
+    const vx = this.viewX()
+    h.crew.mark(m, (x0 - vx) / 2, y0 / 2, (x1 - x0) / 2, (y1 - y0) / 2, this.columns, this.rows)
+  }
+
+  /** A failed agent's mini rocket tumbling as it falls away (radians). */
+  private get tumble(): number {
+    const m = this.mate
+    return m && m.leaving && !m.ok ? (1 - m.here) * 3 * (this.slot & 1 ? -1 : 1) : 0
+  }
+
+  /** Sizes for details (smoke, spray, chutes, the arms' pincers): the spine's for a big rocket there, the band's for every other. */
+  private get big(): boolean {
+    return this.tall && !this.host
+  }
+
+  /** A light (grid pixels, before the camera): painted, and kept in its own color through the waiting look's sepia. */
+  private lampP(x: number, py: number, color: number): void {
+    this.paintP(x, py, color, 1)
+    const gx = x - this.viewX()
+    if (gx < 0 || gx >= this.pw || py < 0 || py >= this.ph || this.nLamps >= MINIS) return
+    this.lampCell[this.nLamps] = (py >> 1) * this.columns + (gx >> 1)
+    this.lampColor[this.nLamps++] = color
   }
 
   private drawTower(): void {
@@ -1760,7 +2196,7 @@ abstract class LaunchSite extends SkyWorld {
         this.paint(x0 + tw - 2 - t, y, col, 1)
       } else if (!mz && y % 4 === 0) {
         for (let x = 1; x < tw - 1; x++) this.paint(x0 + x, y, col, 1)
-      } else this.paint(x0 + 1 + (y % (tw - 2)), y, col, 0.85)
+      } else if (tw > 2) this.paint(x0 + 1 + (y % (tw - 2)), y, col, 0.85)
     }
     if (this.tall) {
       // A lightning rod on top.
@@ -1831,27 +2267,58 @@ abstract class LaunchSite extends SkyWorld {
     const s = this.spec
     const ramp = this.ramp
     const [A, cx, wk] = this.nozzle()
-    // Thin air lets the plume balloon out.
-    const spread = 0.08 + Math.min(0.45, this.alt / 180)
-    const t = this.t
-    for (let d = 0; d < len; d++) {
-      const y = A - 1 - d
-      const half = (s.bodyW / 2) * wk + d * spread
-      if (y < 0) {
-        this.deflect(cx, half, len - d, ramp)
-        break
-      }
-      const k = d / len
-      // Shock diamonds in the core.
-      const diamond = this.tall && d % 5 === 2 && k < 0.6 ? 0.15 : 0
-      const xa = Math.ceil(cx - half)
-      const xb = Math.floor(cx + half)
-      for (let x = xa; x <= xb; x++) {
-        const edge = Math.abs(x - cx) / (half + 0.5)
-        const n = hash(x, d + t * 7, 47) - 0.5
+    const spread = this.plumeSpread()
+    const half = (s.bodyW / 2) * wk
+    // Straight down from the nozzle, stopping at the ground, where it splashes sideways.
+    this.flame(cx + 0.5, 2 * (this.base - A + 1), 0, 2 * len, half, spread, ramp, 2.4, 1, this.big, 0, this.base)
+    if (len > A) this.deflect(cx, half + A * spread * 2, len - A, ramp)
+  }
+
+  /** How fast the plume widens along its length (a unit: see flame): thin air lets it balloon out. */
+  private plumeSpread(): number {
+    return this.orbit > 0.02 ? 0.12 : (0.08 + Math.min(0.45, this.alt / 180)) / 2
+  }
+
+  /**
+   * One plume, the rocket's or an escort's: from its nozzle at (tx, ty) back
+   * along attitude `th` (radians from upright, as pose's), `L` long. In units:
+   * a grid pixel is one across and two down (ty is twice the pixel row), so
+   * it turns true. Half `half0` wide at the nozzle, widening `spread` a unit,
+   * white-hot in the core and cooling along `ramp` to its tip and edges,
+   * flickering pixel by pixel (`salt` keeps two plumes out of step); `body`
+   * how far along it stays solid, `alpha` its strength, shock diamonds if
+   * asked, and nothing below pixel row `floor` (the ground). Each grid pixel
+   * it covers is painted once, at any attitude.
+   */
+  private flame(tx: number, ty: number, th: number, L: number, half0: number, spread: number, ramp: Ramp, body: number, alpha: number, diamonds: boolean, salt: number, floor: number): void {
+    if (L < 1) return
+    const sn = Math.sin(th)
+    const cs = Math.cos(th)
+    const hm = half0 + L * spread + 1
+    // The box round the nozzle and the tip, as wide as the plume gets.
+    const ex = tx - sn * L
+    const ey = ty + cs * L
+    const x0 = Math.floor(Math.min(tx, ex) - hm)
+    const x1 = Math.ceil(Math.max(tx, ex) + hm)
+    const y0 = Math.max(0, Math.floor((Math.min(ty, ey) - hm) / 2))
+    const y1 = Math.min(this.ph - 1, floor, Math.ceil((Math.max(ty, ey) + hm) / 2))
+    const t7 = this.t * 7 + salt
+    for (let py = y0; py <= y1; py++) {
+      const uy = (py + 0.5) * 2 - ty
+      for (let px = x0; px <= x1; px++) {
+        const ux = px + 0.5 - tx
+        const d = -ux * sn + uy * cs
+        if (d < 0 || d >= L) continue
+        const e = Math.abs(ux * cs + uy * sn)
+        const half = half0 + d * spread
+        if (e > half) continue
+        const k = d / L
+        const edge = e / (half + 0.5)
+        const n = hash(px, py + t7, 47) - 0.5
+        // Shock diamonds in the core.
+        const diamond = diamonds && ((d / 2) | 0) % 5 === 2 && k < 0.6 ? 0.15 : 0
         const heat = 1 - 0.85 * k - 0.45 * edge * edge + diamond + n * 0.15
-        const a = Math.min(1, (1 - k) * 2.4 - edge * 0.35 + n * 0.4)
-        this.paint(x, y, rampColor(ramp, heat), a)
+        this.paintP(px, py, rampColor(ramp, heat), Math.min(1, (1 - k) * body - edge * 0.35 + n * 0.4) * alpha)
       }
     }
   }
@@ -1877,10 +2344,11 @@ abstract class LaunchSite extends SkyWorld {
     const o = this.orbit
     const cx = this.ox + posX + sp.w / 2
     const cy = this.base - this.apx() - sp.h + 1 + sp.h / 2
-    if (o <= 0 && turned && (this.flop > 0 || this.lean !== 0)) {
+    const spin = this.tumble
+    if (o <= 0 && turned && (this.flop > 0 || this.lean !== 0 || spin !== 0)) {
       // Belly-first, tiles down, nose toward the sea (or Dragon leaning into
-      // its entry): turned about the middle of what's flying.
-      const th = -(Math.PI / 2) * this.flop + this.lean
+      // its entry, or a failed mini rocket tumbling): turned about the middle of what's flying.
+      const th = -(Math.PI / 2) * this.flop + this.lean + spin
       const [r0, r1] = this.partRows(this.part)
       const off = sp.h / 2 - (r0 + r1) / 2
       const sn = Math.sin(th)
@@ -1889,13 +2357,8 @@ abstract class LaunchSite extends SkyWorld {
     }
     if (o <= 0) return [cx, cy, 0, 1]
     const k = o * o * (3 - 2 * o)
-    // In orbit it sits mid-grid, tilted toward its travel; in the spine the
-    // camera pulls back so the whole tilted stack fits the narrow pane.
-    const ocx = this.pw / 2 + (this.tall ? 0 : -2)
-    const ocy = (this.ph - (this.splitTall ? 2 * this.splitW : 0)) * (this.tall ? 0.42 : 0.36)
-    // Shrunk just enough for the tilted stack to fit the pane's width (its right-hand part, split).
-    const room = this.pw - (this.splitTall ? 0 : 2 * this.splitW)
-    const sc = this.tall ? 1 - k * (1 - Math.min(0.85, (room - 7) / (2 * sp.h * Math.max(0.3, Math.sin(this.tilt))))) : 1
+    const [ocx, ocy, full] = this.host ? this.station() : this.orbitFrame()
+    const sc = this.tall ? 1 - k * (1 - full) : 1
     // Centered on what's flying (after separation, the upper stage), not on the whole stack:
     // the stage's middle is `off` sprite rows from the sprite's, along its axis.
     const [r0, r1] = this.partRows(this.part)
@@ -1905,9 +2368,53 @@ abstract class LaunchSite extends SkyWorld {
     return [
       cx + (ocx - 2 * off * sn * sc - cx) * k,
       cy + (ocy + off * cs * sc - cy) * k,
-      this.tilt,
+      this.tilt + spin,
       sc,
     ]
+  }
+
+  /**
+   * In orbit, where what's flying sits (grid pixels) and, in the spine, how
+   * small: mid-grid, tilted toward its travel, the camera pulled back just
+   * enough for the whole tilted stack to fit the narrow pane (its part clear
+   * of the split screen).
+   */
+  private orbitFrame(): [x: number, y: number, scale: number] {
+    const ocx = this.pw / 2 + (this.tall ? 0 : -2)
+    const ocy = (this.ph - (this.splitTall ? 2 * this.splitW : 0)) * (this.tall ? 0.42 : 0.36)
+    const room = this.pw - (this.splitTall ? 0 : 2 * this.splitW)
+    const full = this.tall ? Math.min(0.85, (room - 7) / (2 * this.spec.fly.h * Math.max(0.3, Math.sin(this.tilt)))) : 1
+    return [ocx, ocy, full]
+  }
+
+  /**
+   * A mini rocket in orbit: its station off its host's middle (dropped back
+   * while its agent is quiet), and its host's scale. Arriving, it comes up
+   * from astern; leaving, it pulls away ahead (failed: falls away).
+   */
+  private station(): [x: number, y: number, scale: number] {
+    const [hx, hy, full] = this.host!.orbitFrame()
+    const tall = this.tall
+    const [along0, across] = (tall ? FORMATION.tall : FORMATION.band).orbit[this.slot % MINIS]!
+    const m = this.mate
+    const sc = tall ? full : 1
+    const sn = Math.sin(this.tilt)
+    const cs = Math.cos(this.tilt)
+    const along = along0 - (m ? (1 - m.busy) * 6 : 0)
+    let x = clamp(hx + (along * sn + across * cs) * sc, 3, this.pw - 3)
+    let y = clamp(hy + ((-along * cs + across * sn) / 2) * sc, 2, this.ph - 3)
+    if (m) {
+      const away = 1 - m.here
+      const run = this.pw + this.ph
+      if (!m.leaving) {
+        x -= sn * away * run
+        y += (cs * away * run) / 2
+      } else if (m.ok) {
+        x += sn * away * away * run * 1.5
+        y -= cs * away * away * run * 0.75
+      } else y += away * (this.ph + 10)
+    }
+    return [x, y, full]
   }
 
   /** The sprite rows a part covers: the upper stage above `stage`, the booster from it down. */
@@ -1966,10 +2473,12 @@ abstract class LaunchSite extends SkyWorld {
     const top = this.apx() + s.fly.h - 1
     const cx = this.ox + this.pos + s.bodyL + s.bodyW / 2 - 0.5
     const mains = this.chute === 2
-    const tall = this.tall
+    const tall = this.big
     const rise = Math.round((mains ? (tall ? 9 : 3) : tall ? 5 : 2) * (0.5 + 0.5 * k))
-    const spread = mains ? (tall ? [-6, -2, 2, 6] : [-1.5, 1.5]) : tall ? [-2, 2] : [0]
-    const half = Math.max(1, Math.round((mains ? (tall ? 2 : 1.5) : 1) * k))
+    // (A mini rocket's in the band: one canopy, a pixel.)
+    const tiny = !this.tall && !!this.host
+    const spread = mains && !tiny ? (tall ? [-6, -2, 2, 6] : [-1.5, 1.5]) : tall ? [-2, 2] : [0]
+    const half = tiny ? 0 : Math.max(1, Math.round((mains ? (tall ? 2 : 1.5) : 1) * k))
     const riser = 0xc2c7cf
     for (const off of spread) {
       const x = Math.round(cx + off * k)
@@ -2077,20 +2586,13 @@ abstract class LaunchSite extends SkyWorld {
     const aft = 2 * this.partRows(this.part)[1] - sp.h
     const tx = cx - aft * sn * sc
     const ty = cy * 2 + aft * cs * sc
-    const L = len * 2 * sc
     const wk = this.nozzle()[2]
-    for (let d = 0.5; d < L; d += 1) {
-      const k = d / L
-      const half = (s.bodyW / 2) * wk * sc + d * 0.12
-      for (let e = -half; e <= half; e += 0.75) {
-        const x = Math.floor(tx - sn * d + cs * e)
-        const y = Math.floor((ty + cs * d + sn * e) / 2)
-        const edge = Math.abs(e) / (half + 0.5)
-        const n = hash(x, y + this.t * 7, 47) - 0.5
-        const heat = 1 - 0.85 * k - 0.45 * edge * edge + n * 0.15
-        this.paintP(x, y, rampColor(ramp, heat), Math.min(1, (1 - k) * 1.6 - edge * 0.4 + n * 0.3) * (this.tint === 'normal' ? 0.55 : 0.85))
-      }
-    }
+    this.flame(tx, ty, th, len * 2 * sc, (s.bodyW / 2) * wk * sc, this.plumeSpread(), ramp, 1.6, this.thinBurn(), false, 0, Infinity)
+  }
+
+  /** How strongly a burn shows in orbit: thin and faint, stronger under a tint (which it's there to show). */
+  private thinBurn(): number {
+    return this.tint === 'normal' ? 0.55 : 0.85
   }
 
   /**
@@ -2136,12 +2638,12 @@ abstract class LaunchSite extends SkyWorld {
     const ay = Math.round(this.armY)
     const start = this.tx - 1
     // Mechazilla's chopsticks reach well past the booster.
-    const tip = this.bodyPx + this.armX - 1 - (this.look.mechazilla && this.tall ? 2 : 0)
+    const tip = this.bodyPx + this.armX - 1 - (this.look.mechazilla && this.big ? 2 : 0)
     const full = start - tip + 1
     const len = s.armStub + Math.round(this.reach * (full - s.armStub))
     const col = this.look.arm
     for (let t = 0; t < s.armThick; t++) for (let x = 0; x < len; x++) this.paint(start - x, ay + t, col, 1)
-    if (this.reach >= 1 && this.tall) {
+    if (this.reach >= 1 && this.big) {
       // The pincers' tips closing round the far side.
       this.paint(tip, ay - 1, col, 1)
       this.paint(tip, ay + s.armThick, col, 1)
@@ -2191,9 +2693,12 @@ abstract class LaunchSite extends SkyWorld {
         q[p] = a === 0 ? behind : a >= 1 ? this.pc[k]! : mix(behind, this.pc[k]!, a)
         this.pa[k] = 0
       }
-      // The two colors that best fit them, each the plain average of its pixels.
+      // The two colors that best fit them, each the plain average of its pixels (a light's pixel keeping its own).
+      let keep = -1
+      for (let l = 0; l < this.nLamps; l++)
+        if (this.lampCell[l] === cell) for (let p = 0; p < 4; p++) if (q[p] === this.lampColor[l]) keep = p
       const f = this.fit
-      fitQuad(q, f, Infinity)
+      fitQuad(q, f, Infinity, keep)
       if (f.spread === 0) out.set(cell, 0x20, DEFAULT_COLOR, q[0]!)
       else out.set(cell, QUAD[f.mask]!, f.fg, f.bg)
     }
@@ -2203,6 +2708,7 @@ abstract class LaunchSite extends SkyWorld {
 
 export class Falcon extends LaunchSite {
   protected readonly specs = FALCON_SPECS
+  protected readonly miniSpecs = MINI_FALCON_SPECS
   protected readonly look: Look = {
     tower: 0x5a6069,
     arm: 0x2a2e34,
@@ -2212,13 +2718,14 @@ export class Falcon extends LaunchSite {
     catches: false,
   }
 
-  protected twin(): LaunchSite {
-    return new Falcon(this.t)
+  protected twin(seed = this.t): LaunchSite {
+    return new Falcon(seed)
   }
 }
 
 export class Starship extends LaunchSite {
   protected readonly specs = STARSHIP_SPECS
+  protected readonly miniSpecs = MINI_STARSHIP_SPECS
   protected readonly look: Look = {
     tower: 0x4e545d,
     arm: 0x24272c,
@@ -2228,8 +2735,8 @@ export class Starship extends LaunchSite {
     catches: true,
   }
 
-  protected twin(): LaunchSite {
-    return new Starship(this.t + 1)
+  protected twin(seed = this.t + 1): LaunchSite {
+    return new Starship(seed)
   }
 }
 

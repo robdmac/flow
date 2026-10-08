@@ -1,4 +1,4 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v143-fire-crew
 //
 // A tiny Doom-fire–style cellular-automata fire, by Rob Macrae.
 //
@@ -14,6 +14,11 @@
 // so only the tallest tongues lick up and taper there instead of the fire
 // being clipped flat at the band's top edge. A tall grid (the spine) keeps
 // one headroom row and cools gentler, so the flames rise to fill it.
+//
+// Its burners can be shaped column by column (`gain`, `cover`, `shut`), so
+// one automaton burns several fires side by side: the fire scene narrows its
+// main fire and kindles a small one beside it for each subagent, with dark
+// gaps between them that no heat crosses.
 
 import { Rng } from './cells'
 import type { Tint } from './styles'
@@ -98,8 +103,12 @@ export class AsciiFire {
   h = 0
   cells = new Uint8Array(0)
   strength = 8
-  /** Extra % of the base row lit (subagents widen the fire). */
-  coverageBoost = 0
+  /** Per column: how hot its burner seeds (1: the fire's own heat; lower, a smaller fire). */
+  gain = new Float32Array(0)
+  /** Per column: the % of burners lit there; below 0, the strength's own coverage. */
+  cover = new Float32Array(0)
+  /** Per column: 1 where no fire may be (a gap between fires): any heat drifting in dies. */
+  shut = new Uint8Array(0)
   peak = 1
   t = 0
   /**
@@ -139,6 +148,9 @@ export class AsciiFire {
       this.level = new Float32Array(w)
       this.rate = new Float32Array(w)
       this.life = new Uint16Array(w)
+      this.gain = new Float32Array(w).fill(1)
+      this.cover = new Float32Array(w).fill(-1)
+      this.shut = new Uint8Array(w)
       for (let x = 0; x < w; x++) {
         this.reroll(x)
         // Stagger first lives so the burners never re-roll in lockstep.
@@ -158,7 +170,7 @@ export class AsciiFire {
     const { w, h } = this
     if (w === 0 || h < 2) return
     const [peak, baseSeed] = params(this.strength)
-    const seedPct = peak === 0 ? 0 : Math.min(100, baseSeed + this.coverageBoost)
+    const seedPct = peak === 0 ? 0 : baseSeed
     // A drop (to the calm 2 of waiting on the person, say) scales the heat
     // already rising down with it: else it would all read as white-hot against
     // the lower peak for a moment, a flash of the low levels' blue tips.
@@ -178,7 +190,8 @@ export class AsciiFire {
     for (let x = 0; x < w; x++) {
       if (this.life[x]! === 0) this.reroll(x)
       else this.life[x]!--
-      const isLit = this.rank[x]! * 100 < seedPct
+      const cover = this.cover[x]!
+      const isLit = this.rank[x]! * 100 < (cover < 0 ? seedPct : cover)
       const goal = isLit ? this.target[x]! : 0
       const lv = this.level[x]!
       const step = this.rate[x]!
@@ -188,7 +201,8 @@ export class AsciiFire {
         continue
       }
       const v = Math.max(peak - this.baseDip(x, span) - (this.rng.int() % 3), Math.floor(peak / 2))
-      this.cells[bottom + x] = Math.max(1, Math.round(v * this.level[x]!))
+      const g = this.shut[x] ? 0 : this.gain[x]!
+      this.cells[bottom + x] = g <= 0 ? 0 : Math.max(1, Math.round(v * this.level[x]! * g))
     }
     // Propagate upward with strong random cooling + wind drift (-1, 0, +1);
     // rising into a headroom row cools harder, so only the tallest get there.
@@ -208,7 +222,7 @@ export class AsciiFire {
           const roll = this.rng.int() % 11
           const cool = (isTall ? Math.round(roll * stretch) : roll) + extra
           const nx = x + (1 - (this.rng.int() % 3))
-          if (nx >= 0 && nx < w) this.cells[(y - 1) * w + nx] = Math.max(0, p - cool)
+          if (nx >= 0 && nx < w) this.cells[(y - 1) * w + nx] = this.shut[nx] ? 0 : Math.max(0, p - cool)
         }
       }
     }

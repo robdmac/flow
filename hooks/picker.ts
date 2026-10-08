@@ -1,4 +1,4 @@
-// REVISION: flow-v122-picker
+// REVISION: flow-v150-review-fixes
 //
 // `/flow pick`: every scene at once, each a small live thumbnail, chosen with
 // the arrows (or Tab, a click, or its number) and Enter. This is the pure part:
@@ -74,14 +74,15 @@ export function labelWidth(names: readonly string[] = SCENES.map(d => d.name)): 
  * first shape that fits with thumbnails at least GOOD_COLUMNS wide, else at
  * least as wide as their labels, as few across as fit (so each is as wide as
  * it can be). None fits (a narrow spine-width dock): undefined, a plain list.
+ * `extra`: rows the surface draws besides (desktop's close Button), counted in `height`.
  */
-export function pickLayout(columns: number, rows: number, count: number, label = labelWidth()): PickLayout | undefined {
+export function pickLayout(columns: number, rows: number, count: number, label = labelWidth(), extra = 0): PickLayout | undefined {
   for (const least of [Math.max(GOOD_COLUMNS, label), label]) {
     for (const shape of SHAPES) {
       const frame = shape.framed ? 2 : 0
       const tall = shape.rows + 1 + frame // the thumbnail, its Button, the frame
       for (let across = 1; across <= count; across++) {
-        const height = Math.ceil(count / across) * tall + (shape.lines ? 2 : 0)
+        const height = Math.ceil(count / across) * tall + (shape.lines ? 2 : 0) + extra
         if (height > rows) continue
         const wide = Math.min(MOST_COLUMNS, Math.floor((columns - (across - 1) * GAP) / across) - frame)
         if (wide < least) break // more across only narrows them
