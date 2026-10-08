@@ -41,7 +41,7 @@ import { Cells, freshSeed, Rng, isTall } from './cells'
 import { Crew, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
 import { MOON, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
-import { BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, noise1 as vnoise, QUAD, type QuadFit } from './pixels'
+import { BITS, BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, noise1 as vnoise, QUAD, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
 import { hear, type Ambience, type SoundEvent } from './sound'
 import { easeWait, waitTone } from './waiting'
@@ -181,8 +181,7 @@ const SPRITES = {
 type Pose = keyof typeof SPRITES
 
 const PMAX = 480
-/** Set pixels in each quadrant mask. */
-const BITS = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4]
+
 
 /** Surfers in the line-up for subagents, at most (a wetsuit and a board each). */
 const CREW = 5

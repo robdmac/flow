@@ -26,7 +26,7 @@ import { Cells, DEFAULT_COLOR, freshSeed } from './cells'
 import { layered, snap } from './clouds/layered'
 import type { Tint } from './styles'
 import { MOON, MOON_ACROSS, MOON_ROW, NIGHT_HORIZON, NIGHT_ZENITH, STAR, STAR_DIM } from './night'
-import { g, hash, lowerBlock, mix } from './pixels'
+import { g, hash, lowerBlock, mix, rampStops } from './pixels'
 import { easeWait, waitTone } from './waiting'
 
 /**
@@ -48,7 +48,7 @@ const CLIMB = 0.03
 const CLOUD_DRIFT = 0.1
 
 /** The sky by world row: day at the horizon, night by the edge of space. */
-const SKY: [y: number, rgb: number][] = (
+const SKY: (readonly [y: number, rgb: number])[] = (
   [
     [0, 0x9fd3f2],
     [12, 0x6db8ec],
@@ -59,12 +59,10 @@ const SKY: [y: number, rgb: number][] = (
     [61, 0x000000],
   ] as [number, number][]
 ).map(([y, c]) => [y * SCALE, c])
-/** Space: black, the darkest thing in the sky. */
-const SPACE = 0x000000
 const SOIL = 0x5a3d24
 
 /** The night sky by world row: near-black at the horizon, black by space. */
-const NIGHT_SKY: [y: number, rgb: number][] = (
+const NIGHT_SKY: (readonly [y: number, rgb: number])[] = (
   [
     [0, NIGHT_HORIZON],
     [30, NIGHT_ZENITH],
@@ -75,25 +73,14 @@ const NIGHT_SOIL = 0x22170e
 /** Moonlight: what clouds and lit things lean toward at night. */
 const MOONLIGHT = 0x9fb4d6
 
-function ramp(stops: [number, number][], y: number): number {
-  for (let i = 1; i < stops.length; i++) {
-    const [y1, c1] = stops[i]!
-    if (y <= y1) {
-      const [y0, c0] = stops[i - 1]!
-      return mix(c0, c1, (y - y0) / (y1 - y0))
-    }
-  }
-  return SPACE
-}
-
-/** The background for a world row by day. */
+/** The background for a world row by day (above the sky's top, the black of space). */
 export function skyColor(y: number): number {
-  return y < 0 ? SOIL : ramp(SKY, y)
+  return y < 0 ? SOIL : rampStops(SKY, y)
 }
 
 /** The background for a world row at night. */
 function nightSkyColor(y: number): number {
-  return y < 0 ? NIGHT_SOIL : ramp(NIGHT_SKY, y)
+  return y < 0 ? NIGHT_SOIL : rampStops(NIGHT_SKY, y)
 }
 
 /** A cloud color by moonlight: dimmed toward the night sky behind it, cooled toward the moon. */

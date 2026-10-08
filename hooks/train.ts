@@ -1,4 +1,4 @@
-// REVISION: flow-v126-train-crew
+// REVISION: flow-v170-dry-scenes
 //
 // Train (the `train` scene): a passenger train through the countryside on
 // the same dials as the fire; the level is its speed. At 1 it waits at a red
@@ -36,6 +36,7 @@
 // the night, folds the pixels into glyphs and blanks it all at level 0.
 
 import type { AgentDial } from './agents'
+import { Rng } from './cells'
 import { Crew, type AgentMark, type Mate } from './crew'
 import { PixelScene, type Dials, type Painter } from './pixel-scene'
 import { defineScene } from './scene-def'
@@ -506,7 +507,7 @@ export class Train extends PixelScene {
   private flock: Flock | undefined
   private nextFlock = 200
   private roads = new Map<number, Motor[]>()
-  private rng: number
+  private rng: Rng
 
   // Layout, from the grid.
   private W = 0
@@ -523,7 +524,7 @@ export class Train extends PixelScene {
 
   constructor(seed = 1) {
     super(seed)
-    this.rng = Math.imul(seed, 2654435761) >>> 0 || 1
+    this.rng = new Rng(Math.imul(seed, 2654435761))
   }
 
   /** The train's speed now (band pixels a frame). */
@@ -558,14 +559,6 @@ export class Train extends PixelScene {
     return { wind: levelFor(this.v) / 10 }
   }
 
-  private rand(): number {
-    let x = this.rng
-    x ^= x << 13
-    x ^= x >>> 17
-    x ^= x << 5
-    this.rng = x >>> 0
-    return this.rng / 4294967296
-  }
 
   private layout(d: Dials): void {
     this.W = d.columns * 2
@@ -738,21 +731,21 @@ export class Train extends PixelScene {
     if (!f) {
       this.nextFlock -= dt
       if (this.nextFlock > 0 || d.night > 0.5 || this.kStorm > 0.3) return
-      const dir = this.rand() < 0.5 ? 1 : -1
+      const dir = this.rng.f() < 0.5 ? 1 : -1
       const yHz = this.H - 6
       this.flock = {
         x: dir > 0 ? -8 : this.W + 8,
-        y: 1 + this.rand() * Math.max(1, yHz * 2 - 4),
-        vx: dir * (0.22 + this.rand() * 0.18),
-        n: 2 + Math.floor(this.rand() * 4),
-        ph: this.rand() * 8,
+        y: 1 + this.rng.f() * Math.max(1, yHz * 2 - 4),
+        vx: dir * (0.22 + this.rng.f() * 0.18),
+        n: 2 + Math.floor(this.rng.f() * 4),
+        ph: this.rng.f() * 8,
       }
       return
     }
     f.x += (f.vx - this.v * F_MID) * dt
     if (f.x < -24 || f.x > this.W + 24) {
       this.flock = undefined
-      this.nextFlock = 250 + this.rand() * 700
+      this.nextFlock = 250 + this.rng.f() * 700
     }
   }
 
@@ -823,19 +816,19 @@ export class Train extends PixelScene {
       const n = Math.ceil((3 + run * 0.8) * dt)
       for (let i = 0; i < n; i++)
         this.puffs.push({
-          s: was + run * this.rand() - 14.5 + this.rand() * 1.5,
+          s: was + run * this.rng.f() - 14.5 + this.rng.f() * 1.5,
           up: 0,
-          side: (this.rand() - 0.5) * 0.6,
-          r: 0.9 + this.rand() * 0.5,
+          side: (this.rng.f() - 0.5) * 0.6,
+          r: 0.9 + this.rng.f() * 0.5,
           life: 1,
-          vu: (0.06 + this.rand() * 0.08) / (1 + this.v * 0.5),
-          vs: 0.03 + this.rand() * 0.06,
+          vu: (0.06 + this.rng.f() * 0.08) / (1 + this.v * 0.5),
+          vs: 0.03 + this.rng.f() * 0.06,
           wisp: false,
-          shade: this.rand(),
+          shade: this.rng.f(),
         })
-    } else if (this.v < 1 && this.rand() < 0.12 * dt && this.puffs.length < 40) {
+    } else if (this.v < 1 && this.rng.f() < 0.12 * dt && this.puffs.length < 40) {
       // Idling or pulling gently: the faintest haze off the exhaust.
-      this.puffs.push({ s: this.pos - 14.5, up: 0, side: 0, r: 0.6, life: 0.6, vu: 0.08 + this.rand() * 0.05, vs: 0.02, wisp: true, shade: 0 })
+      this.puffs.push({ s: this.pos - 14.5, up: 0, side: 0, r: 0.6, life: 0.6, vu: 0.08 + this.rng.f() * 0.05, vs: 0.02, wisp: true, shade: 0 })
     }
     let live = 0
     for (const p of this.puffs) {
@@ -866,7 +859,7 @@ export class Train extends PixelScene {
       if (!cars) {
         cars = []
         for (let i = 0; i < 4; i++)
-          cars.push({ x: this.rand() * this.W, dir: i % 2 === 0 ? 1 : -1, v: 0.25 + this.rand() * 0.2, color: CAR_COLORS[Math.floor(this.rand() * CAR_COLORS.length)]! })
+          cars.push({ x: this.rng.f() * this.W, dir: i % 2 === 0 ? 1 : -1, v: 0.25 + this.rng.f() * 0.2, color: CAR_COLORS[Math.floor(this.rng.f() * CAR_COLORS.length)]! })
         this.roads.set(z, cars)
       }
       const shut = this.gateShut(vc)
@@ -881,8 +874,8 @@ export class Train extends PixelScene {
         for (const o of cars) if (o !== c && o.dir === c.dir && (o.x - nx) * c.dir > 0 && (o.x - nx) * c.dir < 3.2) nx = c.x
         c.x = nx
         if (c.x > this.W + 2 || c.x < -4) {
-          c.x = c.dir > 0 ? -3 - this.rand() * 24 : this.W + 2 + this.rand() * 24
-          c.color = CAR_COLORS[Math.floor(this.rand() * CAR_COLORS.length)]!
+          c.x = c.dir > 0 ? -3 - this.rng.f() * 24 : this.W + 2 + this.rng.f() * 24
+          c.color = CAR_COLORS[Math.floor(this.rng.f() * CAR_COLORS.length)]!
         }
       }
     }

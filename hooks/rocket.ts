@@ -71,7 +71,7 @@ import { type Cells, DEFAULT_COLOR, freshSeed, Rng } from './cells'
 import { Crew, type AgentMark, type Mate } from './crew'
 import { layered, snap } from './clouds/layered'
 import { STAR, STAR_DIM } from './night'
-import { clamp, dist, fitQuad, g, hash, lowerBlock, mix, noise1, QUAD, type QuadFit } from './pixels'
+import { clamp, dist, fitQuad, g, hash, lowerBlock, mix, noise1, QUAD, rampAt, smooth, type QuadFit } from './pixels'
 import { type SceneryCell, SkyWorld } from './sky'
 import { defineScene } from './scene-def'
 import { hear, type Ambience, type SoundEvent } from './sound'
@@ -447,11 +447,6 @@ const RAMPS = {
   smoke: [0x2e2e2e, 0x595959, 0x7e7c78, 0xa89c88, 0xd8c8a8] as Ramp,
 }
 
-function rampColor(r: Ramp, heat: number): number {
-  const h = heat <= 0 ? 0 : heat >= 1 ? 4 : heat * 4
-  const i = Math.min(3, h | 0)
-  return mix(r[i]!, r[i + 1]!, h - i)
-}
 
 /** A rocket's site colors. */
 interface Look {
@@ -2318,7 +2313,7 @@ abstract class LaunchSite extends SkyWorld {
         // Shock diamonds in the core.
         const diamond = diamonds && ((d / 2) | 0) % 5 === 2 && k < 0.6 ? 0.15 : 0
         const heat = 1 - 0.85 * k - 0.45 * edge * edge + diamond + n * 0.15
-        this.paintP(px, py, rampColor(ramp, heat), Math.min(1, (1 - k) * body - edge * 0.35 + n * 0.4) * alpha)
+        this.paintP(px, py, rampAt(ramp, heat), Math.min(1, (1 - k) * body - edge * 0.35 + n * 0.4) * alpha)
       }
     }
   }
@@ -2334,8 +2329,8 @@ abstract class LaunchSite extends SkyWorld {
         const n = hash(x, t, 53) - 0.5
         const heat = 0.85 - 0.75 * k + n * 0.2
         const a = 1 - k * 0.85 + n * 0.3
-        this.paint(x, 0, rampColor(ramp, heat), a)
-        if (k > 0.3) this.paint(x, 1, rampColor(ramp, heat - 0.25), a * 0.6)
+        this.paint(x, 0, rampAt(ramp, heat), a)
+        if (k > 0.3) this.paint(x, 1, rampAt(ramp, heat - 0.25), a * 0.6)
       }
   }
 
@@ -2356,7 +2351,7 @@ abstract class LaunchSite extends SkyWorld {
       return [cx - 2 * off * sn, cy - off + off * cs, th, 1]
     }
     if (o <= 0) return [cx, cy, 0, 1]
-    const k = o * o * (3 - 2 * o)
+    const k = smooth(o)
     const [ocx, ocy, full] = this.host ? this.station() : this.orbitFrame()
     const sc = this.tall ? 1 - k * (1 - full) : 1
     // Centered on what's flying (after separation, the upper stage), not on the whole stack:

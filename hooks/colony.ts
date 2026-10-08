@@ -56,9 +56,9 @@
 
 import type { AgentDial } from './agents'
 import { Cells, DEFAULT_COLOR, freshSeed, Rng, isTall } from './cells'
-import { Crew, smooth, type AgentMark, type Mate } from './crew'
+import { Crew, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
-import { BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, NEAR, noise2, QUAD, type QuadFit } from './pixels'
+import { BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, NEAR, noise2, QUAD, smooth, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
 import { hear, leadFrames, type SoundEvent } from './sound'
 import { easeWait, waitTone } from './waiting'
@@ -604,7 +604,7 @@ export class Colony {
         const y = v ? row * 2 - drift : row * 2
         const n = 0.65 * noise2(x / 11, y / 7, seed) + 0.35 * noise2(x / 4.5, y / 3, seed + 1)
         const dense = clamp((n - 0.28) / 0.5)
-        const light = Math.round(dense * dense * (3 - 2 * dense) * k * BACK_STEPS) / BACK_STEPS
+        const light = Math.round(smooth(dense) * k * BACK_STEPS) / BACK_STEPS
         if (light <= 0) continue
         const hue = Math.round(noise2(x / 15, y / 9, seed + 2) * 3) / 3
         this.backBg[row * w + col] = this.backTint(mix(0, mix(ca, cb, hue), light), light)

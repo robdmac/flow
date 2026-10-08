@@ -39,7 +39,7 @@ import { Cells, DEFAULT_COLOR, freshSeed, Rng, isTall } from './cells'
 import { Crew, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
 import { MOON, moonCover, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
-import { BRAILLE, clamp, fitQuad, hashMurmur as hash, mix, QUAD, type QuadFit } from './pixels'
+import { approach, BRAILLE, clamp, fitQuad, hashMurmur as hash, mix, noise1, noise2, QUAD, type Hash1, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
 import type { Ambience, SoundEvent } from './sound'
 import { easeWait, waitTone } from './waiting'
@@ -68,26 +68,10 @@ const GET_UP = 18
 
 // ---------------------------------------------------------------- helpers
 
-/** Smooth 1-D value noise in [0, 1). */
-function noise(x: number, s: number): number {
-  const i = Math.floor(x)
-  const f = x - i
-  const u = f * f * (3 - 2 * f)
-  return hash(i, 0, s) * (1 - u) + hash(i + 1, 0, s) * u
-}
-
-/** Smooth 2-D value noise in [0, 1). */
-function noise2(x: number, y: number, s: number): number {
-  const i = Math.floor(x)
-  const j = Math.floor(y)
-  const fx = x - i
-  const fy = y - j
-  const u = fx * fx * (3 - 2 * fx)
-  const v = fy * fy * (3 - 2 * fy)
-  const a = hash(i, j, s) * (1 - u) + hash(i + 1, j, s) * u
-  const b = hash(i, j + 1, s) * (1 - u) + hash(i + 1, j + 1, s) * u
-  return a * (1 - v) + b * v
-}
+/** The run's 1-D lattice: its own hash, so its peaks and pines stay where they've always been. */
+const along: Hash1 = (i, s) => hash(i, 0, s)
+/** Smooth 1-D value noise in [0, 1), on the run's own hash. */
+const noise = (x: number, s: number) => noise1(x, s, along)
 
 // ---------------------------------------------------------------- palettes
 
@@ -226,11 +210,6 @@ const NIGHT_GREY: Pal = {
 
 const PAL_KEYS = Object.keys(DAY) as (keyof Pal)[]
 
-/** `v` eased a fraction `k` of the way to `goal`, landing on it once close. */
-function approach(v: number, goal: number, k: number): number {
-  const n = v + (goal - v) * k
-  return Math.abs(goal - n) < 0.01 ? goal : n
-}
 
 /** What the skiers' kit leans toward by night. */
 const NIGHT_SHADE = 0x0a1428
@@ -1232,7 +1211,7 @@ export class Ski {
       for (let x = 0; x < W; x++) {
         let c = mix(P.snow, P.snowShade, 0.15)
         // The snow's lie, drawn out down the fall line as the speed blurs it.
-        const n = noise2(x / 7, wy / (10 + this.v * 9), 43)
+        const n = noise2(x / 7, wy / (10 + this.v * 9), 43, hash)
         c = mix(c, P.snowShade, n * (0.35 + deep * 0.25))
         if (x < el || x >= er) c = mix(c, P.snowShade, 0.35)
         if (mg > 0.01) {

@@ -1,8 +1,9 @@
-// REVISION: flow-v144-avalon-voyage
+// REVISION: flow-v170-dry-scenes
 //
-// Small pieces the scene renderers share: packed-RGB color math, hashes,
-// glyph tables, and the fit of a cell's four quadrant pixels to the two
-// colors of one quadrant glyph.
+// Small pieces the scene renderers share: packed-RGB color math and ramps,
+// easing, hashes and noise, glyph tables, and the fit of a cell's four
+// quadrant pixels to the two colors of one quadrant glyph. A scene uses
+// these rather than a copy of its own.
 
 /** A glyph's code point. */
 export const g = (ch: string) => ch.codePointAt(0)!
@@ -13,6 +14,18 @@ export function clamp(v: number, lo = 0, hi = 1): number {
 }
 
 export const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
+
+/** Smoothstep's curve on 0..1 (not held there): how `here` eases from `p`, and every eased step. */
+export const smooth = (k: number) => k * k * (3 - 2 * k)
+
+/** 0 at or below `a`, 1 at or above `b`, eased between. */
+export const smoothstep = (a: number, b: number, v: number) => smooth(clamp01((v - a) / (b - a)))
+
+/** `v` eased a fraction `k` of the way to `goal`, landing on it once within 0.01. */
+export function approach(v: number, goal: number, k: number): number {
+  const n = v + (goal - v) * k
+  return Math.abs(goal - n) < 0.01 ? goal : n
+}
 
 /** `a` moved `k` (0..1, held there) of the way to `b`, per channel of 0xRRGGBB. */
 export function mix(a: number, b: number, k: number): number {
@@ -25,6 +38,25 @@ export function mix(a: number, b: number, k: number): number {
   const gg = (ag + (((b >> 8) & 255) - ag) * k + 0.5) | 0
   const bb = (ab + ((b & 255) - ab) * k + 0.5) | 0
   return (r << 16) | (gg << 8) | bb
+}
+
+/** A color `k` (0..1, held there) along `stops`, evenly spaced, blended between the two either side. */
+export function rampAt(stops: readonly number[], k: number): number {
+  const x = clamp(k) * (stops.length - 1)
+  const i = Math.min(stops.length - 2, Math.floor(x))
+  return mix(stops[i]!, stops[i + 1]!, x - i)
+}
+
+/** A color at `x` along stops placed where each says ([x, color], in order), held to the ends. */
+export function rampStops(stops: readonly (readonly [number, number])[], x: number): number {
+  for (let i = 1; i < stops.length; i++) {
+    const b = stops[i]!
+    if (x <= b[0]) {
+      const a = stops[i - 1]!
+      return mix(a[1], b[1], (x - a[0]) / (b[0] - a[0]))
+    }
+  }
+  return stops[stops.length - 1]![1]
 }
 
 /** Squared RGB distance between two 0xRRGGBB colors. */
@@ -52,33 +84,48 @@ export function hash1(n: number): number {
   return (h >>> 0) / 0x1_0000_0000
 }
 
-/** Smooth 1-D value noise in [0, 1): hash1 at each whole x, eased between (surf's swell, the train's hills). */
-export function noise1(x: number, seed: number): number {
+/** A hash of one whole number and a seed to [0, 1): what noise1 eases between. */
+export type Hash1 = (i: number, seed: number) => number
+const lattice1: Hash1 = (i, seed) => hash1(i * 7919 + seed)
+
+/**
+ * Smooth 1-D value noise in [0, 1): `h` (hash1 by default) at each whole x,
+ * eased between (surf's swell, the train's hills, the ski run's snow).
+ */
+export function noise1(x: number, seed: number, h: Hash1 = lattice1): number {
   const i = Math.floor(x)
   const f = x - i
-  const a = hash1(i * 7919 + seed)
-  const b = hash1((i + 1) * 7919 + seed)
+  const a = h(i, seed)
+  const b = h(i + 1, seed)
   return a + (b - a) * f * f * (3 - 2 * f)
 }
 
-/** Smooth 2-D value noise in [0, 1): `hash` at each whole (x, y), eased between (avalon's nebulae). */
-export function noise2(x: number, y: number, seed: number): number {
+/**
+ * Smooth 2-D value noise in [0, 1): `h` (`hash` by default) at each whole
+ * (x, y), eased between (avalon's nebulae, the clouds, the ski run's slopes).
+ */
+export function noise2(x: number, y: number, seed: number, h: (x: number, y: number, seed: number) => number = hash): number {
   const i = Math.floor(x)
   const j = Math.floor(y)
   let fx = x - i
   let fy = y - j
   fx = fx * fx * (3 - 2 * fx)
   fy = fy * fy * (3 - 2 * fy)
-  const a = hash(i, j, seed)
-  const b = hash(i + 1, j, seed)
-  const c = hash(i, j + 1, seed)
-  const d = hash(i + 1, j + 1, seed)
+  const a = h(i, j, seed)
+  const b = h(i + 1, j, seed)
+  const c = h(i, j + 1, seed)
+  const d = h(i + 1, j + 1, seed)
   return a + (b - a) * fx + (c - a + (a - b - c + d) * fx) * fy
+}
+
+/** How bright a 0xRRGGBB color looks (luma), 0..255, unrounded. */
+export function luma(c: number): number {
+  return ((c >> 16) & 255) * 0.3 + ((c >> 8) & 255) * 0.59 + (c & 255) * 0.11
 }
 
 /** `c` moved `k` (0..1) of the way to its own grey (by luma): an overcast, smoky cast. */
 export function grey(c: number, k: number): number {
-  const l = (((c >> 16) & 255) * 0.3 + ((c >> 8) & 255) * 0.59 + (c & 255) * 0.11) | 0
+  const l = luma(c) | 0
   return mix(c, (l << 16) | (l << 8) | l, k)
 }
 
@@ -90,6 +137,9 @@ export function hashMurmur(x: number, y: number, s: number): number {
   h ^= h >>> 16
   return (h >>> 0) / 4294967296
 }
+
+/** How many of a quadrant mask's four pixels are set: more than 2, and its foreground covers most of the cell. */
+export const BITS = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4] as const
 
 /** Quadrant glyphs by pixel mask: top-left 1, top-right 2, bottom-left 4, bottom-right 8. */
 export const QUAD = [

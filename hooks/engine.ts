@@ -38,7 +38,7 @@ import type { AgentDial } from './agents'
 import { Cells, DEFAULT_COLOR, freshSeed, Rng, isTall } from './cells'
 import { Crew, type AgentMark } from './crew'
 import type { Tint } from './styles'
-import { BRAILLE, clamp01, dist, mix, QUAD } from './pixels'
+import { BRAILLE, clamp01, dist, mix, QUAD, rampAt } from './pixels'
 import { defineScene } from './scene-def'
 import { hear, type SoundEvent } from './sound'
 import { breath, easeWait, waitTone } from './waiting'
@@ -120,11 +120,7 @@ type Emitter = { x: number; y: number; kind: number }
 
 const frac = (n: number) => n - Math.floor(n)
 
-function fireColor(h: number, ramp: readonly number[] = FIRE): number {
-  const x = clamp01(h) * (ramp.length - 1)
-  const i = Math.min(ramp.length - 2, Math.floor(x))
-  return mix(ramp[i]!, ramp[i + 1]!, x - i)
-}
+const fireColor = (h: number, ramp: readonly number[] = FIRE) => rampAt(ramp, h)
 
 /** Solid colors are stored +1 so 0 can mean "empty" (and pure black still works). */
 const SOLID = 0x1000000

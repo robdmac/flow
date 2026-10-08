@@ -23,7 +23,7 @@
 import { Cells, freshSeed, Rng } from './cells'
 import type { SoundEvent } from './sound'
 import type { Tint } from './styles'
-import { BRAILLE, clamp, hash1, mix } from './pixels'
+import { BRAILLE, clamp, hash1, mix, rampAt } from './pixels'
 import { defineScene } from './scene-def'
 import { easeWait, waitTone } from './waiting'
 
@@ -69,9 +69,7 @@ type Ripple = { x: number; age: number; amp: number }
 
 /** A ramp's color at brightness `b` (0..1), quantized to STEPS. */
 function ramp(stops: readonly number[], b: number): number {
-  const v = (Math.round(clamp(b) * STEPS) / STEPS) * (stops.length - 1)
-  const i = Math.min(stops.length - 2, Math.floor(v))
-  return mix(stops[i]!, stops[i + 1]!, v - i)
+  return rampAt(stops, Math.round(clamp(b) * STEPS) / STEPS)
 }
 
 export class Bubbles {

@@ -1,4 +1,4 @@
-// REVISION: flow-v42-renderer-polish
+// REVISION: flow-v170-dry-scenes
 //
 // Layered: the cloud type changes as the balloon climbs, all of it painted in
 // color with feathered edges.
@@ -18,27 +18,12 @@
 // composited back to front (cirrus, then banks, then cumulus) as the sky
 // blended toward each layer's color by its coverage.
 
-import { clamp01, hash, mix } from '../pixels'
+import { clamp01, hash, mix, noise2 as noise, rampStops, smoothstep } from '../pixels'
 import type { CloudPainter } from './types'
 
 const TOP_HALF = 0x2580 // ▀
 
-const smooth = (k: number) => k * k * (3 - 2 * k)
-const smoothstep = (a: number, b: number, v: number) => smooth(clamp01((v - a) / (b - a)))
 
-/** Smooth value noise in [0, 1) at a real (u, v). */
-function noise(u: number, v: number, salt: number): number {
-  const iu = Math.floor(u)
-  const iv = Math.floor(v)
-  const fu = smooth(u - iu)
-  const fv = smooth(v - iv)
-  const a = hash(iu, iv, salt)
-  const b = hash(iu + 1, iv, salt)
-  const c = hash(iu, iv + 1, salt)
-  const d = hash(iu + 1, iv + 1, salt)
-  const top = a + (b - a) * fu
-  return top + (c + (d - c) * fu - top) * fv
-}
 
 // ---------------------------------------------------------------------------
 // Low: feathered cumulus heaps.
@@ -158,12 +143,14 @@ function build(sx: number, sy: number): Heap {
   return c
 }
 
-function ramp(l: number): number {
-  if (l < 0.2) return mix(DEEP, SHADOW, l / 0.2)
-  if (l < 0.5) return mix(SHADOW, MID, (l - 0.2) / 0.3)
-  if (l < 0.78) return mix(MID, LIGHT, (l - 0.5) / 0.28)
-  return mix(LIGHT, SUN, Math.min(1, (l - 0.78) / 0.22))
-}
+/** A heap's color by how lit it is (0..1): deep shadow to sunlit. */
+const LIT: readonly (readonly [number, number])[] = [
+  [0, DEEP],
+  [0.2, SHADOW],
+  [0.5, MID],
+  [0.78, LIGHT],
+  [1, SUN],
+]
 
 // Results of the last sample, as numbers (no allocation per call).
 let outA = 0
@@ -225,7 +212,7 @@ function cumulus(wx: number, qy: number): void {
       const under = smoothstep(-0.5, Math.min(4, 0.35 * (c.top - c.base)), qy - c.base)
       lit = Math.min(lit, 0.06 + under * 1.1)
       outA = a * 0.98
-      outC = ramp(clamp01(lit))
+      outC = rampStops(LIT, clamp01(lit))
     }
   }
 }

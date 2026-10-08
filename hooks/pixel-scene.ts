@@ -1,4 +1,4 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v170-dry-scenes
 //
 // The quick way to write a scene: extend PixelScene and paint pixels. It
 // does what every scene otherwise does by hand: eases the level and the
@@ -19,12 +19,10 @@
 // or less), and `resize(d)` to set up per-size state.
 
 import { Cells, DEFAULT_COLOR, isTall } from './cells'
-import { BRAILLE, clamp, fitQuad, QUAD, type QuadFit } from './pixels'
+import { BITS, BRAILLE, clamp, fitQuad, QUAD, type QuadFit } from './pixels'
 import type { Scene, Tint } from './styles'
 import { easeWait, waitTone } from './waiting'
 
-/** How many of a quadrant mask's four pixels are set. */
-const BITS = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4] as const
 
 /** The terminal's own color: a pixel left this shows whatever is behind the scene. */
 export const CLEAR = DEFAULT_COLOR

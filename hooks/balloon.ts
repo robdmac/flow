@@ -1,4 +1,4 @@
-// REVISION: flow-v140-mini-balloons
+// REVISION: flow-v170-dry-scenes
 //
 // A hot-air balloon in the sky world (sky.ts): the level is its target
 // altitude. At 1 it sits on the grass among trees and houses; it climbs past
@@ -26,8 +26,8 @@
 
 import type { AgentDial } from './agents'
 import { isTall, type Cells } from './cells'
-import { Crew, smooth, type AgentMark, type Mate } from './crew'
-import { clamp01, dist, fitQuad, g, hash, hash1, mix, NEAR, noise1, QUAD, type QuadFit } from './pixels'
+import { Crew, type AgentMark, type Mate } from './crew'
+import { clamp01, dist, fitQuad, g, hash, hash1, mix, NEAR, noise1, QUAD, smooth, type QuadFit } from './pixels'
 import { skyColor, SkyWorld } from './sky'
 import { defineScene } from './scene-def'
 import type { Ambience } from './sound'

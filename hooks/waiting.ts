@@ -1,4 +1,4 @@
-// REVISION: flow-v150-review-fixes
+// REVISION: flow-v170-dry-scenes
 //
 // The shared wait: how every scene looks while Claude waits on the person (a
 // permission to grant, a question to answer, a plan to approve). The work
@@ -12,7 +12,7 @@
 // over about a second. Pure: no engine imports.
 
 import { DEFAULT_COLOR, type Cells } from './cells'
-import { clamp, mix } from './pixels'
+import { clamp, luma, mix, rampAt } from './pixels'
 
 /** How far the look moves toward the dial each frame: in, or out, over about a second at 14 fps. */
 export const WAIT_EASE = 0.06
@@ -46,13 +46,6 @@ export function waitLift(k: number, t: number): number {
   return 1 - DEPTH * clamp(k) * (1 - breath(t))
 }
 
-const lum = (c: number) => (((c >> 16) & 255) * 0.3 + ((c >> 8) & 255) * 0.59 + (c & 255) * 0.11) / 255
-
-function sepia(v: number): number {
-  const x = clamp(v) * (SEPIA.length - 1)
-  const i = Math.min(SEPIA.length - 2, Math.floor(x))
-  return mix(SEPIA[i]!, SEPIA[i + 1]!, x - i)
-}
 
 /** How much of the warm glow the frame takes on now (the top of a breath), `k` of the way into the look. */
 export function waitGlow(k: number, t: number): number {
@@ -62,7 +55,7 @@ export function waitGlow(k: number, t: number): number {
 /** One color `k` × `amount` of the way to its sepia, at brightness `lift`, with `glow` of the warm light added. */
 export function waitColor(c: number, k: number, lift: number, amount = SEPIA_AMOUNT, glow = 0): number {
   if (c === DEFAULT_COLOR || k <= 0) return c
-  const s = amount > 0 ? mix(c, sepia(lum(c)), k * amount) : c
+  const s = amount > 0 ? mix(c, rampAt(SEPIA, luma(c) / 255), k * amount) : c
   const r = Math.min(255, Math.round(((s >> 16) & 255) * lift + GLOW[0] * glow))
   const g = Math.min(255, Math.round(((s >> 8) & 255) * lift + GLOW[1] * glow))
   const b = Math.min(255, Math.round((s & 255) * lift + GLOW[2] * glow))

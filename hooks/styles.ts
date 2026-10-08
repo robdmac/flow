@@ -19,7 +19,7 @@ import { AsciiFire, colorFor, glyphFor, params, SMOKE_TIPS } from './fire'
 import { Cells, freshSeed, Rng } from './cells'
 export type { Cells }
 import { heatColor, smokeColor } from './fire-palette'
-import { BRAILLE, clamp, hash1, lowerBlock, mix } from './pixels'
+import { BRAILLE, clamp, hash1, lowerBlock, mix, rampAt, smooth } from './pixels'
 import { breath, easeWait, waitTone } from './waiting'
 import { defineScene, type SceneDef } from './scene-def'
 import type { Ambience, SoundEvent } from './sound'
@@ -115,6 +115,8 @@ const COALS = [0x3a0a04, 0x781806, 0xb8320c, 0xe85a18, 0xff8c2a, 0xffbe58] as co
 const PULSE = [0x4a1206, 0x9a2a0a, 0xe85a18, 0xffa83a, 0xffd878, 0xfff2c0] as const
 /** Frames a waiting companion's pulse takes: about a second. */
 const PULSE_FRAMES = 14
+/** Where a glow (0..1) sits along COALS and PULSE: never quite at the brightest stop. */
+const SHY = 4.999 / 5
 
 /** Companion fires: the most the band shows; frames to arrive and to leave. */
 const CREW_MAX = 6
@@ -223,14 +225,12 @@ class Ember implements Scene {
 
   /** How far a companion's place has opened (0..1): first the room, then the fire in it; last to go as it leaves. */
   private static open(m: Mate): number {
-    const k = clamp(m.p * 2)
-    return k * k * (3 - 2 * k)
+    return smooth(clamp(m.p * 2))
   }
 
   /** How alight a companion's fire is (0..1): it kindles once its place opens; done, it burns out (failed: snuffed at once). */
   private static flame(m: Mate): number {
-    const k = m.leaving && !m.ok ? clamp((m.p - 0.75) / 0.25) : clamp((m.p - 0.35) / 0.65)
-    return k * k * (3 - 2 * k)
+    return smooth(m.leaving && !m.ok ? clamp((m.p - 0.75) / 0.25) : clamp((m.p - 0.35) / 0.65))
   }
 
   /**
@@ -492,8 +492,7 @@ class Ember implements Scene {
       // Each coal its own heat, shimmering a little, all swelling with the breath.
       const own = 0.45 + 0.4 * hash1(x * 131 + 3) + 0.15 * hash1(x * 977 + (this.t >> 3))
       const heat = own * (0.4 + 0.6 * b)
-      const v = Math.round(Math.min(1, heat) * 20) / 20 * (COALS.length - 1.001)
-      const fg = mix(COALS[Math.floor(v)]!, COALS[Math.floor(v) + 1]!, v - Math.floor(v))
+      const fg = rampAt(COALS, (Math.round(Math.min(1, heat) * 20) / 20) * SHY)
       out.set(i, tall ? 0x2588 : lowerBlock(4 + Math.floor(hash1(x * 17 + 1) * 5)), fg)
       const j = i - w
       if (tall && hash1(x * 53 + 11) < 0.7 && this.core.cells[j]! / peak < 0.45)
@@ -521,8 +520,7 @@ class Ember implements Scene {
         const pulse = 0.5 - 0.5 * Math.cos(((this.t % PULSE_FRAMES) / PULSE_FRAMES) * 2 * Math.PI)
         for (let x = x0; x < x1; x++) {
           const own = 0.8 + 0.2 * hash1(x * 131 + 3 + (this.t >> 2))
-          const v = Math.round(clamp(own * k * (0.45 + 0.55 * pulse)) * 15) / 15 * (PULSE.length - 1.001)
-          const fg = mix(PULSE[Math.floor(v)]!, PULSE[Math.floor(v) + 1]!, v - Math.floor(v))
+          const fg = rampAt(PULSE, (Math.round(clamp(own * k * (0.45 + 0.55 * pulse)) * 15) / 15) * SHY)
           const i = (h - 1) * w + x
           out.set(i, tall ? 0x2588 : lowerBlock(3 + Math.round(pulse * 5)), fg)
           if (tall && pulse > 0.25) out.set(i - w, lowerBlock(1 + Math.round(pulse * 6)), fg)
