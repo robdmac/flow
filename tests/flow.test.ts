@@ -29,6 +29,10 @@ import { PixelScene, type Dials, type Painter } from '../hooks/pixel-scene'
 import { hotkeyFor, labelWidth, PICK_LEVEL, pickLayout, pickRows, sceneOfKey, Thumbnails } from '../hooks/picker'
 import { agentLine, DONE_MS, QUIET_MS, Roster, runTime } from '../hooks/agents'
 import { Crew, type AgentMark } from '../hooks/crew'
+import { beckon, easeTo, failed, finished, resting, type Mate } from '../hooks/crew'
+import { easeNight } from '../hooks/night'
+import { rampAt, rampStops, retain } from '../hooks/pixels'
+import { freshSeed } from '../hooks/cells'
 
 const BAND = {
   component: 'AbovePrompt',
@@ -3971,4 +3975,67 @@ test("the picker on desktop counts its close Button's row: the grid and it fit t
       expect(l.height).toBeLessThanOrEqual(rows)
     }
   }
+})
+
+test('night falls at one pace everywhere: as asked at the start, eased after, landing on it', () => {
+  expect(easeNight(-1, true)).toBe(1)
+  expect(easeNight(-1, false)).toBe(0)
+  let k = 0
+  let frames = 0
+  while (k < 1 && frames < 1000) {
+    k = easeNight(k, true)
+    frames++
+  }
+  // Half way in about a second (14 fps), all the way in a few.
+  expect(frames).toBeGreaterThan(40)
+  expect(frames).toBeLessThan(120)
+  expect(k).toBe(1)
+})
+
+test('ramps: evenly spaced stops and placed ones, held to their ends', () => {
+  const stops = [0x000000, 0x808080, 0xffffff]
+  expect(rampAt(stops, -1)).toBe(0x000000)
+  expect(rampAt(stops, 0.5)).toBe(0x808080)
+  expect(rampAt(stops, 2)).toBe(0xffffff)
+  const placed = [[0, 0x000000], [10, 0xff0000], [30, 0x00ff00]] as const
+  expect(rampStops(placed, 5)).toBe(0x800000)
+  expect(rampStops(placed, 99)).toBe(0x00ff00)
+})
+
+test('retain keeps what passes, in order, in the same array', () => {
+  const list = [1, 2, 3, 4, 5, 6]
+  retain(list, n => n % 2 === 0)
+  expect(list).toEqual([2, 4, 6])
+})
+
+test('a scene made without a seed gets a fresh one each time: no clock, never the same twice', () => {
+  const a = freshSeed()
+  const b = freshSeed()
+  expect(a).not.toBe(b)
+  expect(Number.isInteger(a) && a >= 0).toBe(true)
+})
+
+test('companions alike in every scene: resting, beckoning out of step by slot, leaving well or not', () => {
+  const crew = new Crew(4)
+  crew.update([
+    { id: 'a', state: 'idle', ok: true, task: '', type: '', ms: 0 },
+    { id: 'b', state: 'waiting', ok: true, task: '', type: '', ms: 0 },
+  ])
+  for (let i = 0; i < 40; i++) crew.update([
+    { id: 'a', state: 'idle', ok: true, task: '', type: '', ms: 0 },
+    { id: 'b', state: 'waiting', ok: true, task: '', type: '', ms: 0 },
+  ])
+  const a: Mate = crew.inSlot(0)!
+  const b: Mate = crew.inSlot(1)!
+  expect(resting(a) && resting(b)).toBe(true)
+  // A blink of about four frames on, four off; the next slot out of step.
+  const on = Array.from({ length: 16 }, (_, t) => beckon(b, t))
+  expect(on.filter(Boolean).length).toBe(8)
+  expect(Array.from({ length: 16 }, (_, t) => beckon(a, t))).not.toEqual(on)
+  crew.update([{ id: 'b', state: 'done', ok: false, task: '', type: '', ms: 0 }])
+  expect(finished(a) && !failed(a)).toBe(true)
+  expect(failed(b) && !finished(b)).toBe(true)
+  expect(resting(a)).toBe(false)
+  expect(easeTo(Number.NaN, 5, 0.1)).toBe(5)
+  expect(easeTo(0, 10, 0.5)).toBe(5)
 })
