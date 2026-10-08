@@ -1,4 +1,4 @@
-// REVISION: flow-v145-probes
+// REVISION: flow-v150-review-fixes
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -447,6 +447,39 @@ test("a turn's 30 s clock stops while it waits on the person (a permission, a qu
   h.waitingOn('toolu_3')
   h.turnEnded() // the turn ending forgets what waited
   expect(h.isWaiting).toBe(false)
+})
+
+test("a turn's clock goes on while a subagent's ask is with the mode's decider; a dialog up for the person (any loop's) stops it", async () => {
+  const h = new Activity()
+  h.roster.listed([{ id: 'agent-1', status: 'running', type: 'Explore', description: 'look around' }])
+  h.turnStarted()
+  const run = (seconds: number) => {
+    for (let i = 0; i < Math.round(seconds / 0.07); i++) h.tick()
+  }
+  h.waitingOn('sub', false, 'Bash', 'agent-1') // auto mode's classifier deciding a subagent's ask
+  expect(h.isWaiting).toBe(false)
+  run(31)
+  expect(h.turnBoost).toBe(1)
+  h.prompted('Bash', 'agent-1') // its dialog is up: the person is asked, the whole session waits on them
+  expect(h.isWaiting).toBe(true)
+  run(60)
+  expect(h.turnBoost).toBe(1)
+  h.answered('sub', 'Bash', 'agent-1')
+  h.waitingOn('main', false, 'Bash') // the main loop's own ask, still with the decider: its turn is held up
+  expect(h.isWaiting).toBe(true)
+})
+
+test("the main turn ending forgets only its own waits: a subagent's dialog still up keeps waiting on you", async () => {
+  const h = new Activity()
+  h.roster.listed([{ id: 'bg', status: 'running', type: 'Explore', description: 'in the background' }])
+  h.turnStarted()
+  h.waitingOn('main', true, 'AskUserQuestion')
+  h.waitingOn('sub', true, 'AskUserQuestion', 'bg')
+  h.turnEnded()
+  expect(h.isAwaitingPerson).toBe(true)
+  expect(h.roster.dials()[0]!.state).toBe('waiting')
+  h.answered('sub', 'AskUserQuestion', 'bg')
+  expect(h.isAwaitingPerson).toBe(false)
 })
 
 test("a subagent's model step never moves the main turn's effort floor", async () => {
@@ -2431,7 +2464,7 @@ test('waiting on the person: a question shows at once; a permission ask only onc
   expect(h.isAwaitingPerson).toBe(false)
 })
 
-test("waiting on the person: a dialog takes its own loop's ask first, and one seen with no ask before it lasts till a call of its tool ends", () => {
+test("waiting on the person: a dialog takes its own loop's ask, never another's, and one seen with no ask before it lasts till a call of its tool in its loop ends", () => {
   const h = new Activity()
   h.turnStarted()
   h.waitingOn('main', false, 'Bash')
@@ -2445,6 +2478,15 @@ test("waiting on the person: a dialog takes its own loop's ask first, and one se
   expect(h.isAwaitingPerson).toBe(true)
   h.answered('toolu_9', 'WebFetch')
   expect(h.isAwaitingPerson).toBe(false)
+  // A dialog in a loop with no ask of its own isn't the main loop's ask: that one is still with the decider.
+  h.waitingOn('main2', false, 'Bash')
+  h.prompted('Bash', 'agent-2')
+  h.answered('toolu_x', 'Bash', 'agent-2') // a call of Bash in agent-2 ends: its dialog with it
+  expect(h.isAwaitingPerson).toBe(false)
+  // ...while a call of the tool in another loop ending leaves it up.
+  h.prompted('Bash', 'agent-2')
+  h.answered('main2', 'Bash')
+  expect(h.isAwaitingPerson).toBe(true)
 })
 
 test('the driver shows waiting in auto mode only (as it does the tints), settling the level to 2', () => {
@@ -3083,53 +3125,56 @@ test('roster: a listed subagent works, goes quiet when nothing is heard, works a
 })
 
 test('roster: a subagent waits on you only once a dialog is put to you; an ask the mode settles alone never shows', () => {
-  const r = new Roster()
+  // (The waits are Activity's, one tracker for every loop: the roster reads its subagents' there.)
+  const h = new Activity()
+  const r = h.roster
   r.listed([listed('a'), listed('b')])
   const states = () => r.dials().map(d => d.state)
   // tool.check's ask goes to the mode's decider: auto mode's classifier allows it, and the call runs and ends.
-  r.waitingOn('tu1', false, 'Bash', 'a')
+  h.waitingOn('tu1', false, 'Bash', 'a')
   expect(states()).toEqual(['working', 'working'])
-  r.answered('tu1', 'Bash', 'a')
+  h.answered('tu1', 'Bash', 'a')
   expect(states()).toEqual(['working', 'working'])
   // This time a dialog shows (classic.PermissionRequest, no hook answering it): it waits, however long.
-  r.waitingOn('tu2', false, 'Bash', 'a')
-  r.prompted('Bash', 'a')
+  h.waitingOn('tu2', false, 'Bash', 'a')
+  h.prompted('Bash', 'a')
   expect(states()).toEqual(['waiting', 'working'])
   r.tick(QUIET_MS * 2)
   expect(states()).toEqual(['waiting', 'idle'])
   // Approved, the command shows its progress pill (ToolProgress carries only the call's id): it's running.
-  r.answered('tu2')
+  h.answered('tu2')
   expect(states()).toEqual(['working', 'idle'])
   // Claude's question, a plan to approve: put to you from the start, till the call ends.
-  r.waitingOn('tu3', true, 'AskUserQuestion', 'b')
+  h.waitingOn('tu3', true, 'AskUserQuestion', 'b')
   expect(states()).toEqual(['working', 'waiting'])
-  r.answered('tu3', 'AskUserQuestion', 'b')
+  h.answered('tu3', 'AskUserQuestion', 'b')
   expect(states()).toEqual(['working', 'working'])
   // A dialog with no ask before it waits under its tool's name till a call of it ends.
-  r.prompted('Edit', 'a')
+  h.prompted('Edit', 'a')
   expect(states()).toEqual(['waiting', 'working'])
-  r.answered('tu4', 'Edit', 'a')
+  h.answered('tu4', 'Edit', 'a')
   expect(states()).toEqual(['working', 'working'])
-  // Refused, the call never runs to say so: its next model step settles it (a tool of the same step starting doesn't).
-  r.waitingOn('tu5', false, 'Bash', 'a')
-  r.prompted('Bash', 'a')
-  r.toolStarted('a')
+  // Refused, the call ends all the same (the permission prompt runs beneath tool.call): its finally answers it.
+  h.waitingOn('tu5', false, 'Bash', 'a')
+  h.prompted('Bash', 'a')
+  r.heard('a') // another model step of its own changes nothing: the dialog is still up
   expect(states()).toEqual(['waiting', 'working'])
-  r.stepped('a')
+  h.answered('tu5', 'Bash', 'a')
   expect(states()).toEqual(['working', 'working'])
   // The main loop's own dialogs and questions are not a subagent's.
-  r.waitingOn('tu6', false, 'Bash')
-  r.prompted('Bash')
-  r.waitingOn('tu7', true, 'AskUserQuestion')
+  h.waitingOn('tu6', false, 'Bash')
+  h.prompted('Bash')
+  h.waitingOn('tu7', true, 'AskUserQuestion')
   expect(states()).toEqual(['working', 'working'])
 })
 
 test("roster: what a subagent does before a poll names it counts once one does: a tool still running, a dialog up", () => {
-  const r = new Roster()
+  const h = new Activity()
+  const r = h.roster
   // Its first tool, and the other's permission dialog, before any poll has named them.
   r.toolStarted('a')
-  r.waitingOn('tu1', false, 'Bash', 'b')
-  r.prompted('Bash', 'b')
+  h.waitingOn('tu1', false, 'Bash', 'b')
+  h.prompted('Bash', 'b')
   r.tick(25_000)
   r.listed([listed('a'), listed('b')])
   expect(r.dials().map(d => [d.id, d.state])).toEqual([
@@ -3137,13 +3182,14 @@ test("roster: what a subagent does before a poll names it counts once one does: 
     ['b', 'waiting'],
   ])
   r.toolEnded('a')
-  r.answered('tu1', 'Bash', 'b')
+  h.answered('tu1', 'Bash', 'b')
   r.tick(QUIET_MS + 1)
   expect(r.dials().map(d => d.state)).toEqual(['idle', 'idle'])
   // A loop no poll names for long (the engine's own forks) is forgotten, its waits with it.
   r.heard('fork')
-  r.waitingOn('tu2', true, 'AskUserQuestion', 'fork')
+  h.waitingOn('tu2', true, 'AskUserQuestion', 'fork')
   r.tick(40_000)
+  expect(h.isAwaitingPerson).toBe(false)
   r.listed([listed('a'), listed('b'), listed('fork')])
   expect(r.dials().find(d => d.id === 'fork')!.state).toBe('working') // named at last: a fresh start, no stale wait
 })
@@ -3166,6 +3212,41 @@ test('roster: done when its run completes (or it stops being listed), kept a whi
   expect(r.active).toBe(0)
   r.tick(DONE_MS + 100)
   expect(r.dials()).toEqual([])
+})
+
+test('roster: a finished agent a poll still lists held or between turns stays done; only listed running again (or heard from) is it back', () => {
+  const r = new Roster()
+  r.listed([listed('a'), listed('b')])
+  r.finished('a', true)
+  r.finished('b', true)
+  r.tick(4000) // past the moment a poll may be behind the news
+  r.listed([listed('a', 'idle'), listed('b', 'waiting')])
+  expect(r.dials().map(d => [d.id, d.state])).toEqual([
+    ['a', 'done'],
+    ['b', 'done'],
+  ])
+  r.listed([listed('a', 'running'), listed('b', 'waiting')])
+  expect(r.dials().map(d => [d.id, d.state])).toEqual([
+    ['b', 'done'],
+    ['a', 'working'], // a new run: last in line
+  ])
+})
+
+test('roster: the dial is worked out once a change (and a tick), the same for every scene that asks between', () => {
+  const h = new Activity()
+  const r = h.roster
+  expect(r.dials()).toBe(r.dials())
+  expect(r.dials()).toEqual([])
+  r.listed([listed('a')])
+  const first = r.dials()
+  expect(r.dials()).toBe(first)
+  h.waitingOn('tu1', true, 'AskUserQuestion', 'a')
+  const asked = r.dials()
+  expect(asked).not.toBe(first)
+  expect(asked[0]!.state).toBe('waiting')
+  r.tick(70)
+  expect(r.dials()).not.toBe(asked)
+  expect(r.dials()[0]!.ms).toBe(70)
 })
 
 test('roster: one first seen already ended is never shown; one heard from after its run is back, a new run', () => {

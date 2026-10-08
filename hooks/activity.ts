@@ -1,4 +1,4 @@
-// REVISION: flow-v127-agents
+// REVISION: flow-v150-review-fixes
 //
 // How busy the agent is: the work → scene mapping for `/flow auto`. Events
 // add "heat" (the metaphor from when the only scene was a fire), the heat
@@ -6,11 +6,13 @@
 // (a fire's height, the swell, the balloon's altitude, ...), and a turn that
 // keeps going climbs a level every 30 s besides (its clock stopped while it
 // waits on the person: a permission, a question, a plan). While one of those
-// is put to the person (a dialog is up for them) the level settles to a calm
-// 2 and the scenes show it (`isAwaitingPerson`, waiting.ts). It also says
-// which tint shows: smoke after a failure or a compaction, blue when the
-// context is nearly full, and keeps the roster of subagents, each on its own
-// (agents.ts: the scenes' companions). Pure: no `$`, so it is unit-tested directly.
+// is put to the person (a dialog is up for them, in any loop) the level
+// settles to a calm 2 and the scenes show it (`isAwaitingPerson`, waiting.ts).
+// It keeps what every loop waits on (waits.ts, one tracker for the main loop
+// and the subagents), says which tint shows: smoke after a failure or a
+// compaction, blue when the context is nearly full, and keeps the roster of
+// subagents, each on its own (agents.ts: the scenes' companions). Pure: no
+// `$`, so it is unit-tested directly.
 //
 // Calibrated so the range reads as work, not chatter (see the calibration
 // tests): a streamed answer sits mid-range, reads and any other tool (an MCP
@@ -19,6 +21,7 @@
 
 import { Roster } from './agents'
 import type { Tint } from './styles'
+import { Waits } from './waits'
 
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | number | undefined
 
@@ -38,11 +41,6 @@ const FAIL_SMOKE = 30
 const COMPACT_SMOKE = 40
 /** The level a scene settles to while it waits on the person: calm, but above idle's glow (a rocket holds its stage there). */
 export const WAIT_LEVEL = 2
-/** A dialog seen with no ask before it waits under its tool's name: `prompt:Bash`. */
-const PROMPT = 'prompt:'
-
-/** A call waiting on the person: its tool and loop, and whether it has been put to them yet. */
-type Wait = { tool?: string; agent?: string; asked: boolean }
 
 export function effortFloor(effort: Effort): number {
   switch (effort) {
@@ -71,12 +69,12 @@ export class Activity {
   contextPercent = 0
   /** Frames this turn has been running (none between turns), not counting time it waited on the person. */
   turnFrames = 0
-  /** The calls waiting on the person (a permission ask, a question, a plan to approve), by tool_use_id, oldest first. */
-  private waits = new Map<string, Wait>()
+  /** The calls waiting on the person (a permission ask, a question, a plan to approve), in every loop. */
+  readonly waits = new Waits()
   /** Streamed characters since the last tick, weighted. */
   private pendingChars = 0
   /** Each subagent on its own (working, quiet, waiting on you, done): the scenes' `agents` dial. */
-  readonly roster = new Roster()
+  readonly roster = new Roster(this.waits)
 
   private add(n: number): void {
     this.heat = Math.min(MAX_HEAT, this.heat + n)
@@ -90,53 +88,51 @@ export class Activity {
   turnEnded(): void {
     this.isTurnActive = false
     this.turnFrames = 0
-    this.forgetWaits()
+    // The main loop's waits end with its turn; a subagent's dialog still up (one running on in the background) doesn't.
+    this.waits.forget()
   }
 
-  /** Nothing waits on the person any more (the turn, or the session, is over). */
+  /** Nothing waits on the person any more, in any loop (the session is over). */
   forgetWaits(): void {
     this.waits.clear()
   }
 
   /**
-   * A call now waits on the person: the turn's clock stops till it's
-   * answered. `asked`: it's put to them now (Claude's question, a plan to
-   * approve). A permission ask isn't yet: the mode may settle it alone (auto
-   * mode's classifier), so it's only put to them once a dialog shows (`prompted`).
+   * A call (in loop `agent`; none, the main loop) now waits on the person.
+   * `asked`: it's put to them now (Claude's question, a plan to approve). A
+   * permission ask isn't yet: the mode may settle it alone (auto mode's
+   * classifier), so it's only put to them once a dialog shows (`prompted`).
+   * The main loop's stops the turn's clock till it's answered.
    */
   waitingOn(id: string, asked = true, tool?: string, agent?: string): void {
-    const w = this.waits.get(id)
-    this.waits.set(id, { tool: tool ?? w?.tool, agent: agent ?? w?.agent, asked: asked || w?.asked === true })
+    this.waits.waitingOn(id, asked, tool, agent)
+    if (agent !== undefined) this.roster.noted(agent)
+  }
+
+  /** A permission dialog shows for a call of `tool` in loop `agent` (none: the main loop). */
+  prompted(tool: string, agent?: string): void {
+    this.waits.prompted(tool, agent)
+    if (agent !== undefined) this.roster.noted(agent)
+  }
+
+  /** The call is answered (or over, or running): the clock goes on, unless another still holds it. */
+  answered(id: string, tool?: string, agent?: string): void {
+    const loop = this.waits.answered(id, tool, agent)
+    if (loop !== undefined) this.roster.settled(loop)
   }
 
   /**
-   * A permission dialog shows for a call of `tool` (in loop `agent`, none for
-   * the main one): the oldest ask of it not yet put to the person now is. One
-   * with no ask before it waits under the tool's name until a call of it ends.
+   * Whether the turn's clock stands still: one of the main loop's calls waits
+   * (on the person, or the mode deciding whether to ask them), or a dialog of
+   * any loop is up for the person. A subagent's ask the mode is deciding doesn't hold it.
    */
-  prompted(tool: string, agent?: string): void {
-    let pick: Wait | undefined
-    for (const w of this.waits.values()) if (!w.asked && w.tool === tool && w.agent === agent && !pick) pick = w
-    for (const w of this.waits.values()) if (!w.asked && w.tool === tool && !pick) pick = w
-    if (pick) pick.asked = true
-    else this.waits.set(`${PROMPT}${tool}`, { tool, agent, asked: true })
-  }
-
-  /** The call is answered (or over, or running): the clock goes on, unless another still waits. */
-  answered(id: string, tool?: string): void {
-    this.waits.delete(id)
-    if (tool !== undefined) this.waits.delete(`${PROMPT}${tool}`)
-  }
-
-  /** Whether the turn is held up waiting on the person (or the mode deciding whether to ask them). */
   get isWaiting(): boolean {
-    return this.waits.size > 0
+    return this.waits.holdsTurn
   }
 
-  /** Whether something is put to the person now (a dialog is up for them): the scenes settle and show it. */
+  /** Whether something is put to the person now, in any loop (a dialog is up for them): the scenes settle and show it. */
   get isAwaitingPerson(): boolean {
-    for (const w of this.waits.values()) if (w.asked) return true
-    return false
+    return this.waits.anyAsked
   }
 
   /** One model request. Only the main loop's sets the effort floor. */

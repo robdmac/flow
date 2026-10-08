@@ -1,4 +1,4 @@
-// REVISION: flow-v137-agents-waits
+// REVISION: flow-v150-review-fixes
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -110,7 +110,7 @@ import {
 } from './picker'
 
 
-const FLOW_REVISION = 'flow-v137-agents-waits'
+const FLOW_REVISION = 'flow-v150-review-fixes'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -1239,7 +1239,7 @@ export const register: Register = (on, options) => {
     const isSubagent = agentId !== undefined
     if (isSubagent) {
       subagentSeen = true
-      activity.roster.stepped(agentId)
+      activity.roster.heard(agentId)
     }
     activity.modelStep(e.effort, isSubagent)
     for await (const chunk of next(e)) {
@@ -1266,26 +1266,20 @@ export const register: Register = (on, options) => {
 
     activity.toolsInFlight++
     const id = e.tool_use_id
-    // Claude's question, a plan to approve: put to the person from the start.
-    if (id && PERSON_TOOLS.has(e.tool)) activity.waitingOn(id, true, e.tool, e.agentId)
-    // A subagent's tool: it's working for as long as the tool runs (Claude's question, a plan to approve: put to
-    // the person from the start).
-    if (agentId !== undefined) {
-      activity.roster.toolStarted(agentId)
-      if (id && PERSON_TOOLS.has(e.tool)) activity.roster.waitingOn(id, true, e.tool, agentId)
-    }
+    // A subagent's tool: it's working for as long as the tool runs.
+    if (agentId !== undefined) activity.roster.toolStarted(agentId)
+    // Claude's question, a plan to approve: put to the person from the start (a subagent's too: its companion waits).
+    if (id && PERSON_TOOLS.has(e.tool)) activity.waitingOn(id, true, e.tool, agentId)
     try {
       const result = await next(e)
       if (e.tool === 'Bash' && 'isError' in result && result.isError) activity.failed()
       return result
     } finally {
       activity.toolsInFlight--
-      // (Answered, or over: a permission ask from tool.check ends here too.)
-      if (id) activity.answered(id, e.tool)
-      if (agentId !== undefined) {
-        activity.roster.toolEnded(agentId)
-        if (id) activity.roster.answered(id, e.tool, agentId)
-      }
+      if (agentId !== undefined) activity.roster.toolEnded(agentId)
+      // (Answered, or over: a permission ask from tool.check ends here too, allowed or refused, as the
+      // permission prompt runs beneath this hook.)
+      if (id) activity.answered(id, e.tool, agentId)
     }
   })
 
@@ -1294,12 +1288,9 @@ export const register: Register = (on, options) => {
     // An ask goes to the mode's decider: the turn's clock waits until the call is over (or shows it's
     // running). It's put to the person only if a dialog shows (classic.PermissionRequest, below): auto
     // mode's classifier decides most alone, and that's no wait on you.
-    if (verdict.decision === 'ask' && e.tool_use_id) {
-      activity.waitingOn(e.tool_use_id, false, e.tool, e.agentId)
-      // A subagent's ask goes to the mode's decider: its companion waits on you only if a dialog shows
-      // (classic.PermissionRequest, below); auto mode's classifier settles most alone.
-      activity.roster.waitingOn(e.tool_use_id, false, e.tool, e.agentId)
-    }
+    // A subagent's ask likewise: its companion waits on you only if a dialog shows, and the main turn's clock
+    // goes on meanwhile.
+    if (verdict.decision === 'ask' && e.tool_use_id) activity.waitingOn(e.tool_use_id, false, e.tool, e.agentId)
     return verdict
   })
 
@@ -1307,17 +1298,13 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     // No hook answered for them: the dialog shows, and the scene settles and breathes until it's answered.
     // A subagent's: its companion waits on you too.
-    if (!result.decision && result.block === undefined) {
-      activity.prompted(e.tool_name, e.agent_id)
-      activity.roster.prompted(e.tool_name, e.agent_id)
-    }
+    if (!result.decision && result.block === undefined) activity.prompted(e.tool_name, e.agent_id)
     return result
   })
 
   on('ui.render', { component: 'ToolProgress' }, ($, e, next) => {
     // A call showing progress is running (a long command's background hint): whatever it waited on is answered.
     activity.answered(e.props.tool_use_id)
-    activity.roster.answered(e.props.tool_use_id)
     return next(e)
   })
 
