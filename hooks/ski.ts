@@ -1,4 +1,4 @@
-// REVISION: flow-v127-crew-room
+// REVISION: flow-v150-review-fixes
 //
 // A skier on a mountain, on the fire's dials: the level is the speed and the
 // steepness. At 1 the skier stands at the top of the run, poles planted,
@@ -60,6 +60,9 @@ const MOGULS = [0, 0, 0, 0.4, 0.8, 1, 0.9, 0.6, 0.2, 0, 0]
 const GATES = [0, 0, 0.15, 0.35, 0.45, 0.45, 0.35, 0.25, 0.1, 0, 0]
 /** The spine scrolls in rows: a row is twice as tall as a pixel column is wide. */
 const SPINE = 0.42
+/** A spine skier's size in pixels (a little over its sprite's), to stand one clear of another. */
+const SKIER_WIDE = 8
+const SKIER_TALL = 10
 /** Frames to get up again after a fall. */
 const GET_UP = 18
 
@@ -594,10 +597,17 @@ export class Ski {
         const half = this.room()
         s.fx = this.pw / 2 + lat * half
         // A companion comes down from above, and leaves off the bottom (or, failed, drops back up behind). Its
-        // place is never above the summit: one placed uphill of the hero waits just under it at the start.
+        // place is never above the summit: one placed uphill of the hero waits just under it at the start,
+        // a skier's width to the side (the hero stands there too), easing back into line as the run takes
+        // it below.
         const off = m ? this.away(m) * this.ph * 0.8 : 0
         let fy = this.d * SPINE + Math.round(this.ph * (this.spineAnchors[i]! - this.spineAnchors[0]!))
-        if (m) fy = Math.max(fy, 4 + 2 * m.slot)
+        if (m) {
+          const floor = 4 + 2 * m.slot
+          const aside = clamp((floor - fy) / SKIER_TALL, 0, 1)
+          fy = Math.max(fy, floor)
+          s.fx += (this.skiers[0]!.fx + (m.slot & 1 ? -1 : 1) * SKIER_WIDE - s.fx) * aside
+        }
         s.fy = fy + Math.round(off)
       } else {
         let sx = this.anchorX(i)

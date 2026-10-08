@@ -62,6 +62,8 @@ type Captured = {
   toasts?: string[]
   /** What `$.ui.log` was given, and where to. */
   logs?: { text: string; to?: string }[]
+  /** Set: every blit is refused with it (the band is no longer mounted there). */
+  blitDeny?: string
   /** The session's id, as `$.session.id()` answers it (change it to move the process to another session). */
   session?: string
   /**
@@ -118,7 +120,7 @@ function engine(
   on('ui.blit', (_, e) => {
     captured.blits.push(e.requestId)
     ;(captured.blitKeys ??= []).push(`${e.requestId}/${e.key}`)
-    return { value: {} }
+    return { value: captured.blitDeny ? { deny: captured.blitDeny } : {} }
   })
   on('config.set', (_, e) => {
     captured.config.push([e.key, e.value])
@@ -3703,4 +3705,206 @@ test("fire: each subagent kindles a small fire of its own on alternate sides, th
   expect(f.agentMarks!()).toEqual([])
   const after = burning([], 60)
   expect(after[a.col - 1]! > 0.3 && after[b.col + b.w]! > 0.3).toBe(true)
+})
+
+// ── Review fixes: sessions, the adapter, the spine ───────────────────────
+
+/** `$.state` over a Map the test can look into (`flow.altitude`: 12), counting the writes to each key. */
+function memoryState(on: On, entries: Readonly<Record<string, unknown>> = {}) {
+  const values = new Map<string, unknown>(Object.entries(entries))
+  const writes = new Map<string, number>()
+  on('state.get', (_, e) => {
+    const k = `${e.plugin}.${e.key}`
+    return { value: { value: values.get(k), version: values.has(k) ? 1 : 0 } as never }
+  })
+  on('state.set', (_, e) => {
+    const k = `${e.plugin}.${e.key}`
+    values.set(k, (e as { value: unknown }).value)
+    writes.set(k, (writes.get(k) ?? 0) + 1)
+    return { value: { isSet: true, version: writes.get(k)! } as never }
+  })
+  return { values, writes }
+}
+
+test("/config's layout changed in the session places the pane as /flow would: spine opens it, band closes it", { options: { mode: 'manual', level: 5, layout: 'spine' } }, async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  engine(on)
+  const pane = panes(on)
+  await start($)
+  expect(pane.open.has('flow')).toBe(true)
+  await flow($, 'band') // the session's own: the pane goes
+  expect(pane.open.has('flow')).toBe(false)
+  const set = $.config.set as unknown as (e: object) => Promise<unknown>
+  await set({ key: 'flow.layout', value: 'spine', previous: 'spine', provider: { plugin: 'flow', tier: 'user' }, origin: { kind: 'composer' } })
+  expect(pane.open.has('flow')).toBe(true)
+  await set({ key: 'flow.layout', value: 'band', previous: 'spine', provider: { plugin: 'flow', tier: 'user' }, origin: { kind: 'composer' } })
+  expect(pane.open.has('flow')).toBe(false)
+})
+
+test('a /clear or a resume starts with the context empty: no blue left over from the conversation before', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  engine(on)
+  on('session.measure', (_, e) => ({ changed: e.changed }))
+  await start($)
+  const measure = ($ as unknown as { session: { measure: (e: object) => Promise<unknown> } }).session.measure
+  await measure({ context: { percent: 92 }, rateLimits: [], changed: ['context'] })
+  expect(await flow($)).toContain('context nearly full')
+  await endSession($, 'clear', 'session-a')
+  expect(await flow($)).not.toContain('context nearly full')
+})
+
+test('sessions: a poll reading the new id while the session that ended is still being put away knows it was a resume, not a /clear', { options: { style: 'surf' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  memoryStore(on)
+  const seen = engine(on)
+  // /config's rows: the first read once the session has ended is slow to answer.
+  let holding = false
+  let release: (() => void) | undefined
+  on('config.list', async () => {
+    if (holding) {
+      holding = false
+      await new Promise<void>(r => (release = r))
+    }
+    return { value: configRows({}) as never }
+  })
+  seen.session = 'a'
+  await start($)
+  await flow($, 'ski')
+  // Resumed into b (no settings of its own): a's end is still reading the defaults when a poll sees b.
+  holding = true
+  seen.session = 'b'
+  const ending = endSession($, 'resume', 'a')
+  await clock.advance(6000)
+  release?.()
+  await ending
+  expect((await flow($)).split('\n')[0]).toMatch(/^fire/) // the defaults (/config's), not a's ski carried over
+})
+
+test('a session whose start meets a failure (its state unreadable) still runs its frame loop', { options: { mode: 'manual', level: 5 } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  on('state.get', () => ({ deny: 'no state here' }) as never)
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  seen.blits.length = 0
+  await clock.advance(1000)
+  expect(seen.blits.length).toBeGreaterThan(3)
+  await ui.unmount()
+})
+
+test('a band no longer mounted (its blit refused) is no longer heard', { options: { mode: 'manual', level: 9, style: 'bubbles', sound: 'on' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(3000)
+  expect((seen.plays ?? []).length).toBeGreaterThan(0)
+  await ui.unmount()
+  seen.blitDeny = 'nothing of this plugin is mounted there'
+  await clock.advance(1000)
+  const before = (seen.plays ?? []).length
+  await clock.advance(10_000)
+  expect((seen.plays ?? []).length).toBe(before)
+})
+
+test("the balloon's altitude: kept while it's the balloon, never built or written for another scene", { options: { mode: 'manual', level: 8, style: 'fire' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  engine(on)
+  const state = memoryState(on, { 'flow.altitude': 3 })
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(5000)
+  expect(state.writes.get('flow.altitude') ?? 0).toBe(0)
+  await flow($, 'balloon')
+  await clock.advance(5000)
+  expect(state.writes.get('flow.altitude') ?? 0).toBeGreaterThan(0)
+  expect(state.values.get('flow.altitude')).not.toBe(3) // it climbed from where it was left
+  await ui.unmount()
+})
+
+test('someone seen at the session is remembered across a reload: the sound plays then with no key; a turn or a /flow marks them too', { options: { mode: 'manual', level: 9, style: 'bubbles', sound: 'on' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  const state = memoryState(on)
+  const begin = () => ($ as unknown as TestDollar).session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  await begin()
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(2000)
+  expect(seen.plays ?? []).toEqual([])
+  await keyed($)
+  await keyed($)
+  await flow($)
+  // Kept in the session's state (written once) for a reload to find: see the next test.
+  expect(state.values.get('flow.present')).toBe(true)
+  expect(state.writes.get('flow.present')).toBe(1)
+  await ui.unmount()
+})
+
+test('someone is there: after a reload that finds them in the state, the sound plays with no key', { options: { mode: 'manual', level: 9, style: 'bubbles', sound: 'on' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  memoryState(on, { 'flow.present': true })
+  await ($ as unknown as TestDollar).session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(3000)
+  expect((seen.plays ?? []).length).toBeGreaterThan(0)
+  await ui.unmount()
+})
+
+test('someone is there: a turn starting is someone at the session too, remembered for a reload', { options: { mode: 'manual', level: 9, style: 'bubbles', sound: 'on' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  const state = memoryState(on)
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  await ($ as unknown as TestDollar).session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  await clock.advance(2000)
+  expect(seen.plays ?? []).toEqual([])
+  await ($ as unknown as { turn: { start: (e: object) => Promise<unknown> } }).turn.start({ turnId: 't1', text: 'hi' })
+  expect(state.values.get('flow.present')).toBe(true)
+  await clock.advance(3000)
+  expect((seen.plays ?? []).length).toBeGreaterThan(0)
+  await ui.unmount()
+})
+
+test('ski: in the spine at a fresh start, the companions stand clear of one another and of the skier', () => {
+  for (const [columns, rows] of [[22, 30], [22, 60], [13, 30]] as const) {
+    const f = makeScene('ski', 7)
+    f.ensure(columns, rows)
+    f.strength = 1
+    f.agents = ['a', 'b', 'c', 'd'].map(id => dial(id, 'working'))
+    for (let i = 0; i < 60; i++) f.step()
+    f.grid()
+    const marks = f.agentMarks?.() ?? []
+    expect(marks.length).toBe(4)
+    for (let i = 0; i < marks.length; i++) {
+      for (let j = i + 1; j < marks.length; j++) {
+        const [p, q] = [marks[i]!, marks[j]!]
+        // (Marks round outward to whole cells: touching by one is no overlap.)
+        const across = Math.min(p.col + p.w, q.col + q.w) - Math.max(p.col, q.col)
+        const down = Math.min(p.row + p.h, q.row + q.h) - Math.max(p.row, q.row)
+        expect(across <= 1 || down <= 1).toBe(true)
+      }
+    }
+  }
+})
+
+test("the picker on desktop counts its close Button's row: the grid and it fit the pane", () => {
+  for (let columns = 30; columns <= 200; columns += 11) {
+    for (let rows = 6; rows <= 60; rows += 2) {
+      const l = pickLayout(columns, rows, STYLES.length, undefined, 1)
+      if (!l) continue
+      const frame = l.framed ? 2 : 0
+      expect(Math.ceil(STYLES.length / l.across) * (l.rows + 1 + frame) + (l.lines ? 2 : 0) + 1).toBe(l.height)
+      expect(l.height).toBeLessThanOrEqual(rows)
+    }
+  }
 })

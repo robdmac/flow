@@ -168,7 +168,7 @@ const LEGACY_KEYS = ['mode', 'strength', 'idle', 'style', 'drop'] as const
 const altitudeAtom = atom({ plugin: 'flow', key: 'altitude' } as const, 0)
 
 async function keepAltitude($: EngineInterface, altitude: number): Promise<void> {
-  await update($, altitudeAtom, () => altitude)
+  await update($, altitudeAtom, () => altitude).catch(() => {})
 }
 
 async function savedAltitude($: EngineInterface): Promise<number> {
@@ -184,7 +184,14 @@ async function savedAltitude($: EngineInterface): Promise<number> {
 const presentAtom = atom({ plugin: 'flow', key: 'present' } as const, false)
 
 async function keepPresent($: EngineInterface): Promise<void> {
-  await update($, presentAtom, () => true)
+  await update($, presentAtom, () => true).catch(() => {})
+}
+
+/** Someone's at the session (a key in the prompt, a turn, a `/flow`): the soundscape may play from the next frame, and after a reload too. */
+function markPresent($: EngineInterface, sound: { present: boolean }): void {
+  if (sound.present) return
+  sound.present = true
+  void keepPresent($)
 }
 
 async function wasPresent($: EngineInterface): Promise<boolean> {
@@ -478,6 +485,15 @@ export type SceneCtx = {
  * layout just asked for (or moved to): answers a note for the reply.
  */
 async function placeScene($: EngineInterface, ctx: SceneCtx, layout: FlowLayout | undefined): Promise<string> {
+  try {
+    return await placePane($, ctx, layout)
+  } catch {
+    // (No panes here, or the host refused: the setting stands, and the pane follows it at the next change.)
+    return ''
+  }
+}
+
+async function placePane($: EngineInterface, ctx: SceneCtx, layout: FlowLayout | undefined): Promise<string> {
   const { driver } = ctx
   if (layout === 'band') {
     ctx.leftSpine()
@@ -722,6 +738,14 @@ export const register: Register = (on, options) => {
    * one shared scene back and forth every frame would rebuild it every frame.
    */
   const desktopDriver = new SceneDriver(cfg, activity)
+  /**
+   * The balloon's altitude as the last load left it (read at `session.start`): a balloon built in this load
+   * (either driver, whenever the scene is first shown) resumes there.
+   */
+  let altitudeSeed = 0
+  driver.onMake = desktopDriver.onMake = (_style, scene) => {
+    if (scene instanceof Balloon) scene.seed(altitudeSeed)
+  }
   /** Where the scene is drawn now (band or spine). Other surfaces never touch it. */
   let mounted: { requestId: string; columns: number; rows: number } | null = null
   let ticks = 0
@@ -893,18 +917,24 @@ export const register: Register = (on, options) => {
       `[flow] REVISION: ${FLOW_REVISION} loaded at ${at.toISOString()} (local ${at.getHours()}:${at.getMinutes()}, UTC offset ${-at.getTimezoneOffset()} min)`,
       { to: 'debug' },
     )
-    await $.command.register({
-      name: COMMAND,
-      description: 'An ambient scene that moves with the work: fire, surf, ski, rockets and more',
-      argumentHint: '[<scene> | pick | next | day | night | clock | auto | 1-10 | off | band | spine | save | reset | help]',
-    })
+    // Each step below may fail on its own (a host without a noun, a store that won't answer): none of them
+    // may cost the session its frame loop, its clock or the subagent polling, which start after them all.
+    try {
+      await $.command.register({
+        name: COMMAND,
+        description: 'An ambient scene that moves with the work: fire, surf, ski, rockets and more',
+        argumentHint: '[<scene> | pick | next | day | night | clock | auto | 1-10 | off | band | spine | save | reset | help]',
+      })
+    } catch {
+      // No command here: the scene still shows.
+    }
 
     // What's left of Flow from before this load, read before anything below writes: /config's rows as stored,
     // the balloon's altitude (this session's), the store (seedTips). Someone new starts on the tips; someone
     // who had Flow before they were kept is taken as having had them.
     const stale = staleRows(await storedRows($), PLUGIN)
-    const altitude = await savedAltitude($)
-    sound.present = sound.present || (await wasPresent($))
+    const altitude = await savedAltitude($).catch(() => 0)
+    sound.present = sound.present || (await wasPresent($).catch(() => false))
     await seedTips($, stale.length > 0 || altitude > 0, readConfig(options))
 
     // /config rows holding a scene Flow no longer takes (renamed, dropped), written back as the one meant.
@@ -912,34 +942,45 @@ export const register: Register = (on, options) => {
 
     // One-time move of settings kept in $.store before they were userConfig.
     const legacy: Partial<FlowConfig> = {}
-    const old = Object.fromEntries(await Promise.all(LEGACY_KEYS.map(async k => [k, await $.store.get(k)] as const)))
-    if (old.mode === 'auto' || old.mode === 'manual') legacy.mode = old.mode
-    const oldStyle = typeof old.style === 'string' ? styleNamed(old.style) : undefined
-    if (oldStyle) legacy.style = oldStyle
-    if (old.idle === 0 || old.idle === 1) legacy.idle = old.idle
-    if (typeof old.strength === 'number' && Number.isInteger(old.strength) && old.strength >= 0 && old.strength <= 10) {
-      legacy.level = old.strength
-    }
-    if (LEGACY_KEYS.some(k => old[k] !== undefined)) {
-      for (const k of LEGACY_KEYS) await $.store.delete(k)
-      await saveConfig($, legacy)
+    try {
+      const old = Object.fromEntries(await Promise.all(LEGACY_KEYS.map(async k => [k, await $.store.get(k)] as const)))
+      if (old.mode === 'auto' || old.mode === 'manual') legacy.mode = old.mode
+      const oldStyle = typeof old.style === 'string' ? styleNamed(old.style) : undefined
+      if (oldStyle) legacy.style = oldStyle
+      if (old.idle === 0 || old.idle === 1) legacy.idle = old.idle
+      if (typeof old.strength === 'number' && Number.isInteger(old.strength) && old.strength >= 0 && old.strength <= 10) {
+        legacy.level = old.strength
+      }
+      if (LEGACY_KEYS.some(k => old[k] !== undefined)) {
+        for (const k of LEGACY_KEYS) await $.store.delete(k)
+        await saveConfig($, legacy)
+      }
+    } catch {
+      // Unread: moved at the next load.
     }
 
     // `/flow` changes from before sessions kept their own, still pending:
     // written through to /config once, the defaults now (as are the legacy
     // ones), ahead of the reload the write brings.
-    const pending = await migrateOverrides($)
+    const pending = await migrateOverrides($).catch((): Own => ({}))
 
     // This session's own settings over the defaults: kept under its id, so a
     // reload (a /config change, an update) or a resume brings them back. A
     // new session has none, and starts on the defaults.
-    await openSession($, sceneCtx, { ...readConfig(options), ...legacy, ...pending })
+    const fallback = { ...readConfig(options), ...legacy, ...pending }
+    try {
+      await openSession($, sceneCtx, fallback)
+    } catch {
+      // Unopened: this load shows the defaults it has.
+      applyLocal(fallback)
+    }
     $.ui.invalidate('ui.render')
     void pruneSessions($, session.id)
 
-    // Resume the balloon where the last load left it.
+    // Resume the balloon where the last load left it (one built from here on starts there: onMake).
+    altitudeSeed = altitude
     for (const d of [driver, desktopDriver]) {
-      const balloon = d.sceneFor('balloon')
+      const balloon = d.built('balloon')
       if (balloon instanceof Balloon) balloon.seed(altitude)
     }
 
@@ -949,7 +990,7 @@ export const register: Register = (on, options) => {
 
     // The frame loop: its own pace, rescheduled each tick.
     let wasShown = driver.isShown()
-    let keptAltitude = -1
+    let keptAltitude = altitude
     const frame = (elapsed: number): number => {
       ticks++
       activity.tick(elapsed / FRAME_MS)
@@ -1063,12 +1104,14 @@ export const register: Register = (on, options) => {
           }
         }
       }
-      // Every second or so, note the balloon's altitude if it moved, so a
-      // /config change made from the menu (a reload) resumes it too.
-      const b = (site || !desk ? driver : desktopDriver).sceneFor('balloon')
-      if (ticks % 15 === 0 && b instanceof Balloon && Math.abs(b.altitude - keptAltitude) > 0.5) {
-        keptAltitude = b.altitude
-        void keepAltitude($, b.altitude)
+      // Every second or so, while it's the balloon, note its altitude if it moved, so a /config change made
+      // from the menu (a reload) resumes it too.
+      if (ticks % 15 === 0 && cfg.style === 'balloon') {
+        const b = (site || !desk ? driver : desktopDriver).scene
+        if (b instanceof Balloon && Math.abs(b.altitude - keptAltitude) > 0.5) {
+          keptAltitude = b.altitude
+          void keepAltitude($, b.altitude)
+        }
       }
       // Auto + dark idle: mount the band when work starts, drop it once the
       // scene has wound down, so an idle session gives the rows back.
@@ -1105,13 +1148,35 @@ export const register: Register = (on, options) => {
       lastCells = cells
       const at = ticks
       blitAt = at
-      void $.ui.blit({ requestId: site.requestId, key: KEY, cells }).finally(() => {
-        if (blitAt === at) blitAt = -1
-      })
+      void $.ui
+        .blit({ requestId: site.requestId, key: KEY, cells })
+        .then(
+          r => {
+            // Nothing of ours there any more (or not at this size): no band on screen till it's drawn again
+            // (asked for, should it still be there), so nothing is heard for one that's gone.
+            if (r.deny && mounted === site) {
+              mounted = null
+              $.ui.invalidate('ui.render')
+            }
+          },
+          () => {},
+        )
+        .finally(() => {
+          if (blitAt === at) blitAt = -1
+        })
       return pace
     }
+    // (A frame that throws, a scene's bug, still reschedules: the next may not, and one never stops it all.)
     const loop = (ms: number) => {
-      $.clock.after(ms, () => loop(frame(ms)))
+      $.clock.after(ms, () => {
+        let after = FRAME_MS
+        try {
+          after = frame(ms)
+        } catch (err) {
+          $.ui.log(`[flow] a frame failed: ${String(err)}`, { to: 'debug' })
+        }
+        loop(after)
+      })
     }
     loop(FRAME_MS)
 
@@ -1161,9 +1226,9 @@ export const register: Register = (on, options) => {
     // has since changed to the band would otherwise draw beside it.
     if (cfg.layout === 'spine' && driver.isShown()) {
       // Unasked, a pane docks only from 144 columns; below that it waits.
-      void $.ui.open({ id: SPINE, title: 'flow', columns: SPINE_COLUMNS, rows: SPINE_INLINE_ROWS })
+      void $.ui.open({ id: SPINE, title: 'flow', columns: SPINE_COLUMNS, rows: SPINE_INLINE_ROWS }).catch(() => {})
     } else if (await spineIsUp($)) {
-      await $.ui.close({ id: SPINE })
+      await $.ui.close({ id: SPINE }).catch(() => {})
     }
 
     // Day and night by the local clock: read it every minute.
@@ -1176,8 +1241,8 @@ export const register: Register = (on, options) => {
     readClock()
 
     // Subagents: always polled (never gated on what this load remembers: a
-    // reload mid-run starts from nothing), every second while anything works,
-    // every 5 s otherwise, and at once when a subagent's activity shows up.
+    // reload mid-run starts from nothing), every second while anything works
+    // or a subagent's activity has shown up since the last poll, every 5 s otherwise.
     let lastPoll = 0
     const countAgents = () => {
       $.agent.list().then(
@@ -1226,10 +1291,7 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.start', ($, e, next) => {
-    if (!sound.present) {
-      sound.present = true
-      void keepPresent($)
-    }
+    markPresent($, sound)
     activity.turnStarted() // raised by the main loop only
     return next(e)
   })
@@ -1330,20 +1392,14 @@ export const register: Register = (on, options) => {
 
 
   on('command.run', { command: COMMAND }, ($, e) => {
-    if (!sound.present) {
-      sound.present = true
-      void keepPresent($)
-    }
+    markPresent($, sound)
     return runScene($, e, sceneCtx)
   })
 
   // Someone at the session (a key in the prompt, a turn, a /flow): the soundscape may play from the next frame.
   // A key in the prompt: the first one is all it takes.
   on('prompt.edit', ($, e, next) => {
-    if (!sound.present) {
-      sound.present = true
-      void keepPresent($)
-    }
+    markPresent($, sound)
     return next(e)
   })
 
@@ -1351,22 +1407,26 @@ export const register: Register = (on, options) => {
     // The soundscape stops with the session, for good unless the process goes
     // on (a /clear, a resume). Its settings were kept as they changed: nothing
     // is written to /config (only `/flow save` does that).
-    if (e.reason !== 'clear' && e.reason !== 'resume') sound.over = true
+    const goesOn = e.reason === 'clear' || e.reason === 'resume'
+    if (!goesOn) sound.over = true
     stopSound()
     // What it waited on you for was its own: none carries over to the session the process moves to.
     activity.forgetWaits()
+    // A /clear or a resume from inside the session: the process goes on under another id, with no
+    // `session.start`, so watch for it. (Before the wait below: a poll reading the new id meanwhile must
+    // know a resume from a /clear.) And a new conversation starts with its context empty: no blue, no smoke.
+    if (goesOn) {
+      session.ended = e.reason
+      session.watch = SESSION_WATCH_CHECKS
+      activity.contextPercent = 0
+      activity.smokeFrames = 0
+    }
     // The defaults may have changed since the last look (another session's
     // save): what this one showed is kept for a resume.
     try {
       await refreshDefaults($, sceneCtx)
     } catch {
       // Kept as it last was.
-    }
-    // A /clear or a resume from inside the session: the process goes on
-    // under another id, with no `session.start`, so watch for it.
-    if (e.reason === 'clear' || e.reason === 'resume') {
-      session.ended = e.reason
-      session.watch = SESSION_WATCH_CHECKS
     }
     return next(e)
   })
@@ -1395,13 +1455,13 @@ export const register: Register = (on, options) => {
     // held (no options change, so no reload).
     const value = readConfig({ [field]: result.value })[field]
     session.defaults = { ...session.defaults, [field]: value }
-    applyLocal({ [field]: value })
-    $.ui.invalidate('ui.render')
     // (A read of the defaults that landed before the write kept the old value as the session's own: not so.)
     if (session.own[field] !== undefined) {
       delete session.own[field]
       await keepOwn($, session)
     }
+    // As /flow shows a change: the spine's pane following a new layout too.
+    await showSettings($, sceneCtx, withOwn(session.defaults, session.own))
     return result
   })
 
@@ -1522,7 +1582,8 @@ export const register: Register = (on, options) => {
     const current = cfg.style
     const columns = Math.max(1, Math.min(512, e.props.bodyColumns))
     const rows = Math.max(1, Math.min(256, e.props.scroll.bodyRows))
-    const layout = e.surface === 'terminal' || e.surface === 'desktop' ? pickLayout(columns, rows, SCENES.length) : undefined
+    // (Desktop draws a close Button under the grid: a row more.)
+    const layout = e.surface === 'terminal' || e.surface === 'desktop' ? pickLayout(columns, rows, SCENES.length, undefined, e.surface === 'desktop' ? 1 : 0) : undefined
     // Each scene's picture: a Raster in the terminal (blitted by the picker's timer), an Svg on desktop (drawn anew).
     let picture: (name: SceneName) => RenderElement | null = () => null
     if (layout && e.surface === 'terminal') {
