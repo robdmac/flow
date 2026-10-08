@@ -1,4 +1,4 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v134-softer-breath
 //
 // The shared wait: how every scene looks while Claude waits on the person (a
 // permission to grant, a question to answer, a plan to approve). The work
@@ -19,9 +19,9 @@ export const WAIT_EASE = 0.06
 /** Frames a breath takes: about 4 s at 14 fps (a resting breath, a standby light's pulse). */
 export const BREATH_FRAMES = 56
 /** How much dimmer the frame is at the bottom of each breath... */
-const DEPTH = 0.22
+const DEPTH = 0.11
 /** ...and the warm light it takes on at the top (added, so a night scene glows too). */
-const GLOW = [0x2e, 0x1c, 0x08] as const
+const GLOW = [0x17, 0x0e, 0x04] as const
 /** How far colors go to sepia (the rest keeps a hint of their own hue). */
 export const SEPIA_AMOUNT = 0.82
 /** Sepia by brightness: black stays black (a night sky stays night), white turns to cream. */
