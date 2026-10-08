@@ -1,4 +1,4 @@
-// REVISION: flow-v125-chime
+// REVISION: flow-v171-dry-adapter
 //
 // Builds the soundscapes' clips into sounds/ (AAC, mono 22.05 kHz) and the
 // manifest hooks/sound-files.ts. Each recipe makes a WAV with sox (and Node,
@@ -16,7 +16,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { BED_EVERY_MS, BED_MS, BED_TAKES, type BedMood, LAYERS, layerGain, master, MOODS } from '../hooks/sound'
+import { BED_FADE_MS, BED_MS, BED_TAKES, type BedMood, LAYERS, layerGain, master, MOODS } from '../hooks/sound'
 import { makeScene } from '../hooks/styles'
 
 const ROOT = join(import.meta.dirname, '..')
@@ -24,7 +24,7 @@ const OUT = join(ROOT, 'sounds')
 const CACHE = join(ROOT, '.sound-cache')
 const RATE = 22050
 const LEN = BED_MS / 1000
-const XF = (BED_MS - BED_EVERY_MS) / 1000
+const XF = BED_FADE_MS / 1000
 /** The crossfade every bed clip ends with at both ends: equal power, for noise (the next clip is uncorrelated). */
 const BED = ['fade', 'q', `${XF}`, `${LEN}`, `${XF}`]
 /** Noise beds are made this much longer than a clip... */
@@ -590,7 +590,7 @@ const RECIPES: Record<string, Record<string, Recipe>> = {
   avalon: {
     // A colony ship's interior, after spacecraft cabin noise (broadband, strongest
     // at 63-250 Hz, fans humming): the hull's beating hum, the air handlers, and
-    // the shield's electric fizz. Each rock on the shield is an event (events/zap).
+    // the shield's electric fizz. Each rock on the shield is an event (events/blast).
     hum: {
       variants: 3,
       make: (out, t) => {
