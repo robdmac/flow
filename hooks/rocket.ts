@@ -1,4 +1,4 @@
-// REVISION: flow-v155-orbit-slivers
+// REVISION: flow-v156-escorts-set-down
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -1880,6 +1880,8 @@ abstract class LaunchSite extends SkyWorld {
     const smoky = this.tint === 'smoke'
     const contrail = this.state === 'fly' && this.orbit < 0.3 && this.layer < 80
     const grounded = this.state === 'rest' || this.state === 'ignite'
+    // (Home again but not yet at rest: landed, a catch, carried back, restacked, the camera panning home.)
+    const down = !grounded && this.state !== 'fly'
     const r = this.rng
     const t = this.t
     for (const m of mates) {
@@ -1909,11 +1911,12 @@ abstract class LaunchSite extends SkyWorld {
       // Never across what's flying (the band's few rows squeeze its stations): out to its own side of it.
       if (Math.abs(gy - cy) < clearY && Math.abs(gx - cx) < clearX) gx = cx + (gx > cx ? 1 : gx < cx ? -1 : Math.sign(across)) * clearX
       gx = clamp(gx, left + 2, pw - 3)
-      // On the ground with the rocket (before launch, home again): standing on its own pad beside the site.
-      const pad = grounded ? this.padX(s) : NaN
-      const onPad = !Number.isNaN(pad) && !m.leaving
+      // Down with the rocket: on its own pad beside the site (before launch, home again, or as soon as the
+      // pads are in view); landed or being carried home out of sight of them, set down on the ground beside it.
+      const pad = grounded || down ? this.padX(s) : NaN
+      const onPad = (grounded || down) && !m.leaving && (!Number.isNaN(pad) || down)
       if (onPad) {
-        gx = pad - this.viewX()
+        if (!Number.isNaN(pad)) gx = pad - this.viewX()
         gy = ph - 3 - hU / 2
       }
       if (fresh) {
@@ -2003,7 +2006,7 @@ abstract class LaunchSite extends SkyWorld {
     const spread = this.plumeSpread()
     const t = this.t
     // Each escort's pad, while the rocket's on the ground: a small slab of its own beside the site.
-    if (this.state === 'rest' || this.state === 'ignite') {
+    if (this.state !== 'fly') {
       const half = this.tall ? 2 : 1
       for (const m of this.crew.mates) {
         const px = this.padX(m.slot)
