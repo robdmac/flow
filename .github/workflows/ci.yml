@@ -24,9 +24,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      # The Claude Code to test against: latest follows its releases (the mod API
-      # is early access and changes); set a version, e.g. 2.1.293, to hold one.
-      CLAUDE_CODE_VERSION: latest
+      # The Claude Code to test against. Held at 2.1.293: 2.1.295, not logged in,
+      # stops before it writes the mod API's types (the step below), so typecheck
+      # has nothing to check against. Set it back to latest once a release writes them again.
+      CLAUDE_CODE_VERSION: 2.1.293
       DISABLE_AUTOUPDATER: '1'
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1'
     steps:
