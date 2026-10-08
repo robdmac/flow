@@ -1,4 +1,4 @@
-// REVISION: flow-v150-review-fixes
+// REVISION: flow-v151-manual-company
 //
 // What every harness adapter (Claude Code's register.tsx, pi's pi/index.ts)
 // does the same way: one scene instance per style (so a switch resumes where
@@ -88,9 +88,10 @@ export class SceneDriver {
   dial(): Scene {
     const f = this.scene
     f.strength = this.level()
-    f.coverageBoost = this.cfg.mode === 'auto' ? this.activity.coverageBoost : 0
-    // Each subagent on its own, for the scenes that give each a companion (none in manual, as with coverage).
-    f.agents = this.cfg.mode === 'auto' ? this.activity.roster.dials() : []
+    // The subagents show in manual too: holding a level holds how busy it looks, not who's about.
+    f.coverageBoost = this.activity.coverageBoost
+    // Each subagent on its own, for the scenes that give each a companion.
+    f.agents = this.activity.roster.dials()
     f.tint = this.tint()
     f.night = this.isNight()
     f.waiting = this.waiting()
