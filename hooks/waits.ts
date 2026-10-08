@@ -23,16 +23,19 @@ export class Waits {
   /** By tool_use_id (or prompt key), oldest first. */
   private waits = new Map<string, Wait>()
   /**
-   * The calls running, by tool_use_id, oldest first: their tool, loop and input, for a dialog that names
-   * only those, and a progress pill that names only the id.
+   * The calls running, by tool_use_id, oldest first: their tool, loop and arguments, for a dialog that
+   * names only those, and a progress pill that names only the id.
    */
-  private calls = new Map<string, { tool: string; agent?: string; input?: unknown }>()
+  private calls = new Map<string, { tool: string; agent?: string; args?: object }>()
   /** Bumped by every change, so what's worked out from the waits can be kept until they change. */
   changes = 0
 
-  /** A call of `tool` in loop `agent` (none: the main loop) starts: not a wait, only noted. */
-  called(id: string, tool: string, agent?: string, input?: unknown): void {
-    this.calls.set(id, { tool, agent, input })
+  /**
+   * A call of `tool` in loop `agent` (none: the main loop) starts: not a wait, only noted. `args`: its
+   * arguments as `tool.call` has them, beside its envelope (`command` for Bash); kept, not copied.
+   */
+  called(id: string, tool: string, agent?: string, args?: object): void {
+    this.calls.set(id, { tool, agent, args })
   }
 
   /**
@@ -65,13 +68,18 @@ export class Waits {
     this.waits.set(id ?? promptKey(tool, agent), { tool, agent, asked: true })
   }
 
-  /** The running call a dialog is for: of `tool` in loop `agent`, not waiting yet; by `input` when several are, else the oldest. */
+  /**
+   * The running call a dialog is for: of `tool` in loop `agent`, not waiting yet. When several are, the one
+   * whose arguments hold every one of the dialog's `input` (its `tool_input`), else the oldest.
+   */
   private callFor(tool: string, agent: string | undefined, input: unknown): string | undefined {
     const ids: string[] = []
     for (const [id, c] of this.calls) if (c.tool === tool && c.agent === agent && !this.waits.has(id)) ids.push(id)
-    if (ids.length <= 1 || input === undefined) return ids[0]
-    const want = JSON.stringify(input)
-    return ids.find(id => JSON.stringify(this.calls.get(id)!.input) === want) ?? ids[0]
+    if (ids.length <= 1 || typeof input !== 'object' || input === null) return ids[0]
+    const want = Object.entries(input).map(([k, v]) => [k, JSON.stringify(v)] as const)
+    const holds = (args: object | undefined) =>
+      args !== undefined && want.every(([k, v]) => JSON.stringify((args as Record<string, unknown>)[k]) === v)
+    return ids.find(id => holds(this.calls.get(id)!.args)) ?? ids[0]
   }
 
   /**

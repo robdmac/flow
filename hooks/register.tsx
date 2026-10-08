@@ -1391,7 +1391,7 @@ export const register: Register = (on, options) => {
     activity.toolsInFlight++
     const id = e.tool_use_id
     // Noted: a permission dialog for it (classic.PermissionRequest) waits on the person till it ends or runs.
-    if (id) activity.called(id, e.tool, agentId, e.input)
+    if (id) activity.called(id, e.tool, agentId, e)
     // A subagent's tool: it's working for as long as the tool runs.
     if (agentId !== undefined) activity.roster.toolStarted(agentId)
     // Claude's question, a plan to approve: put to the person from the start (a subagent's too: its companion waits).

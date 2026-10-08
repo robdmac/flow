@@ -2542,9 +2542,10 @@ test("waiting on the person: a dialog takes its own loop's ask, never another's,
 test("waiting on the person: a dialog is its own call's, so another call of the tool in its loop ending or running never ends it", () => {
   const h = new Activity()
   h.turnStarted()
-  // Two commands at once in the main loop; the second one's dialog shows (it names only the tool and its input).
-  h.called('tu1', 'Bash', undefined, { command: 'ls' })
-  h.called('tu2', 'Bash', undefined, { command: 'rm -rf build' })
+  // Two commands at once in the main loop (their arguments as tool.call has them, beside the envelope);
+  // the second one's dialog shows (it names only the tool and its input).
+  h.called('tu1', 'Bash', undefined, { tool: 'Bash', tool_use_id: 'tu1', command: 'ls' })
+  h.called('tu2', 'Bash', undefined, { tool: 'Bash', tool_use_id: 'tu2', command: 'rm -rf build' })
   h.prompted('Bash', undefined, { command: 'rm -rf build' })
   expect(h.isAwaitingPerson).toBe(true)
   h.answered('tu1') // the first shows its progress pill
@@ -2814,6 +2815,50 @@ test('a permission dialog (not an ask auto mode settles alone) is what waits on 
   await clock.advance(2000)
   expect(chimes()).toBe(2)
   finish!()
+  await next
+  await ui.unmount()
+})
+
+test("a permission dialog is its own call's: another command running beside it ending, or showing progress, never ends it", { options: { sound: 'on', style: 'bubbles' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  const finish = new Map<string, () => void>()
+  on('tool.call', ($, e) => new Promise(r => finish.set((e as { tool_use_id: string }).tool_use_id, () => r({ result: {} as never }))))
+  on('classic.PermissionRequest', () => ({}))
+  on('ui.render', { component: 'ToolProgress' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return Text({ children: e.props.hint })
+  })
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
+  const chimes = () => (seen.plays ?? []).filter(p => p.includes('events/chime')).length
+  // Two commands at once in the main loop, as tool.call carries them (the arguments beside the envelope).
+  const make = $.tool.call({ tool: 'Bash', command: 'make', tool_use_id: 'tu1' } as never)
+  const rm = $.tool.call({ tool: 'Bash', command: 'rm -rf build', tool_use_id: 'tu2' } as never)
+  // The second one's dialog shows; then the first shows its progress pill and ends.
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'rm -rf build' } } as never)
+  const pill = await $.ui.mount({
+    plugin: 'flow-scenes',
+    surface: 'terminal',
+    component: 'ToolProgress',
+    requestId: 'tu1',
+    props: { tool_use_id: 'tu1', kind: 'background_hint', hint: '(ctrl+b to run in background)' },
+  } as never)
+  await pill.unmount()
+  finish.get('tu1')!()
+  await make
+  await clock.advance(2000)
+  expect(chimes()).toBe(1) // the dialog is still up: it waits on you
+  finish.get('tu2')!()
+  await rm
+  // Its wait ended with its own call: a dialog a while later is a new wait, and chimes again.
+  await clock.advance(CHIME_QUIET_MS + 2000)
+  const next = $.tool.call({ tool: 'Bash', command: 'make test', tool_use_id: 'tu3' } as never)
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'make test' } } as never)
+  await clock.advance(2000)
+  expect(chimes()).toBe(2)
+  finish.get('tu3')!()
   await next
   await ui.unmount()
 })

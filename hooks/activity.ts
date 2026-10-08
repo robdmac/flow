@@ -111,8 +111,8 @@ export class Activity {
   }
 
   /** A call of `tool` in loop `agent` (none: the main loop) starts: noted, so its progress pill can end a wait on it. */
-  called(id: string, tool: string, agent?: string, input?: unknown): void {
-    this.waits.called(id, tool, agent, input)
+  called(id: string, tool: string, agent?: string, args?: object): void {
+    this.waits.called(id, tool, agent, args)
   }
 
   /** A permission dialog shows for a call of `tool` in loop `agent` (none: the main loop; its `input`, to tell it from another call of the tool). */
