@@ -1,4 +1,4 @@
-// REVISION: flow-v156-escorts-set-down
+// REVISION: flow-v157-escort-launch-pads
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -1623,8 +1623,8 @@ abstract class LaunchSite extends SkyWorld {
   /** The plume's length this frame, flickering (and sputtering on a failed command). */
   private plumeLen(): number {
     const p = this.part
-    // (No plume from the Ship while it's still turning upright.)
-    if (this.thr <= 0 || p === 'dragon' || p === 'capsule' || this.flop > 0.3) return 0
+    // (No plume from the Ship until it's all but upright: the plume falls straight down, and a tilted Ship over it looks wrong.)
+    if (this.thr <= 0 || p === 'dragon' || p === 'capsule' || this.flop > 0.06) return 0
     let len = this.spec.plume * this.thr * (0.85 + 0.3 * this.rng.f()) * (this.part === 'upper' ? 0.7 : 1)
     if (this.tint === 'smoke' && hash(this.t >> 1, 3, 43) < 0.35) len *= 0.25
     return len
@@ -1824,6 +1824,8 @@ abstract class LaunchSite extends SkyWorld {
   protected drawVehicle(out: Cells, _top: number): void {
     this.geo()
     this.base = 2 * (this.scroll + this.rows - 2) + 1
+    // The escorts (and their pads) first: in the background, behind the launch site and the rocket.
+    this.drawEscorts()
     if (!this.siteHidden) {
       this.drawTower()
       this.drawMount()
@@ -1835,7 +1837,6 @@ abstract class LaunchSite extends SkyWorld {
     this.drawRocket()
     if (this.look.catches) this.drawArms()
     if (!this.siteHidden) this.drawLights()
-    this.drawEscorts()
     this.composite(out)
   }
 
@@ -2005,13 +2006,20 @@ abstract class LaunchSite extends SkyWorld {
     const thin = this.orbit > 0.02
     const spread = this.plumeSpread()
     const t = this.t
-    // Each escort's pad, while the rocket's on the ground: a small slab of its own beside the site.
+    // Each escort's own launch pad, while the rocket's on the ground: a little mount like the big one's, a deck
+    // and a tower beside it with a red light on top.
     if (this.state !== 'fly') {
       const half = this.tall ? 2 : 1
+      const towerH = this.tall ? 7 : 2
       for (const m of this.crew.mates) {
         const px = this.padX(m.slot)
         if (Number.isNaN(px) || m.here < 0.05) continue
-        for (let dx = -half; dx <= half; dx++) this.paintP(Math.round(px) + dx, ph - 3, this.look.carriage, Math.min(1, m.here * 2))
+        const a = Math.min(1, m.here * 2)
+        const x = Math.round(px)
+        for (let dx = -half; dx <= half; dx++) this.paintP(x + dx, ph - 3, this.look.carriage, a)
+        const tx = x + half + 1
+        for (let k = 1; k <= towerH; k++) this.paintP(tx, ph - 3 - k, this.look.tower, a)
+        if ((this.t + m.slot * 11) % 40 < 20) this.paintP(tx, ph - 4 - towerH, LIGHT.red, a)
       }
     }
     for (const m of this.crew.mates) {
