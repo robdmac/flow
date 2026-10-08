@@ -1,4 +1,4 @@
-// REVISION: flow-v160-mini-rockets
+// REVISION: flow-v161-mini-rockets-heard
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -666,6 +666,10 @@ abstract class LaunchSite extends SkyWorld {
       r.strength = idle ? 1 : this.log[(this.logAt - r.lag) & 31]!
       r.tint = m && m.leaving && !m.ok ? 'smoke' : this.tint
       r.step()
+      // Heard as the big one is, a little quieter (a smaller rocket): its ignition, sonic booms, its booster's
+      // landing or catch, chutes, splashdown. A beat behind the big one's, so they never land as one.
+      const k = 0.6 * (m ? m.here : 1)
+      for (const e of r.sounds) hear(this.sounds, { kind: e.kind, v: e.v * k })
       r.sounds.length = 0
     }
   }
