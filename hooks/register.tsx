@@ -1,4 +1,4 @@
-// REVISION: flow-v171-dry-adapter
+// REVISION: flow-v172-cleanup-followups
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -108,7 +108,7 @@ import {
 } from './picker'
 
 
-const FLOW_REVISION = 'flow-v171-dry-adapter'
+const FLOW_REVISION = 'flow-v172-cleanup-followups'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -987,6 +987,9 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     const now = await $.clock.now()
     setClock(now)
+    // Each session's scenes start their own way: seeded from when it started.
+    driver.seedBase = (now % 2147483647) || 1
+    desktopDriver.seedBase = ((now + 104729) % 2147483647) || 1
     const at = new Date(now)
     $.ui.log(
       `[flow] REVISION: ${FLOW_REVISION} loaded at ${at.toISOString()} (local ${at.getHours()}:${at.getMinutes()}, UTC offset ${-at.getTimezoneOffset()} min)`,

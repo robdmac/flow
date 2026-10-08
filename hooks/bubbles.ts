@@ -1,4 +1,4 @@
-// REVISION: flow-v170-dry-scenes
+// REVISION: flow-v172-cleanup-followups
 //
 // Bubbles (the `bubbles` style): a glass of fizz on the same dials as the
 // fire; the level is the fizz. At 1 a couple of airstones let lazy bubbles
@@ -21,7 +21,7 @@
 // to a few slow strings, the whole glass breathing in sepia (waiting.ts).
 
 import { Cells, freshSeed, Rng } from './cells'
-import type { SoundEvent } from './sound'
+import { hear, type SoundEvent } from './sound'
 import type { Tint } from './styles'
 import { BRAILLE, clamp, hash1, mix, rampAt } from './pixels'
 import { easeNight } from './night'
@@ -61,9 +61,6 @@ const COLD_TOP = 0x26357e
 const COLD_BOTTOM = 0x0c1238
 /** Brightness steps, so the frame holds few distinct colors. */
 const STEPS = 12
-/** The most pops held for the adapter to take each frame. */
-const POPS_HELD = 24
-
 type Bubble = { x: number; y: number; bx: number; r: number; r0: number; vy: number; ph: number; fq: number }
 type Stream = { x: number; life: number; rate: number; wait: number }
 type Drop = { x: number; y: number; vx: number; vy: number }
@@ -322,7 +319,7 @@ export class Bubbles {
     const amp = 0.35 + b.r * 0.35
     if (this.ripples.length < 120) this.ripples.push({ x: b.x, age: 0, amp })
     // (Its own cap, past hear()'s: a busy surface bursts more than 16 in a frame, and every one is heard.)
-    if (this.sounds.length < POPS_HELD) this.sounds.push({ kind: 'pop', v: Math.min(1, b.r / 2.5) })
+    hear(this.sounds, { kind: 'pop', v: Math.min(1, b.r / 2.5) })
     const n = b.r < 0.7 ? (this.rng.f() < 0.3 ? 1 : 0) : Math.round(1 + b.r * 1.2 + this.rng.f() * 2)
     for (let i = 0; i < n && this.drops.length < MAX_DROPS; i++) {
       const a = (this.rng.f() - 0.5) * 2.2

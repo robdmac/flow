@@ -1,4 +1,4 @@
-// REVISION: flow-v171-dry-adapter
+// REVISION: flow-v172-cleanup-followups
 //
 // Soundscapes. Claude Code's `$.audio.play` plays a clip (macOS `afplay`) at a
 // gain set when it starts; it can't loop smoothly or change a clip as it
@@ -61,7 +61,7 @@ export const PLAYER_LEAD_MS = 380
 export const PLAYER_DRAIN_MS = 900
 
 /** The most events a scene holds for the adapter to take each frame (one that never takes them stays bounded). */
-export const EVENTS_HELD = 16
+export const EVENTS_HELD = 24
 
 /** Pushes an event onto a scene's queue unless it's full. */
 export function hear(queue: SoundEvent[], e: SoundEvent): void {

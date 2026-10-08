@@ -1,4 +1,4 @@
-// REVISION: flow-v171-dry-adapter
+// REVISION: flow-v172-cleanup-followups
 //
 // What every harness adapter (Claude Code's register.tsx, pi's pi/index.ts)
 // does the same way: one scene instance per style (so a switch resumes where
@@ -22,6 +22,12 @@ export class SceneDriver {
   clock: Clock = { hour: 12, minute: 0 }
   /** Called with each scene as it's built (the adapter resumes the balloon's altitude there). */
   onMake?: (style: SceneName, scene: Scene) => void
+  /**
+   * Where this driver's scenes take their seeds from: the adapter sets it from the clock, so each session's
+   * scenes start their own way (0: makeScene's own counter).
+   */
+  seedBase = 0
+  private made = 0
 
   constructor(
     readonly cfg: FlowConfig,
@@ -37,7 +43,7 @@ export class SceneDriver {
   sceneFor(style: SceneName): Scene {
     let f = this.scenes.get(style)
     if (!f) {
-      this.scenes.set(style, (f = makeScene(style)))
+      this.scenes.set(style, (f = makeScene(style, this.seedBase ? (this.seedBase + 7919 * this.made++) % 2147483647 : undefined)))
       this.onMake?.(style, f)
     }
     return f
