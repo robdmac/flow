@@ -1391,7 +1391,7 @@ export const register: Register = (on, options) => {
     activity.toolsInFlight++
     const id = e.tool_use_id
     // Noted: a permission dialog for it (classic.PermissionRequest) waits on the person till it ends or runs.
-    if (id) activity.called(id, e.tool, agentId)
+    if (id) activity.called(id, e.tool, agentId, e.input)
     // A subagent's tool: it's working for as long as the tool runs.
     if (agentId !== undefined) activity.roster.toolStarted(agentId)
     // Claude's question, a plan to approve: put to the person from the start (a subagent's too: its companion waits).
@@ -1415,7 +1415,7 @@ export const register: Register = (on, options) => {
   // plugin directory asks of a permission hook, so a hook beneath that answers it still shows as a wait,
   // until its call ends.
   on('classic.PermissionRequest', ($, e, next) => {
-    activity.prompted(e.tool_name, e.agent_id)
+    activity.prompted(e.tool_name, e.agent_id, e.tool_input)
     return next(e)
   })
 

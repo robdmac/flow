@@ -9,8 +9,9 @@
 // waits from the start. A wait ends when its call ends (`tool.call`'s finally:
 // the permission prompt runs beneath it, so a refusal ends there too) or shows
 // it's running (its progress pill, which carries only the call's id: the call
-// noted says which tool and loop). A dialog waits under its tool's name and
-// loop until a call of that tool in that loop ends. Pure: no `$`, unit-tested directly.
+// noted says which tool and loop). Matched to its own call (by input when the loop
+// runs several of the tool), a dialog ends with that call alone; one with no call noted
+// waits under its tool's name and loop until a call of that tool in that loop ends. Pure: no `$`, unit-tested directly.
 
 /** A call waiting on the person: its tool and loop (none: the main loop), and whether it has been put to them yet. */
 type Wait = { tool?: string; agent?: string; asked: boolean }
@@ -21,14 +22,17 @@ const promptKey = (tool: string, agent: string | undefined) => `prompt:${tool}@$
 export class Waits {
   /** By tool_use_id (or prompt key), oldest first. */
   private waits = new Map<string, Wait>()
-  /** The calls running, by tool_use_id: their tool and loop, for a progress pill that names only the id. */
-  private calls = new Map<string, { tool: string; agent?: string }>()
+  /**
+   * The calls running, by tool_use_id, oldest first: their tool, loop and input, for a dialog that names
+   * only those, and a progress pill that names only the id.
+   */
+  private calls = new Map<string, { tool: string; agent?: string; input?: unknown }>()
   /** Bumped by every change, so what's worked out from the waits can be kept until they change. */
   changes = 0
 
   /** A call of `tool` in loop `agent` (none: the main loop) starts: not a wait, only noted. */
-  called(id: string, tool: string, agent?: string): void {
-    this.calls.set(id, { tool, agent })
+  called(id: string, tool: string, agent?: string, input?: unknown): void {
+    this.calls.set(id, { tool, agent, input })
   }
 
   /**
@@ -43,11 +47,13 @@ export class Waits {
   }
 
   /**
-   * A permission dialog shows for a call of `tool` in loop `agent`: that
-   * loop's oldest ask of the tool not yet put to the person now is. One with
-   * no ask before it waits under the tool's name and loop till a call of it there ends.
+   * A permission dialog shows for a call of `tool` in loop `agent` (with `input`, as the dialog has it):
+   * that loop's oldest ask of the tool not yet put to the person now is. With none, the call it's for
+   * waits under its own id: the loop's running call of the tool not already waiting, the one with that
+   * input when several are, so another call of the tool ending or running never ends it. A dialog with
+   * no call noted waits under the tool's name and loop till a call of it there ends.
    */
-  prompted(tool: string, agent?: string): void {
+  prompted(tool: string, agent?: string, input?: unknown): void {
     this.changes++
     for (const w of this.waits.values()) {
       if (!w.asked && w.tool === tool && w.agent === agent) {
@@ -55,7 +61,17 @@ export class Waits {
         return
       }
     }
-    this.waits.set(promptKey(tool, agent), { tool, agent, asked: true })
+    const id = this.callFor(tool, agent, input)
+    this.waits.set(id ?? promptKey(tool, agent), { tool, agent, asked: true })
+  }
+
+  /** The running call a dialog is for: of `tool` in loop `agent`, not waiting yet; by `input` when several are, else the oldest. */
+  private callFor(tool: string, agent: string | undefined, input: unknown): string | undefined {
+    const ids: string[] = []
+    for (const [id, c] of this.calls) if (c.tool === tool && c.agent === agent && !this.waits.has(id)) ids.push(id)
+    if (ids.length <= 1 || input === undefined) return ids[0]
+    const want = JSON.stringify(input)
+    return ids.find(id => JSON.stringify(this.calls.get(id)!.input) === want) ?? ids[0]
   }
 
   /**

@@ -2539,6 +2539,31 @@ test("waiting on the person: a dialog takes its own loop's ask, never another's,
   expect(h.isAwaitingPerson).toBe(true)
 })
 
+test("waiting on the person: a dialog is its own call's, so another call of the tool in its loop ending or running never ends it", () => {
+  const h = new Activity()
+  h.turnStarted()
+  // Two commands at once in the main loop; the second one's dialog shows (it names only the tool and its input).
+  h.called('tu1', 'Bash', undefined, { command: 'ls' })
+  h.called('tu2', 'Bash', undefined, { command: 'rm -rf build' })
+  h.prompted('Bash', undefined, { command: 'rm -rf build' })
+  expect(h.isAwaitingPerson).toBe(true)
+  h.answered('tu1') // the first shows its progress pill
+  expect(h.isAwaitingPerson).toBe(true)
+  h.answered('tu1', 'Bash') // ...and ends
+  expect(h.isAwaitingPerson).toBe(true)
+  h.answered('tu2') // approved, the second runs
+  expect(h.isAwaitingPerson).toBe(false)
+  // A subagent's two calls: with no input to go by, the dialog is its oldest call not already waiting.
+  h.called('tu3', 'Bash', 'a')
+  h.called('tu4', 'Bash', 'a')
+  h.prompted('Bash', 'a')
+  h.prompted('Bash', 'a')
+  h.answered('tu3', 'Bash', 'a')
+  expect(h.isAwaitingPerson).toBe(true) // tu4's dialog is still up
+  h.answered('tu4', 'Bash', 'a')
+  expect(h.isAwaitingPerson).toBe(false)
+})
+
 test('the driver gives the scene its subagents in manual mode too: a held level, the company still shows', () => {
   const a = new Activity()
   const d = new SceneDriver(readConfig({ style: 'surf', mode: 'manual', level: 4 }), a)
