@@ -16,11 +16,13 @@ https://github.com/user-attachments/assets/66673edf-7a52-43c3-b52b-3a804068bc5e
 
 ```
 /plugin marketplace add robdmac/flow
-/plugin install flow@robdmac
+/plugin install flow-scenes@robdmac
 /reload-plugins
 ```
 
-**Claude desktop**, in the Code tab: click **+** next to the prompt box, then **Plugins** → **Add plugin**, add the marketplace `robdmac/flow` and install **flow**. Manage it later from **+** → **Plugins** → **Manage plugins**. The desktop app and Claude Code share their plugins, so if you've installed Flow in the terminal it's already there. It runs in local sessions, not cloud ones.
+Installed it before as `flow@robdmac`? The plugin is now `flow-scenes` (another plugin had the name `flow`). Run `/plugin uninstall flow@robdmac`, then install as above. The command is still `/flow`. Settings you'd saved in `/config` don't carry over: set them again, or set them with `/flow` and `/flow save`.
+
+**Claude desktop**, in the Code tab: click **+** next to the prompt box, then **Plugins** → **Add plugin**, add the marketplace `robdmac/flow` and install **Flow** (`flow-scenes`). Manage it later from **+** → **Plugins** → **Manage plugins**. The desktop app and Claude Code share their plugins, so if you've installed Flow in the terminal it's already there. It runs in local sessions, not cloud ones.
 
 **pi**, from your shell:
 
@@ -170,6 +172,36 @@ The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's edito
 pi tells an extension nothing of a wait on you, so there the scenes never show one. Nor has it a player, so the scenes are silent there: `/flow sound` says so.
 
 As in Claude Code, each session keeps its own settings, kept in the session itself (an entry the model never sees), so resuming or forking it brings them back. `~/.pi/agent/flow.json` holds the defaults new sessions start with; `/flow save` writes it. To try it without installing: `pi --extension ./pi/index.ts`.
+
+## What Flow does on your machine
+
+**Network:** none. Flow sends nothing anywhere and contacts no hosts. Everything it draws and plays is computed locally from the plugin's own files.
+
+**Your settings:** Flow writes its own `/config` rows (the `flow-scenes` plugin's options: scene, mode, sound and the rest) only:
+
+- when you run `/flow save`, which writes the settings your session shows as the defaults for new sessions;
+- at session start, to fix a row still holding a scene's old name (a renamed scene becomes its new name; a scene that's gone becomes the default).
+
+It writes no other settings, no files and no environment variables. (`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`, under *Not loading?*, is a variable you set yourself, if you need it.)
+
+**What it keeps:** in Claude Code's per-plugin store, each session's own `/flow` settings (the 100 most recently used sessions, none unused for 60 days) and which one-time tips you've seen. In the session's own plugin state, the balloon's altitude and whether someone has been at the session. In pi, a session's settings go in the session as an entry the model never sees, and `/flow save` writes `~/.pi/agent/flow.json`.
+
+**Sound:** off unless you turn it on. Claude Code plays the plugin's own clips (`sounds/`) through `afplay`, only after someone has typed or run a turn in the session.
+
+**What its hooks see, and what they decide:** nothing. Every hook passes the event on unchanged (the one Flow answers is its own `/flow` command); Flow never blocks, allows, rewrites or answers a tool call, a permission, a prompt or a setting. It only watches, to set how busy the scene looks:
+
+| Hook | What Flow reads | Why |
+|---|---|---|
+| `tool.call` | the tool's name, the number of lines an edit or write adds (not their text), whether a `Bash` command failed | how busy the scene is; a failed command shows as smoke |
+| `classic.PermissionRequest` | that a permission dialog is about to show (its tool's name, which subagent) | the scene settles and breathes while Claude waits on you |
+| `turn.start`, `turn.complete`, `turn.step` | when a turn or a subagent's run starts and ends; how much text is streamed (its length only) | the level, and each subagent's companion |
+| `session.compact`, `session.measure` | that a compaction happened; how full the context is | smoke; blue when it's nearly full |
+| `config.set` | a change to one of Flow's own `/config` rows | applies it to the session at once |
+| `prompt.edit` | that a key was pressed in the prompt (not what) | someone is there, so sound may play |
+| `command.run` | `/flow` and its arguments | the command |
+| `session.start`, `session.end`, `ui.*` | the session's id; the panes it draws | its settings; the band, the spine and `/flow pick` |
+
+It also lists the session's running subagents (`$.agent.list()`: their state, task and type) to give each one a companion and a hover card.
 
 ## Cost
 

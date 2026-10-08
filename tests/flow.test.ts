@@ -17,7 +17,7 @@ import { Falcon } from '../hooks/rocket'
 import { Colony } from '../hooks/colony'
 import { Train } from '../hooks/train'
 import { makeScene, nextStyle, SCENES, STYLES, styleNamed, type SceneName } from '../hooks/styles'
-import { migrateOverrides, openSession, runScene, type SceneCtx } from '../hooks/register'
+import { openSession, runScene, type SceneCtx } from '../hooks/register'
 import { coverage, frameSvg, gridPixels, SVG_LIMIT } from '../hooks/svg'
 import { Cells, isTall } from '../hooks/cells'
 import { SceneDriver } from '../hooks/scene'
@@ -72,7 +72,7 @@ type Captured = {
   /** The session's id, as `$.session.id()` answers it (change it to move the process to another session). */
   session?: string
   /**
-   * /config's flow rows as stored (`flow.style`: 'surf'), shared by every
+   * /config's flow rows as stored (`flow-scenes.style`: 'surf'), shared by every
    * session: given, `$.config.list()` answers from them and a save writes
    * them; left out, it doesn't answer and the plugin goes by its options.
    */
@@ -82,7 +82,7 @@ type Captured = {
 /** /config's flow rows as `$.config.list()` lists them: every one, the manifest's default where none is stored. */
 function configRows(rows: Readonly<Record<string, unknown>>) {
   const all: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(storedOwn(readConfig(undefined)))) all[`flow.${k}`] = v
+  for (const [k, v] of Object.entries(storedOwn(readConfig(undefined)))) all[`flow-scenes.${k}`] = v
   return Object.entries({ ...all, ...rows }).map(([key, value]) => ({ key, value }))
 }
 
@@ -750,7 +750,7 @@ test('the volume scales every clip as it plays, the bed and the bursts alike; a 
   mock.store(on)
   const seen = engine(on)
   await start($)
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   // The fire's bed, and its sparks' bursts (synthesized here: no file), as tuned.
   const bed = bedPlay({ scene: 'fire', level: 9, tint: 'normal', night: false, amb: {} }, 1)!.gain
   const sparks = master('fire', 9)
@@ -792,7 +792,7 @@ test("the volume from /config scales event clips too (the engine's chuffs)", { o
   const seen = engine(on)
   await start($)
   expect((await flow($)).split('\n')[0]).toContain('sound on at 4/10')
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   await clock.advance(6000)
   const chuffs = (seen.played ?? []).filter(p => p.asset?.includes('events/chuff'))
   expect(chuffs.length).toBeGreaterThan(0)
@@ -832,7 +832,7 @@ test("sessions: the volume is a session's own: /flow sound 4 in one leaves anoth
   expect((await flow($, 'sound')).split('\n')[0]).toContain('sound on at 4/10')
   // Saved, it's /config's row, the volume new sessions start with...
   expect((await flow($, 'save')).split('\n\n')[0]).toBe('saved as your default: new sessions start with sound on, volume 4/10')
-  expect(seen.config).toContainEqual(['flow.volume', 4])
+  expect(seen.config).toContainEqual(['flow-scenes.volume', 4])
   seen.session = 'c'
   await start($)
   expect((await flow($)).split('\n')[0]).toMatch(/sound on at 4\/10$/)
@@ -940,7 +940,7 @@ test('soundscapes: a bed take the player refuses for good is replaced at once, n
   let refusals = 5
   const seen = engine(on, undefined, asset => asset.includes('/bed-') && refusals-- > 0)
   await start($)
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   const beds = () => (seen.played ?? []).filter(p => p.asset?.includes('/bed-')).length
   await clock.advance(2000)
   // Tried five times (refused), then a fresh take, well before the ~10 s a take lasts before it renews.
@@ -983,7 +983,7 @@ test('soundscapes: beds overlap at random gaps (no seam keeps a beat), and on-sc
 
 test('soundscapes: every scene has a bed for every mood, every clip it and the events name exists, and no play can clip', () => {
   const files = new Set(SOUND_FILES)
-  const ambs = [{}, { roar: 1, vent: 1, wind: 1, space: 0, burner: 1, swell: 1, curl: 1 }, { roar: 1, space: 1 }, { wind: 0.5 }, { sea: 1 }]
+  const ambs = [{}, { roar: 1, vent: 1, wind: 1, space: 0, burner: 1, swell: 1, lip: 1 }, { roar: 1, space: 1 }, { wind: 0.5 }, { sea: 1 }]
   for (const scene of STYLES) {
     // A scene without layers is silent (a new one, till it's given a soundscape): no moods either.
     if (!LAYERS[scene]) {
@@ -1017,7 +1017,7 @@ test('sound on: fresh beds keep coming while it shows, and what happens on scree
   mock.store(on)
   const seen = engine(on)
   await start($)
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   await clock.advance(10_000)
   const plays = seen.plays ?? []
   // Beds (4 s each, every 3.3 s) and bursts of pops; nothing loops.
@@ -1133,7 +1133,7 @@ test('/flow sound toggles it: on, the soundscape plays; off again, it stops at o
   mock.store(on)
   const seen = engine(on)
   await start($)
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   await clock.advance(2000)
   expect(seen.plays ?? []).toEqual([])
   expect(await flow($, 'sound')).toContain('sound on')
@@ -1151,7 +1151,7 @@ test('the session ending stops the soundscape for good (Claude Code quitting lea
   mock.store(on)
   const seen = engine(on)
   await start($)
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   await clock.advance(3000)
   const plays = () => (seen.plays ?? []).length
   // A /clear: the process goes on under another id, and so does the sound.
@@ -1172,7 +1172,7 @@ test('a session no one is at stays quiet (Claude Code warms spares in the backgr
   mock.store(on)
   const seen = engine(on)
   await ($ as unknown as TestDollar).session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   await clock.advance(10_000)
   expect(seen.plays ?? []).toEqual([])
   await keyed($)
@@ -1214,7 +1214,7 @@ test('a clip refused as the player is full is retried, but not once the soundsca
   // The player refuses the engine's chuffs (full); everything else plays.
   const seen = engine(on, undefined, asset => asset.includes('chuff'))
   await start($)
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   const chuffs = () => (seen.plays ?? []).filter(p => p.includes('chuff')).length
   await clock.advance(1000)
   // Frame by frame till a chuff is refused; then, its retry not yet due, another scene.
@@ -1233,7 +1233,7 @@ test('sound off (the default): nothing plays', async ($, on) => {
   mock.store(on)
   const seen = engine(on)
   await start($)
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   await clock.advance(2000)
   expect(seen.plays ?? []).toEqual([])
   await ui.unmount()
@@ -1267,24 +1267,24 @@ test('config values are validated, falling back to defaults', async () => {
 })
 
 test('/config rows left on a scene since renamed or dropped read as the one meant, to be written back', () => {
-  const style = { key: 'flow.style', options: STYLES }
-  expect(staleRows([{ ...style, value: 'colony' }], 'flow')).toEqual([{ key: 'flow.style', field: 'style', from: 'colony', to: 'avalon' }])
-  expect(staleRows([{ ...style, value: 'ocean' }], 'flow')[0]?.to).toBe('surf')
-  expect(staleRows([{ ...style, value: 'river' }], 'flow')[0]?.to).toBe('fire') // dropped: the default
-  expect(staleRows([{ ...style, value: 'lava' }], 'flow')[0]?.to).toBe('fire')
-  expect(staleRows([{ key: 'flow.idle', value: 'pilot', options: ['glow', 'dark'] }], 'flow')[0]?.to).toBe('glow')
+  const style = { key: 'flow-scenes.style', options: STYLES }
+  expect(staleRows([{ ...style, value: 'colony' }], 'flow-scenes')).toEqual([{ key: 'flow-scenes.style', field: 'style', from: 'colony', to: 'avalon' }])
+  expect(staleRows([{ ...style, value: 'ocean' }], 'flow-scenes')[0]?.to).toBe('surf')
+  expect(staleRows([{ ...style, value: 'river' }], 'flow-scenes')[0]?.to).toBe('fire') // dropped: the default
+  expect(staleRows([{ ...style, value: 'lava' }], 'flow-scenes')[0]?.to).toBe('fire')
+  expect(staleRows([{ key: 'flow-scenes.idle', value: 'pilot', options: ['glow', 'dark'] }], 'flow-scenes')[0]?.to).toBe('glow')
   // Every old name and alias stands for a scene of today's.
   for (const d of SCENES) {
-    for (const a of d.aliases ?? []) expect(staleRows([{ ...style, value: a }], 'flow')[0]?.to).toBe(d.name)
+    for (const a of d.aliases ?? []) expect(staleRows([{ ...style, value: a }], 'flow-scenes')[0]?.to).toBe(d.name)
   }
   // A row already right, another plugin's, the panel's own, one with no options: left alone.
   const rows = [
     { ...style, value: 'surf' },
     { key: 'other.style', value: 'colony', options: ['a', 'b'] },
     { key: 'theme', value: 'colony', options: ['light', 'dark'] },
-    { key: 'flow.level', value: 3 },
+    { key: 'flow-scenes.level', value: 3 },
   ]
-  expect(staleRows(rows, 'flow')).toEqual([])
+  expect(staleRows(rows, 'flow-scenes')).toEqual([])
 })
 
 test('a /config row left on an old scene (colony) is written back as avalon at the start, said in the debug log alone', { options: { style: 'colony' } }, async ($, on) => {
@@ -1292,10 +1292,10 @@ test('a /config row left on an old scene (colony) is written back as avalon at t
   mock.store(on)
   const seen = engine(on)
   // Claude Code reads the stored `colony` as the default (fire) before Flow loads; /config's row still holds it.
-  const row = { key: 'flow.style', label: 'Scene', kind: 'choice', value: 'colony', options: [...STYLES], provider: { plugin: 'flow', tier: 'user' }, isLocked: false }
+  const row = { key: 'flow-scenes.style', label: 'Scene', kind: 'choice', value: 'colony', options: [...STYLES], provider: { plugin: 'flow-scenes', tier: 'user' }, isLocked: false }
   on('config.list', () => ({ value: [row] as never }))
   await start($)
-  expect(seen.config).toEqual([['flow.style', 'avalon']])
+  expect(seen.config).toEqual([['flow-scenes.style', 'avalon']])
   expect((await flow($)).split('\n')[0]).toContain('avalon')
   const said = (seen.logs ?? []).filter(l => l.text.includes('colony'))
   expect(said).toHaveLength(1)
@@ -1326,22 +1326,6 @@ test('/flow applies at once without a /config write (no reload), and its changes
   await start($)
   expect((await flow($)).split('\n')[0]).toBe('warp, holding 8/10')
 })
-
-test('settings kept in the old store move to /config once', async ($, on) => {
-  mock.clock(on)
-  mock.store(on, { mode: 'manual', strength: 4, style: 'ember', drop: 2 })
-  const seen = engine(on)
-  await start($)
-  expect(seen.config).toContainEqual(['flow.level', 4])
-  expect(seen.config).toContainEqual(['flow.style', 'fire'])
-  expect(seen.config).toContainEqual(['flow.mode', 'manual'])
-  // The store was emptied, so a second start (a reload) moves nothing again.
-  const moved = seen.config.length
-  await start($)
-  expect(seen.config.length).toBe(moved)
-})
-
-// ── Wiring ───────────────────────────────────────────────────────────────
 
 test('a big write lifts the scene; a failed command shows smoke', async ($, on) => {
   mock.clock(on)
@@ -1391,7 +1375,7 @@ test('the band draws its 5 rows on the terminal', async ($, on) => {
   mock.clock(on)
   mock.store(on)
   engine(on)
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   const raster = await ui.find({ type: 'Raster', key: 'flow' })
   expect(raster?.props.columns).toBe(60)
   expect(raster?.props.rows).toBe(5)
@@ -1407,7 +1391,7 @@ test('the band yields to other surfaces, surveys, and a one-row squeeze', async 
     ['terminal', { ...BAND.props, hasSurvey: true }],
     ['terminal', { ...BAND.props, maxRows: 2 }],
   ] as const) {
-    const ui = await $.ui.mount({ plugin: 'flow', surface, component: 'AbovePrompt', props })
+    const ui = await $.ui.mount({ plugin: 'flow-scenes', surface, component: 'AbovePrompt', props })
     expect(await ui.find({ type: 'Raster' })).toBeUndefined()
     await ui.unmount()
   }
@@ -1457,7 +1441,7 @@ test('on desktop the band is one Svg sized to its cells', async ($, on) => {
   mock.store(on)
   engine(on)
   await start($)
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'desktop', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'desktop', ...BAND })
   const svg = await ui.find({ type: 'Svg' })
   expect(svg?.props.width).toBe(60 * 8)
   expect(svg?.props.height).toBe(5 * 19)
@@ -1627,7 +1611,7 @@ test('a desktop view that stops rendering (its window closed) is forgotten: no m
   mock.store(on)
   const seen = engine(on)
   await start($)
-  const desk = await $.ui.mount({ plugin: 'flow', surface: 'desktop', requestId: 'desk', ...BAND })
+  const desk = await $.ui.mount({ plugin: 'flow-scenes', surface: 'desktop', requestId: 'desk', ...BAND })
   seen.invalidates = 0
   await clock.advance(1000)
   expect(seen.invalidates).toBeGreaterThan(5) // while it's there, every frame asks for a redraw
@@ -1660,23 +1644,7 @@ test('rockets: a new size while the split screen is open closes it cleanly (no g
   }
 })
 
-test("a pending scene under an old name (colony) is written through as its new one (avalon), not dropped", async () => {
-  const store = new Map<string, unknown>([['overrides', { style: 'colony' }]])
-  const config: Record<string, unknown> = {}
-  const session = {
-    store: {
-      get: async (k: string) => structuredClone(store.get(k)),
-      set: async (k: string, v: unknown) => store.set(k, structuredClone(v)),
-      delete: async (k: string) => store.delete(k),
-    },
-    config: {
-      set: async ({ key, value }: { key: string; value: unknown }) => ((config[key] = value), { value }),
-    },
-  } as never
-  expect(await migrateOverrides(session)).toEqual({ style: 'avalon' })
-  expect(config['flow.style']).toBe('avalon')
-  expect(store.has('overrides')).toBe(false)
-  // A session's own settings read old names the same way.
+test("a session's own settings read a scene's old name (colony) as its new one (avalon)", () => {
   expect(readOwn({ style: 'colony', idle: 'dark', level: 42, junk: 1 })).toEqual({ style: 'avalon', idle: 0 })
 })
 
@@ -1685,8 +1653,8 @@ test("a desktop view of the band doesn't stop the terminal's blits", async ($, o
   mock.store(on)
   const seen = engine(on)
   await start($)
-  const term = await $.ui.mount({ plugin: 'flow', surface: 'terminal', requestId: 'term', ...BAND })
-  await $.ui.mount({ plugin: 'flow', surface: 'desktop', requestId: 'desk', ...BAND })
+  const term = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', requestId: 'term', ...BAND })
+  await $.ui.mount({ plugin: 'flow-scenes', surface: 'desktop', requestId: 'desk', ...BAND })
   seen.blits.length = 0
   await clock.advance(2000)
   expect(seen.blits.length).toBeGreaterThan(3)
@@ -1699,7 +1667,7 @@ test('with idle dark, an idle session gives the band back', { options: { idle: '
   mock.store(on)
   engine(on)
   await start($)
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   expect(await ui.find({ type: 'Raster' })).toBeUndefined()
   await ui.unmount()
 })
@@ -2107,9 +2075,9 @@ test('sessions: /flow save makes this session\'s settings the default (/config);
   await flow($, '5')
   expect(store.get(sessionKey('session-a'))).toMatchObject({ own: { style: 'surf', mode: 'manual', level: 5 } })
   expect((await flow($, 'save')).split('\n\n')[0]).toBe('saved as your default: new sessions start with surf, holding 5/10')
-  expect(seen.config).toContainEqual(['flow.style', 'surf'])
-  expect(seen.config).toContainEqual(['flow.mode', 'manual'])
-  expect(seen.config).toContainEqual(['flow.level', 5])
+  expect(seen.config).toContainEqual(['flow-scenes.style', 'surf'])
+  expect(seen.config).toContainEqual(['flow-scenes.mode', 'manual'])
+  expect(seen.config).toContainEqual(['flow-scenes.level', 5])
   expect(seen.config).toHaveLength(3) // only what differed
   expect(store.has(sessionKey('session-a'))).toBe(false) // nothing of its own now: it is the default
   expect(await flow($)).not.toContain('just this session')
@@ -2134,29 +2102,11 @@ test('sessions: a /config change made in the session is the default, and that ro
   await flow($, 'surf')
   await flow($, 'sound on')
   const set = $.config.set as unknown as (e: object) => Promise<unknown>
-  await set({ key: 'flow.style', value: 'ski', previous: 'fire', provider: { plugin: 'flow', tier: 'user' }, origin: { kind: 'composer' } })
+  await set({ key: 'flow-scenes.style', value: 'ski', previous: 'fire', provider: { plugin: 'flow-scenes', tier: 'user' }, origin: { kind: 'composer' } })
   expect(store.get(sessionKey('session-a'))).toEqual({ own: { sound: 'on' }, at: 0 })
   const status = await flow($)
   expect(status.split('\n')[0]).toMatch(/^ski, .*sound on at 7\/10$/)
   expect(status).toContain('your default: sound off')
-})
-
-test('sessions: /flow changes pending from before (shared by every session) are written to /config once and show; nothing is written at the end', async ($, on) => {
-  mock.clock(on)
-  const store = memoryStore(on, { overrides: { style: 'ski', idle: 'dark' } })
-  const seen = engine(on)
-  await start($)
-  expect(seen.config).toContainEqual(['flow.style', 'ski'])
-  expect(seen.config).toContainEqual(['flow.idle', 'dark'])
-  expect(store.has('overrides')).toBe(false)
-  const status = await flow($)
-  expect(status.split('\n')[0]).toMatch(/^ski, auto, now \S+ \(idle dark\)/)
-  expect(status).not.toContain('just this session') // the defaults now
-  await flow($, 'surf')
-  const writes = seen.config.length
-  await endSession($, 'prompt_input_exit', 'session-a')
-  expect(seen.config).toHaveLength(writes)
-  expect(store.get(sessionKey('session-a'))).toMatchObject({ own: { style: 'surf' } })
 })
 
 test('sessions: only the most recently used are kept, none unused past two months, and always this one', async ($, on) => {
@@ -2281,12 +2231,12 @@ test('sessions: two at once on one store and one /config: B saves, then A change
   await b.open()
   await b.flow('surf')
   expect(await b.flow('save')).toBe('saved as your default: new sessions start with surf')
-  expect(shared.rows['flow.style']).toBe('surf')
+  expect(shared.rows['flow-scenes.style']).toBe('surf')
   expect(a.cfg.style).toBe('fire') // A carries on as it was
   // A, its defaults read afresh: it still shows the fire, its own now, and saves what it shows.
   expect(await a.flow('night')).toMatch(/^night until `\/flow clock`/)
   expect(await a.flow('save')).toBe('saved as your default: new sessions start with fire, night')
-  expect(shared.rows).toMatchObject({ 'flow.style': 'fire', 'flow.time': 'night' })
+  expect(shared.rows).toMatchObject({ 'flow-scenes.style': 'fire', 'flow-scenes.time': 'night' })
   expect(a.cfg).toMatchObject({ style: 'fire', time: 'night' })
   expect(shared.store.has(sessionKey('a'))).toBe(false)
   // A new session, and A resumed: exactly as A shows.
@@ -2314,11 +2264,11 @@ test('sessions: the defaults changing under a running session (another one\'s sa
   seen.session = 'a'
   await start($)
   // Another session saves surf: /config's rows change under this one, which isn't reloaded.
-  seen.rows!['flow.style'] = 'surf'
+  seen.rows!['flow-scenes.style'] = 'surf'
   await clock.advance(30_000) // read afresh every 30 s
   expect(store.get(sessionKey('a'))).toMatchObject({ own: { style: 'fire' } })
   // And when the session ends.
-  seen.rows!['flow.sound'] = 'on'
+  seen.rows!['flow-scenes.sound'] = 'on'
   await endSession($, 'prompt_input_exit', 'a')
   expect(store.get(sessionKey('a'))).toEqual({ own: { style: 'fire', sound: 'off' }, at: clock.now() })
   // Resumed: as it was, and it says how the default differs.
@@ -2335,7 +2285,7 @@ test('sessions: the defaults changing under a running session (another one\'s sa
   seen.session = 'a'
   await start($)
   expect((await flow($, 'save')).split('\n\n')[0]).toBe('saved as your default: new sessions start with fire, sound off')
-  expect(seen.rows).toMatchObject({ 'flow.style': 'fire', 'flow.sound': 'off' })
+  expect(seen.rows).toMatchObject({ 'flow-scenes.style': 'fire', 'flow-scenes.sound': 'off' })
 })
 
 /** flow.json in memory, as PiSettings reads and writes it (`disk.json`: what it holds). */
@@ -2589,6 +2539,32 @@ test("waiting on the person: a dialog takes its own loop's ask, never another's,
   expect(h.isAwaitingPerson).toBe(true)
 })
 
+test("waiting on the person: a dialog is its own call's, so another call of the tool in its loop ending or running never ends it", () => {
+  const h = new Activity()
+  h.turnStarted()
+  // Two commands at once in the main loop (their arguments as tool.call has them, beside the envelope);
+  // the second one's dialog shows (it names only the tool and its input).
+  h.called('tu1', 'Bash', undefined, { tool: 'Bash', tool_use_id: 'tu1', command: 'ls' })
+  h.called('tu2', 'Bash', undefined, { tool: 'Bash', tool_use_id: 'tu2', command: 'rm -rf build' })
+  h.prompted('Bash', undefined, { command: 'rm -rf build' })
+  expect(h.isAwaitingPerson).toBe(true)
+  h.answered('tu1') // the first shows its progress pill
+  expect(h.isAwaitingPerson).toBe(true)
+  h.answered('tu1', 'Bash') // ...and ends
+  expect(h.isAwaitingPerson).toBe(true)
+  h.answered('tu2') // approved, the second runs
+  expect(h.isAwaitingPerson).toBe(false)
+  // A subagent's two calls: with no input to go by, the dialog is its oldest call not already waiting.
+  h.called('tu3', 'Bash', 'a')
+  h.called('tu4', 'Bash', 'a')
+  h.prompted('Bash', 'a')
+  h.prompted('Bash', 'a')
+  h.answered('tu3', 'Bash', 'a')
+  expect(h.isAwaitingPerson).toBe(true) // tu4's dialog is still up
+  h.answered('tu4', 'Bash', 'a')
+  expect(h.isAwaitingPerson).toBe(false)
+})
+
 test('the driver gives the scene its subagents in manual mode too: a held level, the company still shows', () => {
   const a = new Activity()
   const d = new SceneDriver(readConfig({ style: 'surf', mode: 'manual', level: 4 }), a)
@@ -2793,7 +2769,7 @@ test("sound on: a soft chime as Claude's question waits on you, once; none for a
   let answer: (() => void) | undefined
   on('tool.call', () => new Promise(r => (answer = () => r({ result: {} as never }))))
   await start($)
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   const chimes = () => (seen.plays ?? []).filter(p => p.includes('events/chime')).length
   await clock.advance(2000)
   expect(chimes()).toBe(0)
@@ -2822,7 +2798,7 @@ test('a permission dialog (not an ask auto mode settles alone) is what waits on 
   // No settings hook answers it for the person: the dialog shows.
   on('classic.PermissionRequest', () => ({}))
   await start($)
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   const chimes = () => (seen.plays ?? []).filter(p => p.includes('events/chime')).length
   const call = $.tool.call({ tool: 'Bash', command: 'make' } as never)
   await clock.advance(2000)
@@ -2843,6 +2819,50 @@ test('a permission dialog (not an ask auto mode settles alone) is what waits on 
   await ui.unmount()
 })
 
+test("a permission dialog is its own call's: another command running beside it ending, or showing progress, never ends it", { options: { sound: 'on', style: 'bubbles' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const seen = engine(on)
+  const finish = new Map<string, () => void>()
+  on('tool.call', ($, e) => new Promise(r => finish.set((e as { tool_use_id: string }).tool_use_id, () => r({ result: {} as never }))))
+  on('classic.PermissionRequest', () => ({}))
+  on('ui.render', { component: 'ToolProgress' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return Text({ children: e.props.hint })
+  })
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
+  const chimes = () => (seen.plays ?? []).filter(p => p.includes('events/chime')).length
+  // Two commands at once in the main loop, as tool.call carries them (the arguments beside the envelope).
+  const make = $.tool.call({ tool: 'Bash', command: 'make', tool_use_id: 'tu1' } as never)
+  const rm = $.tool.call({ tool: 'Bash', command: 'rm -rf build', tool_use_id: 'tu2' } as never)
+  // The second one's dialog shows; then the first shows its progress pill and ends.
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'rm -rf build' } } as never)
+  const pill = await $.ui.mount({
+    plugin: 'flow-scenes',
+    surface: 'terminal',
+    component: 'ToolProgress',
+    requestId: 'tu1',
+    props: { tool_use_id: 'tu1', kind: 'background_hint', hint: '(ctrl+b to run in background)' },
+  } as never)
+  await pill.unmount()
+  finish.get('tu1')!()
+  await make
+  await clock.advance(2000)
+  expect(chimes()).toBe(1) // the dialog is still up: it waits on you
+  finish.get('tu2')!()
+  await rm
+  // Its wait ended with its own call: a dialog a while later is a new wait, and chimes again.
+  await clock.advance(CHIME_QUIET_MS + 2000)
+  const next = $.tool.call({ tool: 'Bash', command: 'make test', tool_use_id: 'tu3' } as never)
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'make test' } } as never)
+  await clock.advance(2000)
+  expect(chimes()).toBe(2)
+  finish.get('tu3')!()
+  await next
+  await ui.unmount()
+})
+
 test("sessions: a wait is its own session's: the chime follows that session's sound, and a wait left open as the process moves on isn't carried over", async ($, on) => {
   const clock = mock.clock(on)
   memoryStore(on, { [sessionKey('b')]: storedRecord({ sound: 'on' }, 0) })
@@ -2851,7 +2871,7 @@ test("sessions: a wait is its own session's: the chime follows that session's so
   on('tool.call', () => new Promise(r => answers.push(() => r({ result: {} as never }))))
   seen.session = 'a'
   await start($)
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   const chimes = () => (seen.plays ?? []).filter(p => p.includes('events/chime')).length
   // Session a (sound off, the default): its question waits, unheard.
   const open = $.tool.call({ tool: 'AskUserQuestion', questions: [] } as never)
@@ -3020,7 +3040,7 @@ test('/flow pick opens a dialog of live thumbnails; Enter on one picks it, as /f
   expect(opened).toMatchObject({ focus: true, closeOnEscape: true, holdToasts: true })
   expect(pane.open.has('flow-pick')).toBe(true)
 
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...PICK_PANE })
   // A Raster and a Button for every scene; the ring starts on the scene on show, marked.
   expect(await ui.findAll({ type: 'Raster' })).toHaveLength(STYLES.length)
   const buttons = await ui.findAll({ type: 'Button' })
@@ -3065,7 +3085,7 @@ test('the picker: a scene picked in one session is that session\'s alone; anothe
   seen.session = 'a'
   await start($)
   await flow($, 'pick')
-  let ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  let ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...PICK_PANE })
   await ui.press({ key: 'pick:ski' })
   await ui.unmount()
   expect(store.get(sessionKey('a'))).toMatchObject({ own: { style: 'ski' } })
@@ -3079,7 +3099,7 @@ test('the picker: a scene picked in one session is that session\'s alone; anothe
   expect(b).not.toContain('just this session')
   expect(store.has(sessionKey('b'))).toBe(false)
   await flow($, 'pick')
-  ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...PICK_PANE })
   expect((await ui.find({ key: 'pick:fire' }))?.props.label).toBe('fire ●')
   expect((await ui.find({ key: 'pick:ski' }))?.props.label).toBe('ski')
   await ui.unmount()
@@ -3093,14 +3113,14 @@ test('the picker: a scene picked comes back when the session is resumed, marked 
   seen.session = 'a'
   await start($)
   await flow($, 'pick')
-  let ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  let ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...PICK_PANE })
   await ui.press({ key: 'pick:balloon' })
   await ui.unmount()
   // Another session runs meanwhile, picking its own.
   seen.session = 'b'
   await start($)
   await flow($, 'pick')
-  ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...PICK_PANE })
   await ui.press({ key: 'pick:surf' })
   await ui.unmount()
   // A resumed: its balloon, which the picker marks; B's surf is B's.
@@ -3108,7 +3128,7 @@ test('the picker: a scene picked comes back when the session is resumed, marked 
   await start($)
   expect((await flow($)).split('\n')[0]).toMatch(/^balloon, /)
   await flow($, 'pick')
-  ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...PICK_PANE })
   expect((await ui.find({ key: 'pick:balloon' }))?.props).toMatchObject({ label: 'balloon ●', autoFocus: true })
   expect((await ui.find({ key: 'pick:surf' }))?.props.label).toBe('surf')
   await ui.unmount()
@@ -3123,12 +3143,12 @@ test('the picker: the focus ring moving (the arrows, Tab) lights its tile and na
   on('ui.focus', () => ({}))
   await start($)
   await flow($, 'pick')
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...PICK_PANE })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...PICK_PANE })
   expect((await ui.find({ key: 'tile:fire' }))?.props.borderStyle).toBe('bold')
   expect((await ui.find({ key: 'tile:ski' }))?.props.borderStyle).toBe('round')
   expect(JSON.stringify(await ui.drawn())).toContain('fire: a ░▒▓█ fire with sparks and smoke (on now)')
   // The ring moving onto ski, as the engine raises it for the person's arrow key (UiFocusInput).
-  await $.ui.focus({ component: 'Pane', requestId: 'flow-pick', plugin: 'flow', element: 'pick:ski', origin: { kind: 'person' } } as never)
+  await $.ui.focus({ component: 'Pane', requestId: 'flow-pick', plugin: 'flow-scenes', element: 'pick:ski', origin: { kind: 'person' } } as never)
   await ui.redraw()
   expect((await ui.find({ key: 'tile:ski' }))?.props.borderStyle).toBe('bold')
   expect((await ui.find({ key: 'tile:fire' }))?.props.borderStyle).toBe('round')
@@ -3145,7 +3165,7 @@ test('the picker on desktop: an Svg thumbnail and a Button for every scene; its 
   const pane = panes(on)
   await start($)
   await flow($, 'pick')
-  let ui = await $.ui.mount({ plugin: 'flow', surface: 'desktop', ...PICK_PANE })
+  let ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'desktop', ...PICK_PANE })
   const svgs = await ui.findAll({ type: 'Svg' })
   expect(svgs).toHaveLength(STYLES.length)
   const png = decodeSvgPng(svgs[0]!.props.source as string)
@@ -3165,7 +3185,7 @@ test('the picker on desktop: an Svg thumbnail and a Button for every scene; its 
   expect(seen.invalidates).toBeLessThan(2)
   // Opened again, a click picks.
   await flow($, 'pick')
-  ui = await $.ui.mount({ plugin: 'flow', surface: 'desktop', ...PICK_PANE })
+  ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'desktop', ...PICK_PANE })
   await ui.press({ key: 'pick:bubbles' })
   expect((await flow($)).split('\n')[0]).toMatch(/^bubbles/)
   await ui.unmount()
@@ -3179,12 +3199,12 @@ test('the picker narrower than its labels, or on a surface without pictures, is 
   await start($)
   await flow($, 'pick')
   for (const [surface, bodyColumns] of [['terminal', 10], ['vscode', 60]] as const) {
-    const ui = await $.ui.mount({ plugin: 'flow', surface, ...PICK_PANE, props: { ...PICK_PANE.props, bodyColumns } })
+    const ui = await $.ui.mount({ plugin: 'flow-scenes', surface, ...PICK_PANE, props: { ...PICK_PANE.props, bodyColumns } })
     expect(await ui.find({ type: 'Raster' })).toBeUndefined()
     expect(await ui.findAll({ type: 'Button', key: 'pick:warp' })).toHaveLength(1)
     await ui.unmount()
   }
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'vscode', ...PICK_PANE })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'vscode', ...PICK_PANE })
   await ui.press({ key: 'pick:warp' })
   expect((await flow($)).split('\n')[0]).toMatch(/^warp/)
   await ui.unmount()
@@ -3239,13 +3259,13 @@ test('roster: a subagent waits on you only once a dialog is put to you; an ask t
   const r = h.roster
   r.listed([listed('a'), listed('b')])
   const states = () => r.dials().map(d => d.state)
-  // tool.check's ask goes to the mode's decider: auto mode's classifier allows it, and the call runs and ends.
-  h.waitingOn('tu1', false, 'Bash', 'a')
+  // A call that needs permission: auto mode's classifier allows it alone, and the call runs and ends.
+  h.called('tu1', 'Bash', 'a')
   expect(states()).toEqual(['working', 'working'])
   h.answered('tu1', 'Bash', 'a')
   expect(states()).toEqual(['working', 'working'])
   // This time a dialog shows (classic.PermissionRequest, no hook answering it): it waits, however long.
-  h.waitingOn('tu2', false, 'Bash', 'a')
+  h.called('tu2', 'Bash', 'a')
   h.prompted('Bash', 'a')
   expect(states()).toEqual(['waiting', 'working'])
   r.tick(QUIET_MS * 2)
@@ -3264,14 +3284,14 @@ test('roster: a subagent waits on you only once a dialog is put to you; an ask t
   h.answered('tu4', 'Edit', 'a')
   expect(states()).toEqual(['working', 'working'])
   // Refused, the call ends all the same (the permission prompt runs beneath tool.call): its finally answers it.
-  h.waitingOn('tu5', false, 'Bash', 'a')
+  h.called('tu5', 'Bash', 'a')
   h.prompted('Bash', 'a')
   r.heard('a') // another model step of its own changes nothing: the dialog is still up
   expect(states()).toEqual(['waiting', 'working'])
   h.answered('tu5', 'Bash', 'a')
   expect(states()).toEqual(['working', 'working'])
   // The main loop's own dialogs and questions are not a subagent's.
-  h.waitingOn('tu6', false, 'Bash')
+  h.called('tu6', 'Bash')
   h.prompted('Bash')
   h.waitingOn('tu7', true, 'AskUserQuestion')
   expect(states()).toEqual(['working', 'working'])
@@ -3282,7 +3302,7 @@ test("roster: what a subagent does before a poll names it counts once one does: 
   const r = h.roster
   // Its first tool, and the other's permission dialog, before any poll has named them.
   r.toolStarted('a')
-  h.waitingOn('tu1', false, 'Bash', 'b')
+  h.called('tu1', 'Bash', 'b')
   h.prompted('Bash', 'b')
   r.tick(25_000)
   r.listed([listed('a'), listed('b')])
@@ -3631,7 +3651,9 @@ test('desktop: the pointer over a subagent\'s companion shows its task and what 
   engine(on)
   const agents = [{ id: 'ag1', description: 'map the auth flow', type: 'Explore', status: 'running' }]
   on('agent.list', () => ({ value: agents as never }))
-  on('tool.check', () => ({ decision: 'ask' }) as never)
+  // The subagent's command runs till the test lets it end.
+  let finish = () => {}
+  on('tool.call', () => new Promise(r => (finish = () => r({ result: {} as never }))))
   // No settings hook answers a permission request for the person: the dialog shows.
   on('classic.PermissionRequest', () => ({}))
   on('ui.render', { component: 'ToolProgress' }, ($, e) => {
@@ -3639,7 +3661,7 @@ test('desktop: the pointer over a subagent\'s companion shows its task and what 
     return Text({ children: e.props.hint })
   })
   await start($)
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'desktop', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'desktop', ...BAND })
   const after = async (ms: number) => {
     for (let t = 0; t < ms; t += 250) {
       await clock.advance(250)
@@ -3659,17 +3681,17 @@ test('desktop: the pointer over a subagent\'s companion shows its task and what 
   drawn = await after(22_000)
   expect(drawn).toContain('· quiet')
 
-  // An ask goes to the mode's decider: auto mode's classifier may settle it alone, so it's no wait on you yet.
-  await $.tool.check({ tool: 'Bash', input: { command: 'rm -rf build' }, tool_use_id: 'tu1', agentId: 'ag1' } as never)
+  // A call that needs permission: auto mode's classifier may settle it alone, so it's no wait on you yet.
+  const call = $.tool.call({ tool: 'Bash', command: 'rm -rf build', tool_use_id: 'tu1', agentId: 'ag1' } as never)
   drawn = await after(500)
-  expect(drawn).toContain('· quiet')
+  expect(drawn).toContain('Explore: map the auth flow · working') // a tool running keeps it working
   // The dialog shows: now it waits on you.
   await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'rm -rf build' }, agent_id: 'ag1' } as never)
   drawn = await after(500)
   expect(drawn).toContain('· waiting on you')
   // Approved, the command runs and shows its progress pill: it's working again.
   const pill = await $.ui.mount({
-    plugin: 'flow',
+    plugin: 'flow-scenes',
     surface: 'terminal',
     component: 'ToolProgress',
     requestId: 'tu1',
@@ -3678,6 +3700,8 @@ test('desktop: the pointer over a subagent\'s companion shows its task and what 
   drawn = await after(500)
   expect(drawn).toContain('Explore: map the auth flow · working')
   await pill.unmount()
+  finish()
+  await call
 
   agents[0]!.status = 'completed'
   await after(8000)
@@ -3777,7 +3801,7 @@ test("fire: each subagent kindles a small fire of its own on alternate sides, th
 
 // ── Review fixes: sessions, the adapter, the spine ───────────────────────
 
-/** `$.state` over a Map the test can look into (`flow.altitude`: 12), counting the writes to each key. */
+/** `$.state` over a Map the test can look into (`flow-scenes.altitude`: 12), counting the writes to each key. */
 function memoryState(on: On, entries: Readonly<Record<string, unknown>> = {}) {
   const values = new Map<string, unknown>(Object.entries(entries))
   const writes = new Map<string, number>()
@@ -3804,9 +3828,9 @@ test("/config's layout changed in the session places the pane as /flow would: sp
   await flow($, 'band') // the session's own: the pane goes
   expect(pane.open.has('flow')).toBe(false)
   const set = $.config.set as unknown as (e: object) => Promise<unknown>
-  await set({ key: 'flow.layout', value: 'spine', previous: 'spine', provider: { plugin: 'flow', tier: 'user' }, origin: { kind: 'composer' } })
+  await set({ key: 'flow-scenes.layout', value: 'spine', previous: 'spine', provider: { plugin: 'flow-scenes', tier: 'user' }, origin: { kind: 'composer' } })
   expect(pane.open.has('flow')).toBe(true)
-  await set({ key: 'flow.layout', value: 'band', previous: 'spine', provider: { plugin: 'flow', tier: 'user' }, origin: { kind: 'composer' } })
+  await set({ key: 'flow-scenes.layout', value: 'band', previous: 'spine', provider: { plugin: 'flow-scenes', tier: 'user' }, origin: { kind: 'composer' } })
   expect(pane.open.has('flow')).toBe(false)
 })
 
@@ -3856,7 +3880,7 @@ test('a session whose start meets a failure (its state unreadable) still runs it
   const seen = engine(on)
   on('state.get', () => ({ deny: 'no state here' }) as never)
   await start($)
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   seen.blits.length = 0
   await clock.advance(1000)
   expect(seen.blits.length).toBeGreaterThan(3)
@@ -3868,7 +3892,7 @@ test('a band no longer mounted (its blit refused) is no longer heard', { options
   mock.store(on)
   const seen = engine(on)
   await start($)
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   await clock.advance(3000)
   expect((seen.plays ?? []).length).toBeGreaterThan(0)
   await ui.unmount()
@@ -3883,15 +3907,15 @@ test("the balloon's altitude: kept while it's the balloon, never built or writte
   const clock = mock.clock(on)
   mock.store(on)
   engine(on)
-  const state = memoryState(on, { 'flow.altitude': 3 })
+  const state = memoryState(on, { 'flow-scenes.altitude': 3 })
   await start($)
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   await clock.advance(5000)
-  expect(state.writes.get('flow.altitude') ?? 0).toBe(0)
+  expect(state.writes.get('flow-scenes.altitude') ?? 0).toBe(0)
   await flow($, 'balloon')
   await clock.advance(5000)
-  expect(state.writes.get('flow.altitude') ?? 0).toBeGreaterThan(0)
-  expect(state.values.get('flow.altitude')).not.toBe(3) // it climbed from where it was left
+  expect(state.writes.get('flow-scenes.altitude') ?? 0).toBeGreaterThan(0)
+  expect(state.values.get('flow-scenes.altitude')).not.toBe(3) // it climbed from where it was left
   await ui.unmount()
 })
 
@@ -3902,15 +3926,15 @@ test('someone seen at the session is remembered across a reload: the sound plays
   const state = memoryState(on)
   const begin = () => ($ as unknown as TestDollar).session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
   await begin()
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   await clock.advance(2000)
   expect(seen.plays ?? []).toEqual([])
   await keyed($)
   await keyed($)
   await flow($)
   // Kept in the session's state (written once) for a reload to find: see the next test.
-  expect(state.values.get('flow.present')).toBe(true)
-  expect(state.writes.get('flow.present')).toBe(1)
+  expect(state.values.get('flow-scenes.present')).toBe(true)
+  expect(state.writes.get('flow-scenes.present')).toBe(1)
   await ui.unmount()
 })
 
@@ -3918,9 +3942,9 @@ test('someone is there: after a reload that finds them in the state, the sound p
   const clock = mock.clock(on)
   mock.store(on)
   const seen = engine(on)
-  memoryState(on, { 'flow.present': true })
+  memoryState(on, { 'flow-scenes.present': true })
   await ($ as unknown as TestDollar).session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   await clock.advance(3000)
   expect((seen.plays ?? []).length).toBeGreaterThan(0)
   await ui.unmount()
@@ -3933,11 +3957,11 @@ test('someone is there: a turn starting is someone at the session too, remembere
   const state = memoryState(on)
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   await ($ as unknown as TestDollar).session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND })
   await clock.advance(2000)
   expect(seen.plays ?? []).toEqual([])
   await ($ as unknown as { turn: { start: (e: object) => Promise<unknown> } }).turn.start({ turnId: 't1', text: 'hi' })
-  expect(state.values.get('flow.present')).toBe(true)
+  expect(state.values.get('flow-scenes.present')).toBe(true)
   await clock.advance(3000)
   expect((seen.plays ?? []).length).toBeGreaterThan(0)
   await ui.unmount()

@@ -1,4 +1,4 @@
-// REVISION: flow-v150-review-fixes
+// REVISION: flow-v173-directory
 //
 // Who is running: each subagent of the session, one at a time, as the scenes'
 // `agents` dial sees it. The adapter feeds the roster what it hears: its polls
@@ -14,9 +14,8 @@
 //
 // Waiting on the person is a dialog actually put to them, kept for every
 // loop in one tracker (waits.ts, which Activity owns and the roster asks): a
-// permission ask (`tool.check`'s `ask`) only once a dialog shows
-// (`classic.PermissionRequest` with no hook answering it: auto mode's
-// classifier settles most asks alone), Claude's question or a plan to approve
+// permission only once its dialog shows (`classic.PermissionRequest`: auto
+// mode's classifier settles most asks alone), Claude's question or a plan to approve
 // from the start; it ends when the call ends (a refusal too: the permission
 // prompt runs beneath `tool.call`) or shows it's running (its progress pill).
 // Pure: no `$`, its own clock (the adapter ticks it), so it is unit-tested.

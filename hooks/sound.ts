@@ -110,7 +110,7 @@ export type Ambience = {
   sea?: number
   /** The swell, and a wave's lip pitching over. */
   swell?: number
-  curl?: number
+  lip?: number
 }
 
 /** Everything a clip is drawn from, and the sound setting's volume (1..10, DEFAULT_VOLUME when absent): a bed starts a fresh take when it changes. */
