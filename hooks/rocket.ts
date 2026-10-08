@@ -1819,7 +1819,7 @@ abstract class LaunchSite extends SkyWorld {
     t.strength = 1
     t.step()
     // The booster's side of the split screen is heard too.
-    for (const e of t.sounds) if (this.sounds.length < 16) this.sounds.push(e)
+    for (const e of t.sounds) hear(this.sounds, e)
     t.sounds.length = 0
     // Down: on the mount in the arms, or on its legs at the landing zone.
     if (t.state === 'rest' || t.state === 'landed') this.twinDone++

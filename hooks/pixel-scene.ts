@@ -155,6 +155,8 @@ export abstract class PixelScene implements Scene {
   private readonly q = new Int32Array(4)
   private readonly ks = new Int32Array(4)
   private readonly fit: QuadFit = { mask: 0, fg: 0, bg: 0, spread: 0 }
+  /** What `dials()` hands out: one object, refilled each call. */
+  private readonly d: Dials = { level: 0, t: 0, night: 0, tint: 'normal', boost: 0, wait: 0, columns: 0, rows: 0, tall: false }
 
   constructor(readonly seed = 1) {}
 
@@ -167,18 +169,19 @@ export abstract class PixelScene implements Scene {
   /** The grid changed size (and on the first frame): set up per-size state. */
   protected resize(_d: Dials): void {}
 
+  /** This frame's dials: one object, refilled each call (read it during the call it's handed to; don't keep it). */
   protected dials(): Dials {
-    return {
-      level: Number.isNaN(this.level) ? clamp(this.strength, 0, 10) : this.level,
-      t: this.t,
-      night: Math.max(0, this.kNight),
-      tint: this.tint,
-      boost: this.coverageBoost,
-      wait: this.kWait,
-      columns: this.columns,
-      rows: this.rows,
-      tall: isTall(this.columns, this.rows),
-    }
+    const d = this.d
+    d.level = Number.isNaN(this.level) ? clamp(this.strength, 0, 10) : this.level
+    d.t = this.t
+    d.night = Math.max(0, this.kNight)
+    d.tint = this.tint
+    d.boost = this.coverageBoost
+    d.wait = this.kWait
+    d.columns = this.columns
+    d.rows = this.rows
+    d.tall = isTall(this.columns, this.rows)
+    return d
   }
 
   ensure(columns: number, rows: number): void {

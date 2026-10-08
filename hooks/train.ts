@@ -40,7 +40,7 @@ import { Rng } from './cells'
 import { beckon, Crew, type AgentMark, type Mate } from './crew'
 import { PixelScene, type Dials, type Painter } from './pixel-scene'
 import { defineScene } from './scene-def'
-import { clamp, grey, hash, hash1, mix, noise1 } from './pixels'
+import { clamp, grey, hash, hash1, mix, noise1, retain } from './pixels'
 import { MOON, moonCover, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR, STAR_DIM } from './night'
 import { hear, leadFrames, PLAYER_LEAD_MS, type Ambience, type SoundEvent } from './sound'
 import { breath } from './waiting'
@@ -419,33 +419,36 @@ function smear(buf: Int32Array, W: number, y: number, run: number): void {
   const n = Math.min(10, Math.round(run * 0.8))
   if (n < 1) return
   const o = y * W
+  const last = o + W - 1
   let r = 0
   let g = 0
   let b = 0
-  const at = (x: number) => buf[o + Math.min(W - 1, x)]!
   for (let x = 0; x <= n; x++) {
-    const c = at(x)
+    const c = buf[Math.min(last, o + x)]!
     r += (c >> 16) & 255
     g += (c >> 8) & 255
     b += c & 255
   }
   const k = 1 / (n + 1)
-  const out = new Int32Array(W)
+  // In place: pixel x is written only once it and everything after it have been read.
   for (let x = 0; x < W; x++) {
-    out[x] = ((((r * k) >> 3) << 3) << 16) | ((((g * k) >> 3) << 3) << 8) | (((b * k) >> 3) << 3)
-    const c0 = at(x)
-    const c1 = at(x + n + 1)
+    const c0 = buf[o + x]!
+    const c1 = buf[Math.min(last, o + x + n + 1)]!
+    buf[o + x] = ((((r * k) >> 3) << 3) << 16) | ((((g * k) >> 3) << 3) << 8) | (((b * k) >> 3) << 3)
     r += ((c1 >> 16) & 255) - ((c0 >> 16) & 255)
     g += ((c1 >> 8) & 255) - ((c0 >> 8) & 255)
     b += (c1 & 255) - (c0 & 255)
   }
-  buf.set(out, o)
 }
+
+/** streak's copy of one column, reused (grown as a taller pane needs). */
+let column = new Int32Array(0)
 
 /** Motion blur down the columns (from above the world runs down): each pixel the mean of it and the `n` above it, held to steps of 8. */
 function streak(buf: Int32Array, W: number, H: number, n: number): void {
   const k = 1 / (n + 1)
-  const col = new Int32Array(H)
+  if (column.length < H) column = new Int32Array(H)
+  const col = column
   for (let x = 0; x < W; x++) {
     for (let y = 0; y < H; y++) col[y] = buf[y * W + x]!
     let r = 0
@@ -475,6 +478,9 @@ type Puff = { s: number; up: number; side: number; r: number; life: number; vu: 
 /** Birds crossing the sky (by day, in the band): a few, flapping out of step. */
 type Flock = { x: number; y: number; vx: number; n: number; ph: number }
 type Motor = { x: number; dir: number; v: number; color: number }
+
+/** Every colour a palette holds. */
+const PAL_KEYS = Object.keys(DAY) as (keyof Pal)[]
 
 /** Cars on the roads (from above). */
 const CAR_COLORS = [0xd8433a, 0x2f6fd0, 0xf0f0ea, 0x3a3d44, 0xe0b030, 0x4a9a5a]
@@ -521,6 +527,11 @@ export class Train extends PixelScene {
   private canopy = new Uint8Array(0)
   private rowV = new Int32Array(0)
   private solid = new Uint8Array(0)
+  /** ...the band's sky by pixel row, the signals in view, the crossings in view, and this frame's colours. */
+  private skyRow = new Int32Array(0)
+  private sigs: number[] = []
+  private seen = new Set<number>()
+  private pal: Pal = { ...DAY }
 
   constructor(seed = 1) {
     super(seed)
@@ -713,7 +724,8 @@ export class Train extends PixelScene {
       this.v = 0
     }
     if (this.v === 0 && idle) this.depart = 0
-    this.extras = this.extras.filter(s => s > this.pos - TRAIN - 1200)
+    const behind = this.pos - TRAIN - 1200
+    retain(this.extras, s => s > behind)
 
     this.listen(was)
     // Tints ease: smoke pours out at once and clears over a few seconds; a storm gathers.
@@ -849,7 +861,8 @@ export class Train extends PixelScene {
   private moveTraffic(dt: number): void {
     const top = Math.floor(this.pos / 3) + this.noseY + 4
     const bottom = top - this.H - 8
-    const seen = new Set<number>()
+    const seen = this.seen
+    seen.clear()
     for (let z = Math.floor((bottom * 3) / ZONE); z <= Math.floor((top * 3) / ZONE); z++) {
       if (!crosses(zoneOf(z))) continue
       const vc = Math.floor((z * ZONE + CROSS) / 3)
@@ -890,6 +903,14 @@ export class Train extends PixelScene {
     return vc >= back - 3 && vc <= nose + 30
   }
 
+  /** The signals to draw, starting with those put up to stop at (the regular ones in view are pushed after). */
+  private signals(): number[] {
+    const sigs = this.sigs
+    sigs.length = 0
+    for (const s of this.extras) sigs.push(s)
+    return sigs
+  }
+
   /** A signal's aspect: red where it holds the train, and behind it (its block occupied); else green. */
   private red(sg: number): boolean {
     return sg === this.held || sg < this.pos - 2
@@ -900,8 +921,8 @@ export class Train extends PixelScene {
     const kn = q(d.night, 8)
     const ks = q(this.kSmoke, 6)
     const kb = q(this.kStorm, 6)
-    const P = {} as Pal
-    for (const key of Object.keys(DAY) as (keyof Pal)[]) P[key] = mix(DAY[key], NIGHT[key], kn)
+    const P = this.pal
+    for (const key of PAL_KEYS) P[key] = mix(DAY[key], NIGHT[key], kn)
     if (ks > 0) {
       const o = OVERCAST
       P.skyTop = mix(P.skyTop, mix(o.day[0], o.night[0], kn), ks)
@@ -992,7 +1013,8 @@ export class Train extends PixelScene {
     const at = (f: number, x: number) => Math.floor(nose * f + x - nx + 1)
 
     // The sky, a stepped gradient down to the horizon.
-    const sky = new Int32Array(H)
+    if (this.skyRow.length < H) this.skyRow = new Int32Array(H)
+    const sky = this.skyRow
     for (let y = 0; y < H; y++) {
       sky[y] = mix(P.skyTop, P.skyHz, q(y / Math.max(1, yHz), 6))
       buf.fill(sky[y]!, y * W, y * W + W)
@@ -1363,7 +1385,7 @@ export class Train extends PixelScene {
       }
     }
     // Signals: red where one holds the train, and behind it.
-    const sigs = [...this.extras]
+    const sigs = this.signals()
     for (let k = Math.floor((nose - nx - SIGNAL0) / SIGNAL); k * SIGNAL + SIGNAL0 < nose + (W - nx) + 2; k++) sigs.push(k * SIGNAL + SIGNAL0)
     for (const sg of sigs) {
       const x = Math.round(nx - 1 + (sg - nose))
@@ -1565,7 +1587,7 @@ export class Train extends PixelScene {
     this.treesAbove(px, P)
     this.housesAbove(px, P, kn)
     // Signals beside the line.
-    const sigs = [...this.extras]
+    const sigs = this.signals()
     const topS = (av + ny + 2) * 3
     const botS = (av + ny - H - 2) * 3
     for (let k = Math.floor((botS - SIGNAL0) / SIGNAL); k * SIGNAL + SIGNAL0 <= topS; k++) sigs.push(k * SIGNAL + SIGNAL0)

@@ -89,6 +89,7 @@ const DAY: Palette = {
   foamShade: 0xbfe0ec,
   spray: 0xeaf7ff,
 }
+const PAL_KEYS = Object.keys(DAY) as (keyof Palette)[]
 const DAWN = { skyTop: 0x5a86c8, skyHz: 0xf8c79c, sun: 0xfff0c8, sunGlow: 0xffb070, head: 0x6f7486 }
 const OVERCAST = { skyTop: 0x6e7680, skyHz: 0xadb2b8, sun: 0xc8c8c4, sunGlow: 0xa8acb0, cloud: 0xc4c8cc, cloudShade: 0x8e949a, head: 0x5d6466 }
 const STORM: Palette = {
@@ -621,8 +622,7 @@ export class Surf {
   private updatePalette(): void {
     const p = this.pal
     const dawn = clamp((4 - this.s) / 3)
-    const keys = Object.keys(DAY) as (keyof Palette)[]
-    for (const key of keys) {
+    for (const key of PAL_KEYS) {
       let c = DAY[key]
       const d = (DAWN as Partial<Palette>)[key]
       if (d !== undefined) c = mix(c, d, dawn)
@@ -915,7 +915,7 @@ export class Surf {
 
   private sprite(pose: Pose, large: boolean, x: number, y: number, facing: number, suit: number): void {
     const rows = SPRITES[pose][large ? 1 : 0]
-    const width = Math.max(...rows.map(r => r.length))
+    const width = rows[0].length
     // Snapped so the head fills whole cells: three colors never share one.
     const x0 = 2 * Math.round((x - width / 2) / 2)
     const yb = Math.floor(y)

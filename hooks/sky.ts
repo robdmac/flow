@@ -298,13 +298,13 @@ export abstract class SkyWorld {
     }
     const scroll = this.scroll
     this.lamps.fill(-1)
-    this.rowBg = []
+    this.rowBg.length = h
     for (let r = 0; r < h; r++) {
       // Row r shows world row y: the bottom row is the grass (y = -1) until
       // the world scrolls, and the vehicle's lowest row is its altitude.
       const y = scroll - 1 + (h - 1 - r)
       const bg = this.skyAt(y)
-      this.rowBg.push(bg)
+      this.rowBg[r] = bg
       for (let x = 0; x < w; x++) {
         const i = r * w + x
         const s = this.scenery(x, y, bg)

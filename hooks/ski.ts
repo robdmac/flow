@@ -39,9 +39,9 @@ import { Cells, DEFAULT_COLOR, freshSeed, Rng, isTall } from './cells'
 import { beckon, Crew, finished, resting, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
 import { MOON, moonCover, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
-import { approach, BRAILLE, clamp, fitQuad, hashMurmur as hash, mix, noise1, noise2, QUAD, type Hash1, type QuadFit } from './pixels'
+import { approach, BRAILLE, clamp, fitQuad, hashMurmur as hash, mix, QUAD, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
-import type { Ambience, SoundEvent } from './sound'
+import { hear, type Ambience, type SoundEvent } from './sound'
 import { easeWait, waitTone } from './waiting'
 
 // ---------------------------------------------------------------- tables
@@ -68,10 +68,30 @@ const GET_UP = 18
 
 // ---------------------------------------------------------------- helpers
 
-/** The run's 1-D lattice: its own hash, so its peaks and pines stay where they've always been. */
-const along: Hash1 = (i, s) => hash(i, 0, s)
-/** Smooth 1-D value noise in [0, 1), on the run's own hash. */
-const noise = (x: number, s: number) => noise1(x, s, along)
+// The run's own value noise, on its own hash (pixels.ts's noise1 and noise2
+// are the same curves on other hashes): its peaks, pines and snow stay where
+// they've always been, and the spine's per-pixel snow stays a local call.
+
+/** Smooth 1-D value noise in [0, 1). */
+function noise(x: number, s: number): number {
+  const i = Math.floor(x)
+  const f = x - i
+  const u = f * f * (3 - 2 * f)
+  return hash(i, 0, s) * (1 - u) + hash(i + 1, 0, s) * u
+}
+
+/** Smooth 2-D value noise in [0, 1). */
+function noise2(x: number, y: number, s: number): number {
+  const i = Math.floor(x)
+  const j = Math.floor(y)
+  const fx = x - i
+  const fy = y - j
+  const u = fx * fx * (3 - 2 * fx)
+  const v = fy * fy * (3 - 2 * fy)
+  const a = hash(i, j, s) * (1 - u) + hash(i + 1, j, s) * u
+  const b = hash(i, j + 1, s) * (1 - u) + hash(i + 1, j + 1, s) * u
+  return a * (1 - v) + b * v
+}
 
 // ---------------------------------------------------------------- palettes
 
@@ -573,7 +593,7 @@ export class Ski {
       // Its agent gone quiet: it straightens up and pulls over to one side of the run.
       if (m) lat += ((m.slot & 1 ? -0.6 : 0.6) * Math.max(0.3, this.amp) - lat) * (1 - m.busy)
       // Each turn's edge change, heard.
-      if (i === 0 && Math.sign(lat) !== Math.sign(s.lat) && this.sounds.length < 8) this.sounds.push({ kind: 'swish', v: Math.min(1, this.v / 2) })
+      if (i === 0 && Math.sign(lat) !== Math.sign(s.lat)) hear(this.sounds, { kind: 'swish', v: Math.min(1, this.v / 2) })
       s.lat = lat
       if (tall) {
         const half = this.room()
@@ -1214,7 +1234,7 @@ export class Ski {
       for (let x = 0; x < W; x++) {
         let c = mix(P.snow, P.snowShade, 0.15)
         // The snow's lie, drawn out down the fall line as the speed blurs it.
-        const n = noise2(x / 7, wy / (10 + this.v * 9), 43, hash)
+        const n = noise2(x / 7, wy / (10 + this.v * 9), 43)
         c = mix(c, P.snowShade, n * (0.35 + deep * 0.25))
         if (x < el || x >= er) c = mix(c, P.snowShade, 0.35)
         if (mg > 0.01) {

@@ -40,6 +40,16 @@ export function mix(a: number, b: number, k: number): number {
   return (r << 16) | (gg << 8) | bb
 }
 
+/** Keep only the items of `list` that `keep` passes, in order, in place: a frame's particles without a new array. */
+export function retain<T>(list: T[], keep: (item: T) => boolean): void {
+  let n = 0
+  for (let i = 0; i < list.length; i++) {
+    const item = list[i]!
+    if (keep(item)) list[n++] = item
+  }
+  list.length = n
+}
+
 /** A color `k` (0..1, held there) along `stops`, evenly spaced, blended between the two either side. */
 export function rampAt(stops: readonly number[], k: number): number {
   const x = clamp(k) * (stops.length - 1)
@@ -84,37 +94,27 @@ export function hash1(n: number): number {
   return (h >>> 0) / 0x1_0000_0000
 }
 
-/** A hash of one whole number and a seed to [0, 1): what noise1 eases between. */
-export type Hash1 = (i: number, seed: number) => number
-const lattice1: Hash1 = (i, seed) => hash1(i * 7919 + seed)
-
-/**
- * Smooth 1-D value noise in [0, 1): `h` (hash1 by default) at each whole x,
- * eased between (surf's swell, the train's hills, the ski run's snow).
- */
-export function noise1(x: number, seed: number, h: Hash1 = lattice1): number {
+/** Smooth 1-D value noise in [0, 1): hash1 at each whole x, eased between (surf's swell, the train's hills, the ski run's peaks). */
+export function noise1(x: number, seed: number): number {
   const i = Math.floor(x)
   const f = x - i
-  const a = h(i, seed)
-  const b = h(i + 1, seed)
+  const a = hash1(i * 7919 + seed)
+  const b = hash1((i + 1) * 7919 + seed)
   return a + (b - a) * f * f * (3 - 2 * f)
 }
 
-/**
- * Smooth 2-D value noise in [0, 1): `h` (`hash` by default) at each whole
- * (x, y), eased between (avalon's nebulae, the clouds, the ski run's slopes).
- */
-export function noise2(x: number, y: number, seed: number, h: (x: number, y: number, seed: number) => number = hash): number {
+/** Smooth 2-D value noise in [0, 1): `hash` at each whole (x, y), eased between (avalon's nebulae, the clouds, the ski run's snow). */
+export function noise2(x: number, y: number, seed: number): number {
   const i = Math.floor(x)
   const j = Math.floor(y)
   let fx = x - i
   let fy = y - j
   fx = fx * fx * (3 - 2 * fx)
   fy = fy * fy * (3 - 2 * fy)
-  const a = h(i, j, seed)
-  const b = h(i + 1, j, seed)
-  const c = h(i, j + 1, seed)
-  const d = h(i + 1, j + 1, seed)
+  const a = hash(i, j, seed)
+  const b = hash(i + 1, j, seed)
+  const c = hash(i, j + 1, seed)
+  const d = hash(i + 1, j + 1, seed)
   return a + (b - a) * fx + (c - a + (a - b - c + d) * fx) * fy
 }
 

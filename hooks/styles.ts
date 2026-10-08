@@ -22,7 +22,7 @@ import { heatColor, smokeColor } from './fire-palette'
 import { BRAILLE, clamp, hash1, lowerBlock, mix, rampAt, smooth } from './pixels'
 import { breath, easeWait, waitTone } from './waiting'
 import { defineScene, type SceneDef } from './scene-def'
-import type { Ambience, SoundEvent } from './sound'
+import { hear, type Ambience, type SoundEvent } from './sound'
 import { balloonScene } from './balloon'
 import { avalonScene } from './colony'
 import { engineScene } from './engine'
@@ -387,7 +387,7 @@ class Ember implements Scene {
         if (tip < 0 || this.rng.f() >= chance) continue
         // A pilot only lets off the odd wisp of smoke, never a spark.
         const heat = s === 1 ? SMOKE_AT : 0.72 + 0.25 * this.rng.f()
-        if (heat > SMOKE_AT && this.sounds.length < 16) this.sounds.push({ kind: 'crack', v: heat })
+        if (heat > SMOKE_AT) hear(this.sounds, { kind: 'crack', v: heat })
         this.sparks.push({
           x: x * 2 + this.rng.f() * 2,
           y: tip * 4,

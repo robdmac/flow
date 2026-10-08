@@ -58,7 +58,7 @@ import type { AgentDial } from './agents'
 import { Cells, DEFAULT_COLOR, freshSeed, Rng, isTall } from './cells'
 import { beckon, Crew, easeTo, resting, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
-import { BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, NEAR, noise2, QUAD, smooth, type QuadFit } from './pixels'
+import { BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, NEAR, noise2, QUAD, retain, smooth, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
 import { hear, leadFrames, type SoundEvent } from './sound'
 import { easeWait, waitTone } from './waiting'
@@ -428,7 +428,7 @@ export class Colony {
     // The habitat turns at its own steady pace, whatever the speed.
     this.spin = (this.spin + 0.022) % TAU
     for (const hit of this.hits) hit.age++
-    this.hits = this.hits.filter(hit => hit.age < RIPPLE)
+    retain(this.hits, hit => hit.age < RIPPLE)
     this.stepRocks()
     this.stepMotes()
     this.stepProbes()
@@ -680,7 +680,7 @@ export class Colony {
     }
     const v = this.rockSpeed
     const lead = leadFrames(this.strength, this.tint)
-    this.rocks = this.rocks.filter(rock => {
+    retain(this.rocks, rock => {
       rock.a -= v * rock.k
       rock.c = clamp(rock.c + rock.dc, lo, hi - 1)
       rock.ang += rock.spin * (1 + v * 0.3)
@@ -716,7 +716,7 @@ export class Colony {
   /** Embers cool and drift back onto the shield; (smoke tint) puffs coughed out of the engine. */
   private stepMotes(): void {
     const drift = 0.04 + this.rockSpeed * 0.04
-    this.embers = this.embers.filter(m => {
+    retain(this.embers, m => {
       m.va = m.va * 0.86 - drift
       m.vc *= 0.88
       m.a += m.va
@@ -739,7 +739,7 @@ export class Colony {
         max: life,
       })
     }
-    this.smoke = this.smoke.filter(m => {
+    retain(this.smoke, m => {
       m.a += m.va
       m.c += m.vc
       return --m.life > 0 && m.a > -4
