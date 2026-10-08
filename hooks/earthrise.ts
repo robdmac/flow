@@ -1,4 +1,4 @@
-// REVISION: flow-v2-earthrise-picture
+// REVISION: flow-v3-earthrise-halftone
 //
 // Earthrise (the `earthrise` scene): the Earth coming up over a cratered
 // lunar horizon in long, low sunlight, after "earthrise" by @bas3line on
@@ -6,12 +6,20 @@
 // Earth stands and how fast it turns: at 1 it is half behind the horizon,
 // turning once in about two minutes; at 10 it stands clear of the horizon,
 // turning every few seconds, its clouds running a little ahead. It climbs
-// and sinks over several seconds as the work picks up or winds down, and a
-// few stars breathe.
+// and sinks over several seconds as the work picks up or winds down.
+//
+// The dark sky comes alive with the work: at 1 a few stars hold still and
+// breathe; as the level rises more of them come out, the field drifts past
+// in three layers (the near ones faster), more of them twinkle, shooting
+// stars streak across, and from about 3 up a comet now and then drifts
+// through, its tails streaming away from the sun.
 //
 // Where the terminal draws images (pi in Ghostty, kitty, WezTerm), it is
-// also drawn as a picture at real pixels (`picture`): the same world, its
-// ground built a few columns a frame for each new size, the sky left clear.
+// also drawn as a picture (`picture`), the original's way: every cell of a
+// square grid a halftone dot (none, ·, • or ●) sized by its brightness,
+// ordered-dithered, in the nearest of the original's 38 colours. The
+// ground is built a few columns a frame for each new size, the sky left
+// clear.
 //
 // The ground is the original's heightfield of craters and boulders, seen
 // from a camera standing on it and marched column by column, with real
@@ -28,6 +36,7 @@
 // (PixelScene breathes the frame in sepia; a picture takes the same tone).
 
 import { FRAME_MS } from './activity'
+import { Rng } from './cells'
 import { CLEAR, PixelScene, type Dials, type Painter } from './pixel-scene'
 import { clamp, grey, hash, hash1, luma, mix, rampAt, smoothstep as smooth } from './pixels'
 import { defineScene } from './scene-def'
@@ -96,7 +105,61 @@ const PIC_SIZE = 0.85
 const PIC_SKY = 0.55
 const PIC_STEPS = 255
 /** Bump when the ground changes: a picture's ground kept from before (`pictureCache`) is then made afresh. */
-const GROUND_VERSION = 1
+const GROUND_VERSION = 2
+/**
+ * A picture's halftone: about DOT_ROWS dots down it, each DOT_MIN to
+ * DOT_MAX of its pixels apart, sized (by radius, of that pitch) as the
+ * original's glyphs ink: none, ·, •, ●.
+ */
+const DOT_ROWS = 46
+const DOT_MIN = 4
+const DOT_MAX = 10
+const DOT_R = [0, 0.17, 0.3, 0.47] as const
+/** How much of a full dot each step inks, and the 4 × 4 ordered dither between steps (the original's). */
+const COVER = [0, 0.3, 0.6, 1] as const
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(v => v / 16 - 0.47)
+/** The original's palette: the ground's greys, the night's blues, the Earth's seas, clouds, land. */
+const PALETTE = [
+  0x18181b, 0x232326, 0x303033, 0x414143, 0x555556, 0x6b6a69, 0x83817d, 0x9c9993, 0xb6b2aa, 0xcfcac1, 0xe6e1d8, 0xf7f4ee,
+  0x0c1120, 0x131a2e, 0x1b2540, 0x262f4a, 0xdfe9ff, 0x0a2259, 0x0f2f72, 0x15408c, 0x1d53a6, 0x2a69bf, 0x4386d3, 0x6eaeea,
+  0xa8d3f6, 0xe8f0fa, 0xc2d0e3, 0x8b9fbc, 0x2f4a26, 0x3b5a2c, 0x5b7238, 0x7a9150, 0x77783f, 0x8f8550, 0xa8955e, 0x6b5634,
+  0xb9774a, 0x8a4838,
+] as const
+
+// --- the living sky ----------------------------------------------------------
+
+/**
+ * The star field's layers, far to near: a lattice `cell` wide (the
+ * original's units) with a star in about `dens` of each unit of sky at level
+ * 1 and (1 + `more`) times that at 10, drifting `speed` times the sky's
+ * pace, `lo`..`hi` bright.
+ */
+const STAR_LAYERS = [
+  { cell: 4, dens: 0.0032, more: 2.6, speed: 0.35, lo: 0.17, hi: 0.45, salt: 101 },
+  { cell: 6, dens: 0.0016, more: 2.2, speed: 0.7, lo: 0.24, hi: 0.7, salt: 211 },
+  { cell: 12, dens: 0.0005, more: 1.4, speed: 1.4, lo: 0.45, hi: 1.05, salt: 307 },
+] as const
+/** The sky's drift (the original's units a second) at level 1 and the most added at 10, leftward and a little down. */
+const DRIFT_CALM = 0.03
+const DRIFT_BUSY = 5
+const DRIFT_DOWN = 0.12
+/** Shooting stars a second at level 1 and at 10 (eased between as the square of the level), and with each subagent's boost. */
+const METEOR_CALM = 0.015
+const METEOR_BUSY = 0.9
+/** Comets a second, from about level 3 up to 10, and at most this many in the sky at once (one below about 6). */
+const COMET_BUSY = 0.055
+const COMETS_MAX = 2
+/** Toward the sun on the screen (column right, row down): a comet's tails stream the other way. */
+const SUN_SCREEN = (() => {
+  const l = Math.hypot(SUN[0], SUN[1])
+  return [SUN[0] / l, -SUN[1] / l] as const
+})()
+
+type Meteor = { x: number; y: number; ux: number; uy: number; speed: number; age: number; life: number; len: number; b: number }
+type Comet = { x: number; y: number; vx: number; vy: number; age: number; life: number; len: number; b: number; curl: number }
+
+/** Where sky light is gathered: sample (x, y) of `w` × `h` is centred on (col0 + (x + ½)·fx, row0 + (y + ½)·fy). */
+type View = { col0: number; row0: number; fx: number; fy: number; w: number; h: number }
 /** The widest view, in radians: a wider band is squeezed into it rather than looking round behind. */
 const SPAN = 2.8
 /** The spine: the Earth this much of the width, its centre this far down. */
@@ -413,17 +476,21 @@ const SN = Math.sin(NOD)
 
 /**
  * One point of the sky round the Earth, (dx, dy) from its centre over its
- * radius `er` (the original's cells, its radius ER): [r, g, b, alpha], into `out`.
+ * radius `er` (the original's cells, its radius ER), over the sky's light
+ * (br, bg, bb): [r, g, b, alpha, cap, floor] into `out`, the last two for a
+ * halftone dot (how bright its colour may go, how big it must be at least).
  */
-function earthAt(dx: number, dy: number, er: number, spin: number, drift: number, out: Float32Array): void {
+function earthAt(dx: number, dy: number, er: number, spin: number, drift: number, out: Float32Array, br = 0, bg = 0, bb = 0): void {
   const m = earthMaps()
   // In the original's measure, whatever the size it's drawn at.
   dx *= ER / er
   dy *= ER / er
-  let cr = 0
-  let cg = 0
-  let cb = 0
+  let cr = br
+  let cg = bg
+  let cb = bb
   let a = 0
+  let cap = 1
+  let floor = 0
   const d = Math.hypot(dx, dy)
   // The Earth's air: a thin blue rim on its sunlit side.
   if (d >= ER - 1 && d < ER + 12) {
@@ -474,12 +541,60 @@ function earthAt(dx: number, dy: number, er: number, spin: number, drift: number
     cg = lerp(cg, eg, edge)
     cb = lerp(cb, eb, edge)
     a = lerp(a, clamp(Math.max(er, eg, eb) * 12), edge)
+    // Land keeps its earth tones rather than washing out to cream; the day side, the brightest thing in the sky, full round dots.
+    cap = lerp(1, 0.66, (1 - sw) * (1 - cl) * smooth(0.95, 0.85, Math.abs(ay)))
+    floor = 0.15 * Math.min(1, day) * edge
   }
   out[0] = cr
   out[1] = cg
   out[2] = cb
   out[3] = a
+  out[4] = cap
+  out[5] = floor
 }
+
+/** A colour (0..1 a channel) as the palette's nearest, by a 32³ table filled as it's asked. */
+const nearestLut = new Int16Array(32768).fill(-1)
+function nearest(r: number, g: number, b: number): number {
+  const k = (Math.min(31, (clamp(r) * 31.99) | 0) << 10) | (Math.min(31, (clamp(g) * 31.99) | 0) << 5) | Math.min(31, (clamp(b) * 31.99) | 0)
+  const hit = nearestLut[k]!
+  if (hit >= 0) return PALETTE[hit]!
+  let best = 0
+  let bd = Infinity
+  for (let i = 0; i < PALETTE.length; i++) {
+    const c = PALETTE[i]!
+    const dr = ((c >> 16) & 255) / 255 - r
+    const dg = ((c >> 8) & 255) / 255 - g
+    const db = (c & 255) / 255 - b
+    const d = 0.3 * dr * dr + 0.5 * dg * dg + 0.2 * db * db
+    if (d < bd) {
+      bd = d
+      best = i
+    }
+  }
+  nearestLut[k] = best
+  return PALETTE[best]!
+}
+
+/** The ink of each dot step at `p` pixels a dot: how much of each of its p × p pixels it covers (4 × 4 samples a pixel). */
+function dotStamps(p: number): Float32Array[] {
+  return DOT_R.map(rf => {
+    const st = new Float32Array(p * p)
+    const r = rf * p
+    const c = p / 2
+    for (let y = 0; y < p; y++) {
+      for (let x = 0; x < p; x++) {
+        let n = 0
+        for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) if (Math.hypot(x + (i + 0.5) / 4 - c, y + (j + 0.5) / 4 - c) < r) n++
+        st[y * p + x] = n / 16
+      }
+    }
+    return st
+  })
+}
+
+/** A picture's dot pitch for `h` pixels down it. */
+const dotPitch = (h: number): number => Math.max(DOT_MIN, Math.min(DOT_MAX, Math.round(h / DOT_ROWS)))
 
 /** Light (0..~1.2 a channel) as a colour, a little lifted, held to 5 bits a channel (`bits`: Raster's colour pairs are few). */
 function lightColor(r: number, g: number, b: number, bits = 0xf8): number {
@@ -517,6 +632,8 @@ type Layout = {
   at: Float32Array
   /** How many steps the ground's brightness is held to. */
   steps: number
+  /** The row (the original's) the skyline falls at on average, once the ground is in: where shooting stars and comets keep above. */
+  horizon: number
 }
 
 /** The ground's sample buffers, shared (one column at a time). */
@@ -524,14 +641,31 @@ let gx = new Float32Array(0)
 let gz = new Float32Array(0)
 let gy = new Float32Array(0)
 
-/** A picture's pixels: its colour (CLEAR for the open sky) and how much it covers (0..1). */
-type Canvas = { w: number; h: number; px: Int32Array; alpha: Float32Array; rgba: Uint8Array }
+/** A picture: its pixels, its dots' grid (`gw` × `gh`, `p` pixels apart, inset `ox`, `oy`), each dot's light, and the dots' ink. */
+type Canvas = {
+  w: number
+  h: number
+  p: number
+  gw: number
+  gh: number
+  ox: number
+  oy: number
+  r: Float32Array
+  g: Float32Array
+  b: Float32Array
+  rgba: Uint8Array
+  stamps: Float32Array[]
+}
+
+/** Sky light gathered for the cells' specks. */
+type Specks = { r: Float32Array; g: Float32Array; b: Float32Array }
 
 export class Earthrise extends PixelScene {
   /** The view the cells see, and a picture's. */
   private cells: Layout = layout(0, 0, 2, false)
   private pic: Layout | undefined
   private canvas: Canvas | undefined
+  private specks: Specks = { r: new Float32Array(0), g: new Float32Array(0), b: new Float32Array(0) }
   /** How far the Earth has turned, and its clouds (radians): each one made starts on its own face. */
   private spin = hash1(this.seed) * Math.PI * 2
   private drift = 0
@@ -540,11 +674,20 @@ export class Earthrise extends PixelScene {
   /** Smoke and blue, eased (0..1). */
   private kSmoke = 0
   private kBlue = 0
-  private readonly rgba = new Float32Array(4)
+  private readonly rgba = new Float32Array(6)
+  /** How far the sky has drifted (the original's units, at the pace of a layer of speed 1), and what's crossing it. */
+  private skyOff = hash1(this.seed + 7) * 1000
+  private readonly meteors: Meteor[] = []
+  private readonly comets: Comet[] = []
+  private readonly rng = new Rng(Math.floor(hash1(this.seed + 13) * 0x7fffffff))
+  /** The frame a picture was last asked for: the sky's visitors cross the view that's on show. */
+  private picT = -1e9
 
   protected resize(d: Dials): void {
     this.cells = layout(d.columns * 2, d.rows * 2, 2, d.tall)
     build(this.cells, Infinity)
+    const n = d.columns * 2 * d.rows * 4
+    this.specks = { r: new Float32Array(n), g: new Float32Array(n), b: new Float32Array(n) }
   }
 
   protected update(d: Dials): void {
@@ -552,12 +695,218 @@ export class Earthrise extends PixelScene {
     const busy = clamp((d.level - 1) / 9)
     if (Number.isNaN(this.alt)) this.alt = busy
     else if (d.wait < 0.5) this.alt += clamp(busy - this.alt, -CLIMB, CLIMB)
-    const rate = SPIN_CALM * Math.pow(SPIN_BUSY / SPIN_CALM, busy) * (1 - d.wait)
+    const still = 1 - d.wait
+    const rate = SPIN_CALM * Math.pow(SPIN_BUSY / SPIN_CALM, busy) * still
     const dt = FRAME_MS / 1000
     this.spin += rate * dt
     this.drift += rate * CLOUD_AHEAD * dt
     this.kSmoke = clamp(this.kSmoke + clamp((d.tint === 'smoke' ? 1 : 0) - this.kSmoke, -0.05, 0.05))
     this.kBlue = clamp(this.kBlue + clamp((d.tint === 'blue' ? 1 : 0) - this.kBlue, -0.04, 0.04))
+    this.moveSky(d, dt, still)
+  }
+
+  /** The sky drifts with the work, and shooting stars and comets come and go across the view on show. */
+  private moveSky(d: Dials, dt: number, still: number): void {
+    const busy = this.alt
+    this.skyOff += (DRIFT_CALM + DRIFT_BUSY * Math.pow(busy, 1.7)) * still * dt
+    const L = this.pic && d.t - this.picT < 30 ? this.pic : this.cells
+    if (L.pw <= 0) return
+    const c0 = L.col0
+    const c1 = L.col0 + L.pw * L.s
+    const r0 = L.row0
+    const r1 = Math.max(r0 + 4, L.horizon)
+    const rng = this.rng
+
+    for (let i = this.meteors.length - 1; i >= 0; i--) {
+      const m = this.meteors[i]!
+      m.age += dt
+      m.x += m.ux * m.speed * dt
+      m.y += m.uy * m.speed * dt
+      if (m.age >= m.life) this.meteors.splice(i, 1)
+    }
+    const meteors = (METEOR_CALM + METEOR_BUSY * busy * busy) * (1 + d.boost / 30) * still
+    if (this.meteors.length < 6 && rng.f() < meteors * dt) {
+      const a = 0.2 + 0.55 * rng.f()
+      const dir = rng.f() < 0.65 ? -1 : 1
+      this.meteors.push({
+        x: c0 + (c1 - c0) * rng.f(),
+        y: r0 + (r1 - r0) * 0.6 * rng.f(),
+        ux: dir * Math.cos(a),
+        uy: Math.sin(a),
+        speed: 45 + 60 * rng.f(),
+        age: 0,
+        life: 0.3 + 0.5 * rng.f(),
+        len: 6 + 9 * rng.f(),
+        b: 0.7 + 0.6 * rng.f(),
+      })
+    }
+
+    for (let i = this.comets.length - 1; i >= 0; i--) {
+      const c = this.comets[i]!
+      c.age += dt * still
+      c.x += c.vx * dt * still
+      c.y += c.vy * dt * still
+      if (c.age >= c.life) this.comets.splice(i, 1)
+    }
+    const comets = COMET_BUSY * smooth(0.2, 1, busy) * still
+    const room = busy > 0.55 ? COMETS_MAX : 1
+    if (this.comets.length < room && rng.f() < comets * dt) {
+      const a = (rng.f() - 0.5) * 0.7 + (rng.f() < 0.5 ? 0 : Math.PI)
+      const v = 1.5 + 2.5 * rng.f()
+      this.comets.push({
+        x: c0 + (c1 - c0) * (0.12 + 0.76 * rng.f()),
+        y: r0 + (r1 - r0) * (0.12 + 0.4 * rng.f()),
+        vx: Math.cos(a) * v,
+        vy: Math.sin(a) * v * 0.4,
+        age: 0,
+        life: 18 + 16 * rng.f(),
+        len: 16 + 20 * rng.f(),
+        b: 0.75 + 0.35 * rng.f(),
+        curl: (rng.f() < 0.5 ? -1 : 1) * (0.002 + 0.003 * rng.f()),
+      })
+    }
+  }
+
+  /**
+   * This frame's sky into r, g, b (one value per sample of `v`, added to):
+   * the drifting stars (spread over the four samples round each when `soft`,
+   * else in the nearest), the shooting stars and the comets.
+   */
+  private sky(v: View, R: Float32Array, G: Float32Array, B: Float32Array, soft: boolean, tSec: number): void {
+    const { col0, row0, fx, fy, w, h } = v
+    const busy = this.alt
+    const dim = 1 - 0.6 * this.kSmoke
+    const add = (col: number, row: number, k: number, tr: number, tg: number, tb: number) => {
+      const px = (col - col0) / fx - 0.5
+      const py = (row - row0) / fy - 0.5
+      if (soft) {
+        const x0 = Math.floor(px)
+        const y0 = Math.floor(py)
+        const ax = px - x0
+        const ay = py - y0
+        for (let j = 0; j < 2; j++) {
+          const y = y0 + j
+          if (y < 0 || y >= h) continue
+          const wy = j ? ay : 1 - ay
+          for (let i = 0; i < 2; i++) {
+            const x = x0 + i
+            if (x < 0 || x >= w) continue
+            const q = k * wy * (i ? ax : 1 - ax)
+            const o = y * w + x
+            R[o]! += q * tr
+            G[o]! += q * tg
+            B[o]! += q * tb
+          }
+        }
+        return
+      }
+      const x = Math.round(px)
+      const y = Math.round(py)
+      if (x < 0 || y < 0 || x >= w || y >= h) return
+      const o = y * w + x
+      R[o]! += k * tr
+      G[o]! += k * tg
+      B[o]! += k * tb
+    }
+
+    // Stars, layer by layer: a lattice in the sky's own coordinates, drifting by.
+    for (const S of STAR_LAYERS) {
+      const ox = this.skyOff * S.speed
+      const oy = ox * DRIFT_DOWN
+      const u0 = col0 + ox
+      const v0 = row0 + oy
+      const C = S.cell
+      const p0 = S.dens * C * C * (1 + S.more * busy)
+      const twinkling = 0.12 + 0.35 * busy
+      for (let j = Math.floor(v0 / C); j <= Math.floor((v0 + h * fy) / C); j++) {
+        for (let i = Math.floor(u0 / C); i <= Math.floor((u0 + w * fx) / C); i++) {
+          const h0 = hash(i, j, S.salt)
+          let p = p0
+          if (S.salt === STAR_LAYERS[0].salt) {
+            // The galaxy: bands across the far layer, thick with faint stars.
+            let q = j * C - 0.32 * i * C - 4
+            q -= 170 * Math.round(q / 170)
+            p *= 1 + 3 * Math.exp(-((q / 10.5) ** 2)) * smooth(0.35, 0.65, fbm(i * C * 0.05, j * C * 0.08, 3, 0))
+          }
+          if (h0 >= p) continue
+          // Coming out as the level climbs, not popping.
+          const fade = clamp((p - h0) / (0.3 * p0))
+          const col = (i + hash(i, j, S.salt + 1)) * C - ox
+          const row = (j + hash(i, j, S.salt + 2)) * C - oy
+          let k = (S.lo + (S.hi - S.lo) * Math.pow(hash(i, j, S.salt + 3), 3)) * fade * dim * (1 + 0.35 * busy)
+          const tw = hash(i, j, S.salt + 4)
+          if (tw > 1 - twinkling) k *= 0.5 + 0.5 * Math.sin(((tSec * (1 + 1.5 * busy)) / (2 + 3 * hash(i, j, S.salt + 5))) * Math.PI * 2 + tw * 50)
+          const tint = hash(i, j, S.salt + 6)
+          const [tr, tg, tb] = tint < 0.3 ? [0.84, 0.9, 1] : tint > 0.88 ? [1, 0.93, 0.84] : [0.96, 0.96, 0.98]
+          add(col, row, k, tr, tg, tb)
+          // The brightest carry a faint cross, as the original's do.
+          if (soft && k > 0.7) {
+            add(col - fx, row, k * 0.2, tr, tg, tb)
+            add(col + fx, row, k * 0.2, tr, tg, tb)
+            add(col, row - fy, k * 0.2, tr, tg, tb)
+            add(col, row + fy, k * 0.2, tr, tg, tb)
+          }
+        }
+      }
+    }
+
+    // What crosses the sky: lit where it falls on a sample, within its reach.
+    const field = (x0: number, x1: number, y0: number, y1: number, at: (col: number, row: number) => void) => {
+      const xa = Math.max(0, Math.floor((x0 - col0) / fx))
+      const xb = Math.min(w - 1, Math.ceil((x1 - col0) / fx))
+      const ya = Math.max(0, Math.floor((y0 - row0) / fy))
+      const yb = Math.min(h - 1, Math.ceil((y1 - row0) / fy))
+      for (let y = ya; y <= yb; y++) for (let x = xa; x <= xb; x++) at(col0 + (x + 0.5) * fx, row0 + (y + 0.5) * fy)
+    }
+    for (const m of this.meteors) {
+      // A streak: the head, and a tail as long as it's flown, fading back; in and out quickly.
+      const tl = Math.max(0.5, Math.min(m.len, m.speed * m.age))
+      const wd = Math.max(0.45, 0.6 * Math.min(fx, fy))
+      const env = Math.min(1, m.age / 0.08) * (1 - smooth(0.55 * m.life, m.life, m.age)) * m.b * dim
+      const tx = m.x - m.ux * tl
+      const ty = m.y - m.uy * tl
+      field(Math.min(m.x, tx) - 2, Math.max(m.x, tx) + 2, Math.min(m.y, ty) - 2, Math.max(m.y, ty) + 2, (col, row) => {
+        const back = -((col - m.x) * m.ux + (row - m.y) * m.uy)
+        if (back < -wd * 2 || back > tl + wd) return
+        const perp = (col - m.x) * m.uy - (row - m.y) * m.ux
+        const along = back < 0 ? Math.exp(-((back / wd) ** 2)) : Math.pow(1 - clamp(back / tl), 1.6)
+        const k = env * along * Math.exp(-((perp / wd) ** 2))
+        if (k < 0.01) return
+        add(col, row, k, 0.92, 0.96, 1)
+      })
+    }
+    const [sx, sy] = SUN_SCREEN
+    for (const c of this.comets) {
+      // A comet: a bright head in its coma, a straight blue ion tail away from the sun, a wider dust tail curving off it.
+      const env = smooth(0, 3, c.age) * (1 - smooth(c.life - 4, c.life, c.age)) * c.b * dim
+      if (env <= 0) continue
+      const reach = c.len * 1.1 + 4
+      const ux = -sx
+      const uy = -sy
+      field(c.x - reach, c.x + reach, c.y - reach * 0.5, c.y + reach * 0.5, (col, row) => {
+        const dx = col - c.x
+        const dy = row - c.y
+        const r2 = dx * dx + dy * dy
+        let kr = 1.3 * Math.exp(-r2 / 0.35) + 0.6 * Math.exp(-r2 / 5)
+        let kg = kr
+        let kb = kr
+        const a = dx * ux + dy * uy
+        if (a > 0) {
+          const p = dx * uy - dy * ux
+          const wi = 0.5 + 0.022 * a
+          const ion = 0.85 * Math.exp(-a / (0.6 * c.len)) * Math.exp(-((p / wi) ** 2)) * smooth(0, 2, a)
+          const pd = p - c.curl * a * a
+          const wd = 0.8 + 0.1 * a
+          const dust = 0.8 * Math.exp(-a / (0.4 * c.len)) * Math.exp(-((pd / wd) ** 2))
+          kr += ion * 0.62 + dust * 1
+          kg += ion * 0.82 + dust * 0.95
+          kb += ion * 1.05 + dust * 0.82
+        }
+        const m = Math.max(kr, kg, kb) * env
+        if (m < 0.015) return
+        add(col, row, env, kr, kg, kb)
+      })
+    }
   }
 
   /** A colour as the tints show it now. */
@@ -571,16 +920,11 @@ export class Earthrise extends PixelScene {
     return c
   }
 
-  /**
-   * The ground, the moondust and the Earth into `px` (CLEAR left for the open
-   * sky); `alpha`, for a picture, takes how much of each pixel they cover
-   * (without it, the faint edge of the Earth's air is left out).
-   */
-  private paintWorld(L: Layout, px: Int32Array, alpha: Float32Array | undefined, d: Dials): void {
+  /** The ground, the moondust and the Earth into the cells' pixels (CLEAR left for the open sky). */
+  private paintWorld(L: Layout, px: Int32Array, d: Dials): void {
     const { pw, ph, s, sy, col0, row0, ex, er, steps } = L
     const tSec = (d.t * FRAME_MS) / 1000
     const ey = lerp(L.eyLow, L.eyHigh, Number.isNaN(this.alt) ? clamp((d.level - 1) / 9) : this.alt)
-    const bits = alpha ? 0xff : 0xf8
 
     // The ground, as built.
     for (let i = 0; i < pw * ph; i++) {
@@ -588,24 +932,17 @@ export class Earthrise extends PixelScene {
       if (b < 0) continue
       const q = Math.round(Math.pow(clamp(b), 0.85) * steps) / steps
       px[i] = this.tinted(rampAt(GROUND, q))
-      if (alpha) alpha[i] = 1
     }
 
     // Moondust (smoke): a grey pall over the horizon, drifting.
     if (this.kSmoke > 0) {
-      const dustSteps = alpha ? 24 : 6
       for (let x = 0; x < pw; x++) {
         let sky = 0
         while (sky < ph && L.ground[sky * pw + x]! < 0) sky++
-        const col = col0 + x * s
         for (let y = 0; y < sky; y++) {
-          const up = (sky - y) / Math.max(4, ph * 0.5)
-          const n = fbm(col * 0.033 + tSec * 0.4, (row0 + y * sy) * 0.0625, 2, 0)
-          const k = this.kSmoke * clamp(1.3 - up) * (0.55 + 0.45 * n)
+          const k = this.dust(L, x, y, sky, tSec)
           if (k <= 0.12) continue
-          const i = y * pw + x
-          px[i] = mix(0x1c1b1a, DUST, Math.round(k * dustSteps) / dustSteps)
-          if (alpha) alpha[i] = Math.min(1, k * 1.6)
+          px[y * pw + x] = mix(0x1c1b1a, DUST, Math.round(k * 6) / 6)
         }
       }
     }
@@ -638,49 +975,50 @@ export class Earthrise extends PixelScene {
         }
         const m = nx * ny
         a /= m
-        if (a < (alpha ? 0.02 : 0.3)) continue
-        const c = this.tinted(lightColor(r / m / a, g / m / a, b / m / a, bits))
+        if (a < 0.3) continue
+        const c = this.tinted(lightColor(r / m / a, g / m / a, b / m / a))
         const under = px[i]!
-        if (!alpha) {
-          // Through the pall the Earth shows dimmer.
-          px[i] = under === CLEAR ? c : mix(under, c, 1 - pall * 0.5)
-          continue
-        }
-        const k = Math.min(1, a) * (1 - pall * 0.5)
-        if (under === CLEAR) {
-          px[i] = c
-          alpha[i] = Math.min(1, a)
-        } else {
-          px[i] = mix(under, c, k / Math.max(k, alpha[i]!) || 1)
-          alpha[i] = Math.max(alpha[i]!, k)
-        }
+        // Through the pall the Earth shows dimmer.
+        px[i] = under === CLEAR ? c : mix(under, c, 1 - pall * 0.5)
       }
     }
+  }
+
+  /** How thick the moondust (smoke) is at pixel (x, y) of `L`, `sky` pixels of open sky above the ground in its column. */
+  private dust(L: Layout, x: number, y: number, sky: number, tSec: number): number {
+    const up = (sky - y) / Math.max(4, L.ph * 0.5)
+    const n = fbm((L.col0 + x * L.s) * 0.033 + tSec * 0.4, (L.row0 + y * L.sy) * 0.0625, 2, 0)
+    return this.kSmoke * clamp(1.3 - up) * (0.55 + 0.45 * n)
   }
 
   paint(px: Painter, d: Dials): void {
     const L = this.cells
     const { pw, s, sy, col0, row0 } = L
-    this.paintWorld(L, px.px, undefined, d)
+    this.paintWorld(L, px.px, d)
     const tSec = (d.t * FRAME_MS) / 1000
 
-    // Stars: braille specks in the open sky, thicker along the galaxy, none near the Earth; a few breathe.
+    // The sky, as braille specks in the open: the stars drifting by, shooting stars, comets.
     const dw = px.dw
     const dh = px.dh
-    const density = 0.011 * (1 + d.boost / 30)
+    const { r: R, g: G, b: B } = this.specks
+    if (R.length !== dw * dh) return
+    R.fill(0)
+    G.fill(0)
+    B.fill(0)
+    this.sky({ col0, row0, fx: s, fy: sy / 2, w: dw, h: dh }, R, G, B, false, tSec)
     for (let y = 0; y < dh; y++) {
       const pyy = y >> 1
-      const row = row0 + ((y + 0.5) / 2) * sy
       for (let x = 0; x < dw; x++) {
+        const o = y * dw + x
+        const v = Math.max(R[o]!, G[o]!, B[o]!)
+        if (v < 0.16) continue
         const i = pyy * pw + x
-        if (L.near[i] || px.px[i] !== CLEAR) continue
+        if (px.px[i] !== CLEAR) continue
         const cell = (pyy >> 1) * (pw >> 1) + (x >> 1)
         // A cell any of whose pixels are painted keeps clear of specks.
         const c0 = (pyy & ~1) * pw + (x & ~1)
         if (px.px[c0] !== CLEAR || px.px[c0 + 1] !== CLEAR || px.px[c0 + pw] !== CLEAR || px.px[c0 + pw + 1] !== CLEAR) continue
-        const v = this.star(x, y, col0 + (x + 0.5) * s, row, density, tSec)
-        if (v < 0) continue
-        const star = this.tinted(v | 0x101010)
+        const star = this.tinted(lightColor(R[o]!, G[o]!, B[o]!) | 0x101010)
         // A cell's specks share one colour: the brightest of them.
         const prev = px.dots[cell] ? px.dotColor[cell]! : -1
         px.dot(x, y, star)
@@ -689,93 +1027,169 @@ export class Earthrise extends PixelScene {
     }
   }
 
-  /** A star at speck (x, y), at (col, row) in the original's view: its colour, or -1 for none. */
-  private star(x: number, y: number, col: number, row: number, density: number, tSec: number, bits = 0xf8): number {
-    const bandD = (row - (4 + col * 0.32)) / 1.05
-    const band = Math.exp(-((bandD / 10) ** 2)) * smooth(120, 70, col)
-    const h = hash(x * 3 + 1, y * 7 + 2, 11)
-    if (h < 1 - density * (1 + 3 * band)) return -1
-    let v = 0.25 + 0.75 * Math.pow(hash(x + 17, y + 29, 5), 3)
-    // One in eight breathes, each at its own pace.
-    const tw = hash(x, y, 23)
-    if (tw > 0.875) v *= 0.55 + 0.45 * Math.sin((tSec / (3 + 3 * hash(x, y, 31))) * Math.PI * 2 + tw * 50)
-    v *= 1 - 0.6 * this.kSmoke
-    const tint = hash(x + 5, y + 77, 3)
-    const [tr, tg, tb] = tint < 0.3 ? [0.84, 0.9, 1] : tint > 0.88 ? [1, 0.93, 0.84] : [0.96, 0.96, 0.98]
-    return lightColor(v * tr, v * tg, v * tb, bits)
-  }
-
   /**
    * This frame as a picture `w` × `h` pixels (square), RGBA, the open sky
-   * transparent: for a terminal that draws images. A new size's ground is
-   * built at most `budget` pixels a call; until it's all built (and at level
-   * 0) there is no picture: draw `grid()`.
+   * transparent: for a terminal that draws images. A halftone, as the
+   * original draws: a grid of dots, each sized by its light (Bayer-dithered
+   * between the steps), in the palette's nearest colour, the colour making
+   * up what the size could not. A new size's ground is built at most
+   * `budget` dots a call; until it's all built (and at level 0) there is no
+   * picture: draw `grid()`.
    */
   picture(w: number, h: number, budget = Infinity): Uint8Array | undefined {
     if (this.strength <= 0 || w < 2 || h < 2) return undefined
+    const p = dotPitch(h)
+    const gw = Math.floor(w / p)
+    const gh = Math.floor(h / p)
+    if (gw < 2 || gh < 2) return undefined
     let L = this.pic
-    if (!L || L.pw !== w || L.ph !== h) L = this.pic = layout(w, h, 1, h > w)
-    if (L.done < w) {
+    if (!L || L.pw !== gw || L.ph !== gh) L = this.pic = layout(gw, gh, 1, h > w)
+    if (L.done < gw) {
       build(L, budget)
-      if (L.done < w) return undefined
+      if (L.done < gw) return undefined
     }
     let cv = this.canvas
     if (!cv || cv.w !== w || cv.h !== h) {
-      cv = this.canvas = { w, h, px: new Int32Array(w * h), alpha: new Float32Array(w * h), rgba: new Uint8Array(w * h * 4) }
+      const n = gw * gh
+      cv = this.canvas = {
+        w,
+        h,
+        p,
+        gw,
+        gh,
+        ox: Math.floor((w - gw * p) / 2),
+        oy: Math.floor((h - gh * p) / 2),
+        r: new Float32Array(n),
+        g: new Float32Array(n),
+        b: new Float32Array(n),
+        rgba: new Uint8Array(w * h * 4),
+        stamps: dotStamps(p),
+      }
     }
     const d = this.dials()
-    const { px, alpha, rgba } = cv
-    px.fill(CLEAR)
-    alpha.fill(0)
-    this.paintWorld(L, px, alpha, d)
-
-    // Stars: a pixel each in the open sky, as thick across the sky as the specks are.
+    this.picT = d.t
     const tSec = (d.t * FRAME_MS) / 1000
-    const density = 0.011 * (1 + d.boost / 30) * ((L.s * L.sy) / (BAND_S * BAND_S))
-    for (let y = 0; y < h; y++) {
-      const row = L.row0 + (y + 0.5) * L.sy
-      for (let x = 0; x < w; x++) {
-        const i = y * w + x
-        if (L.near[i] || px[i] !== CLEAR) continue
-        const v = this.star(x, y, L.col0 + (x + 0.5) * L.s, row, density, tSec, 0xff)
-        if (v < 0) continue
-        px[i] = this.tinted(v)
-        alpha[i] = 1
+    const { r: R, g: G, b: B, rgba, stamps } = cv
+    R.fill(0)
+    G.fill(0)
+    B.fill(0)
+    rgba.fill(0)
+    const { s, sy, col0, row0, ex, er, ground } = L
+    this.sky({ col0, row0, fx: s, fy: sy, w: gw, h: gh }, R, G, B, true, tSec)
+
+    // Moondust (smoke) over the horizon, as grey light in the sky.
+    if (this.kSmoke > 0) {
+      for (let x = 0; x < gw; x++) {
+        let sky = 0
+        while (sky < gh && ground[sky * gw + x]! < 0) sky++
+        for (let y = 0; y < sky; y++) {
+          const k = this.dust(L, x, y, sky, tSec) * 0.5
+          const o = y * gw + x
+          R[o] = R[o]! * (1 - k) + k * 0.47
+          G[o] = G[o]! * (1 - k) + k * 0.455
+          B[o] = B[o]! * (1 - k) + k * 0.435
+        }
       }
     }
 
-    // Waiting on the person: the same sepia breath as the cells'.
+    const ey = lerp(L.eyLow, L.eyHigh, Number.isNaN(this.alt) ? clamp((d.level - 1) / 9) : this.alt)
+    const out = this.rgba
     const lift = d.wait > 0 ? waitLift(d.wait, d.t) : 1
     const glow = d.wait > 0 ? waitGlow(d.wait, d.t) : 0
-    for (let i = 0, o = 0; i < w * h; i++, o += 4) {
-      let c = px[i]!
-      if (c === CLEAR) {
-        rgba[o + 3] = 0
-        continue
+    for (let y = 0; y < gh; y++) {
+      for (let x = 0; x < gw; x++) {
+        const i = y * gw + x
+        let cr: number
+        let cg: number
+        let cb: number
+        let cap = 1
+        let floor = 0
+        const gb = ground[i]!
+        if (gb >= 0) {
+          // The ground: grey, a touch warm; dim ground in darker ink, so it stays grey.
+          cr = gb
+          cg = gb * 0.95
+          cb = gb * 0.86
+          cap = 0.42 + 0.62 * gb
+        } else {
+          cr = R[i]!
+          cg = G[i]!
+          cb = B[i]!
+        }
+        if (L.near[i]) {
+          // The Earth and its air over the sky, 2 × 2 samples a dot.
+          let ar = 0
+          let ag = 0
+          let ab = 0
+          let ac = 0
+          let af = 0
+          for (let jy = 0; jy < 2; jy++) {
+            const dy = row0 + (y + (jy + 0.5) / 2) * sy - ey
+            for (let jx = 0; jx < 2; jx++) {
+              earthAt(col0 + (x + (jx + 0.5) / 2) * s - ex, dy, er, this.spin, this.drift, out, cr, cg, cb)
+              ar += out[0]!
+              ag += out[1]!
+              ab += out[2]!
+              ac += out[4]!
+              af += out[5]!
+            }
+          }
+          const pall = 1 - this.kSmoke * 0.5
+          cr = lerp(cr, ar / 4, pall)
+          cg = lerp(cg, ag / 4, pall)
+          cb = lerp(cb, ab / 4, pall)
+          cap = ac / 4
+          floor = af / 4
+        }
+        // The dot: its size from the light, dithered; its colour from the hue, making up what the size could not.
+        const peak = Math.max(cr, cg, cb, 1e-4)
+        const level = clamp(floor + (1 - floor) * Math.pow(peak, 0.85) * 0.95)
+        const step = Math.max(0, Math.min(3, Math.round(level * 3 + BAYER[(y & 3) * 4 + (x & 3)]!)))
+        if (!step) continue
+        const want = Math.min(1, (level + 0.06) / COVER[step]!)
+        const k = Math.min(cap, 0.3 + 0.7 * want) / peak
+        let c = this.tinted(nearest(cr * k, cg * k, cb * k))
+        if (d.wait > 0) c = waitColor(c, d.wait, lift, SEPIA_AMOUNT, glow)
+        const st = stamps[step]!
+        const r8 = (c >> 16) & 255
+        const g8 = (c >> 8) & 255
+        const b8 = c & 255
+        const px0 = cv.ox + x * p
+        const py0 = cv.oy + y * p
+        for (let yy = 0; yy < p; yy++) {
+          let o = ((py0 + yy) * w + px0) * 4
+          for (let xx = 0; xx < p; xx++, o += 4) {
+            const a = st[yy * p + xx]!
+            if (a <= 0) continue
+            rgba[o] = r8
+            rgba[o + 1] = g8
+            rgba[o + 2] = b8
+            rgba[o + 3] = Math.round(a * 255)
+          }
+        }
       }
-      if (d.wait > 0) c = waitColor(c, d.wait, lift, SEPIA_AMOUNT, glow)
-      rgba[o] = (c >> 16) & 255
-      rgba[o + 1] = (c >> 8) & 255
-      rgba[o + 2] = c & 255
-      rgba[o + 3] = Math.round(clamp(alpha[i]!) * 255)
     }
     return rgba
   }
 
   pictureKey(w: number, h: number): string {
-    return `earthrise-ground-v${GROUND_VERSION}-${w}x${h}`
+    const p = dotPitch(h)
+    return `earthrise-ground-v${GROUND_VERSION}-${Math.floor(w / p)}x${Math.floor(h / p)}`
   }
 
   pictureCache(): { key: string; data: Float32Array } | undefined {
     const L = this.pic
-    return L && L.done >= L.pw ? { key: this.pictureKey(L.pw, L.ph), data: L.ground } : undefined
+    return L && L.done >= L.pw ? { key: `earthrise-ground-v${GROUND_VERSION}-${L.pw}x${L.ph}`, data: L.ground } : undefined
   }
 
   restorePicture(w: number, h: number, data: Float32Array): boolean {
-    if (w < 2 || h < 2 || data.length !== w * h) return false
-    const L = layout(w, h, 1, h > w)
+    const p = dotPitch(h)
+    const gw = Math.floor(w / p)
+    const gh = Math.floor(h / p)
+    if (gw < 2 || gh < 2 || data.length !== gw * gh) return false
+    const L = layout(gw, gh, 1, h > w)
     L.ground.set(data)
-    L.done = w
+    L.done = gw
     markNear(L)
     this.pic = L
     return true
@@ -860,6 +1274,7 @@ function layout(pw: number, ph: number, ry: number, tall: boolean): Layout {
     sub,
     at,
     steps: ry === 1 ? PIC_STEPS : GROUND_STEPS,
+    horizon: row0 + ph * sy * 0.6,
   }
 }
 
@@ -933,6 +1348,13 @@ function build(L: Layout, budget: number): void {
 /** Where the Earth and its air can reach, as it climbs and sinks: the sky round it, once the ground is in. */
 function markNear(L: Layout): void {
   const { pw, ph, s, sy, col0, row0, ex, er, ground } = L
+  let sum = 0
+  for (let x = 0; x < pw; x++) {
+    let y = 0
+    while (y < ph && ground[y * pw + x]! < 0) y++
+    sum += y
+  }
+  if (pw > 0) L.horizon = row0 + (sum / pw) * sy
   const air = (13 * er) / ER
   for (let y = 0; y < ph; y++) {
     const row = row0 + (y + 0.5) * sy

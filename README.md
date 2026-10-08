@@ -69,7 +69,7 @@ Every scene has a level from 0 (off) to 10 (as busy as it gets).
 | `ski` | an easy run | a steep mogul run at speed |
 | `bubbles` | a couple of lazy strings of bubbles | a rolling, fizzing boil |
 | `train` | waiting at a red signal or a platform, its diesel idling (when the work starts the signal clears, the horn sounds and it pulls away; when it winds down the train pulls up again) | flat out past fields, villages, woods, rivers and stations, the poles and the line beside it a blur |
-| `earthrise` | the Earth half risen over a cratered lunar horizon in long, low sunlight, turning once in about two minutes (after [earthrise](https://ascii.rest/earthrise/) by @bas3line on ascii.rest) | the Earth risen clear of the horizon, spinning once every four seconds, its clouds running ahead |
+| `earthrise` | the Earth half risen over a cratered lunar horizon in long, low sunlight, turning once in about two minutes, under a still sky of a few breathing stars (after [earthrise](https://ascii.rest/earthrise/) by @bas3line on ascii.rest) | the Earth risen clear of the horizon, spinning once every four seconds, its clouds running ahead; more stars, drifting past in layers, shooting stars, and now and then a comet trailing its tails |
 
 `/flow pick` shows them all at once, each one live, to choose from with the arrow keys and Enter (in pi, a list).
 
@@ -170,7 +170,7 @@ The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's edito
 | `session_compact` | so does a compaction |
 | `ctx.getContextUsage()` | a nearly-full context shows as blue |
 
-In a terminal that draws images (Ghostty, kitty, WezTerm, Warp; not under tmux), `earthrise` shows in pi as a picture at the terminal's own pixels rather than in characters, 14 rows tall (never more than half the terminal). Set `"rows"` in `~/.pi/agent/flow.json` for another height, or `"pictures": false` to keep the characters. The first time pi opens at a new width the characters show for a few seconds while the picture's ground is made. Flow keeps the ground of the last few sizes in `~/.cache/flow`, so the picture shows at once the next time. The other scenes stay in characters.
+In a terminal that draws images (Ghostty, kitty, WezTerm, Warp; not under tmux), `earthrise` shows in pi as a picture at the terminal's own pixels rather than in characters, drawn as the original is: a halftone of dots sized by brightness in the original's 38 colours, 14 rows tall (never more than half the terminal). Set `"rows"` in `~/.pi/agent/flow.json` for another height, or `"pictures": false` to keep the characters. The first time pi opens at a new width the characters show for a moment while the picture's ground is made. Flow keeps the ground of the last few sizes in `~/.cache/flow`, so the picture shows at once the next time. The other scenes stay in characters.
 
 pi tells an extension nothing of a wait on you, so there the scenes never show one. Nor has it a player, so the scenes are silent there: `/flow sound` says so.
 

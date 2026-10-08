@@ -1,4 +1,4 @@
-// REVISION: flow-v172-pictures
+// REVISION: flow-v173-halftone-pictures
 //
 // Flow for pi (badlogic/pi-mono), by Rob Macrae: the same ambient
 // scenes as the Claude Code mod, in a widget above pi's editor. pi's events
@@ -63,8 +63,12 @@ const OLD_SETTINGS = [join(homedir(), '.pi', 'agent', 'vista.json'), join(homedi
 /** A picture's rows unless flow.json says (`rows`), and at most this share of the terminal's. */
 const PICTURE_ROWS = 14
 const PICTURE_SHARE = 0.5
-/** At most this many pixels a picture (the terminal scales it up to its cells), and at most one this often. */
-const PICTURE_PIXELS = 160_000
+/**
+ * At most this many pixels a picture (the terminal scales it up to its cells), and at most one this often:
+ * enough for earthrise's halftone dots at the terminal's own pixels in most windows, so they stay crisp
+ * (a frame of dots on a clear sky packs small, well under 100 KB).
+ */
+const PICTURE_PIXELS = 600_000
 const PICTURE_MS = 100
 /** A new size's picture is made between frames, this long at a time, with this long between for everything else. */
 const PICTURE_BUILD_MS = 12
