@@ -1,4 +1,4 @@
-// REVISION: flow-v151-manual-company
+// REVISION: flow-v160-mini-rockets
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -2545,7 +2545,7 @@ test('the driver gives the scene its subagents in manual mode too: a held level,
   const d = new SceneDriver(readConfig({ style: 'surf', mode: 'manual', level: 4 }), a)
   a.roster.listed([{ id: 'ag1', status: 'running', type: 'Explore', description: 'map it' }])
   const f = d.dial()
-  expect(f.agents.map(x => x.id)).toEqual(['ag1'])
+  expect(f.agents?.map(x => x.id)).toEqual(['ag1'])
   expect(f.strength).toBe(4) // the level stays held
 })
 
