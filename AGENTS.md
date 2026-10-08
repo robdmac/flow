@@ -17,7 +17,8 @@ hooks/
   sound.ts           soundscapes: each scene's layers of clips and its events' clips, levels, small events synthesized (pure)
   sound-files.ts     every clip in sounds/ and each mood's bed gain (written by scripts/make-sounds.ts)
   scene.ts           SceneDriver: shared by both adapters (scene per style, level, dials, pace)
-  settings.ts        FlowConfig, the /flow grammar, every reply's wording (pure)
+  settings.ts        FlowConfig, the /flow grammar, every reply's wording, and `replyTo`: /flow's reply over a
+                     small FlowAdapter each adapter implements (keeping a change, a save, a reset its own way) (pure)
   sessions.ts        each session's own settings over the defaults: records, moving to another session, pruning (pure)
   activity.ts        how busy the agent is: work → level and tint (pure, unit-tested)
   agents.ts          the subagents one by one: Roster (polls + per-agent activity → the `agents` dial), hover card text (pure)
@@ -40,7 +41,8 @@ pi/
   ansi.ts mapping.ts types.ts
 sounds/              the soundscapes' clips (AAC), built by scripts/make-sounds.ts
 scripts/             Node tools, not part of the mod: new-scene, preview, check, cvd-check, sync-manifest, make-sounds,
-                     and scene-lab (what preview and check share: a scene built at a size and setting, warmed up)
+                     and scene-lab (what preview, check and cvd share: a scene built at a size and setting, warmed up,
+                     with companions, waiting, or over one of avalon's backdrops)
 types/index.d.ts     the mod's declarations: its `$.state` (the balloon's altitude, whether someone's at the session)
 tests/flow.test.ts   unit tests, plus some that need the mod engine
 package.json         the pi package ("pi": { "extensions": ["./pi/index.ts"] }) and the scripts
@@ -120,7 +122,8 @@ claude plugin validate .     # the module's rules, the manifests, the hooks
 claude plugin test .         # the tests, including those that need the engine
 npm install                  # once, for the scripts below (tsx)
 npm run preview -- <scene>   # print it here: levels 1/5/10, band and spine, day/night, each tint
-npm run check                # plugin.json in step, level 0 blank, colour pairs, timing; exits 1 on a problem
+npm run check                # plugin.json in step, level 0 blank, colour pairs, timing (with companions, waiting, and
+                             # over each of avalon's suns and nebulae); exits 1 on a problem
 npm run cvd -- [scene]       # how far apart the tints look to colour-blind eyes (and --sheets DIR for pictures)
 npm run sounds               # rebuild the soundscapes' clips (needs sox and ffmpeg)
 ```

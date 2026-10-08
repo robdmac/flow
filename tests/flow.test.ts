@@ -2334,18 +2334,29 @@ test('sessions: the defaults changing under a running session (another one\'s sa
   expect(seen.rows).toMatchObject({ 'flow.style': 'fire', 'flow.sound': 'off' })
 })
 
-test('pi: two sessions on one flow.json: B saves, then A changes and saves exactly what it shows', async () => {
-  let json: Record<string, unknown> = {}
-  const file = {
-    load: async () => readConfig(json),
-    save: async (changes: Own) => {
-      json = { ...json, ...storedOwn(changes) }
+/** flow.json in memory, as PiSettings reads and writes it (`disk.json`: what it holds). */
+function flowJson() {
+  const disk = {
+    json: {} as Record<string, unknown>,
+    file: {
+      load: async () => readConfig(disk.json),
+      save: async (changes: Own) => {
+        disk.json = { ...disk.json, ...storedOwn(changes) }
+      },
     },
   }
-  const sessionOf = (): SessionEntries & { entries: PiSessionEntry[] } => {
-    const entries: PiSessionEntry[] = []
-    return { entries, branch: () => entries, keep: data => void entries.push({ type: 'custom', id: String(entries.length), customType: 'flow', data }) }
-  }
+  return disk
+}
+
+/** A pi session's entries, in memory. */
+function piSession(): SessionEntries & { entries: PiSessionEntry[] } {
+  const entries: PiSessionEntry[] = []
+  return { entries, branch: () => entries, keep: data => void entries.push({ type: 'custom', id: String(entries.length), customType: 'flow', data }) }
+}
+
+test('pi: two sessions on one flow.json: B saves, then A changes and saves exactly what it shows', async () => {
+  const disk = flowJson()
+  const file = disk.file
   /** `/flow <args>` as the adapter runs it: flow.json read afresh first. */
   const run = async (s: PiSettings, entries: SessionEntries, args: string) => {
     await s.refresh(entries)
@@ -2354,24 +2365,24 @@ test('pi: two sessions on one flow.json: B saves, then A changes and saves exact
     if (cmd.kind === 'reset') return s.reset(entries)
     return s.change(changesFor(cmd, s.cfg) ?? {}, entries)
   }
-  const sa = sessionOf()
-  const sb = sessionOf()
+  const sa = piSession()
+  const sb = piSession()
   const a = new PiSettings(readConfig(undefined), file)
   const b = new PiSettings(readConfig(undefined), file)
   await a.open(sa)
   await b.open(sb)
   await run(b, sb, 'surf')
   expect(await run(b, sb, 'save')).toBe('saved as your default: new sessions start with surf')
-  expect(json.style).toBe('surf')
+  expect(disk.json.style).toBe('surf')
   expect(a.cfg.style).toBe('fire')
   await run(a, sa, 'night')
   expect(await run(a, sa, 'save')).toBe('saved as your default: new sessions start with fire, night')
-  expect(json).toMatchObject({ style: 'fire', time: 'night' })
+  expect(disk.json).toMatchObject({ style: 'fire', time: 'night' })
   expect(a.cfg).toMatchObject({ style: 'fire', time: 'night' })
   expect(ownInSession(sa.entries)).toEqual({})
   // A new session, and A resumed: exactly as A shows.
   const c = new PiSettings(readConfig(undefined), file)
-  await c.open(sessionOf())
+  await c.open(piSession())
   expect(c.cfg).toEqual(a.cfg)
   const a2 = new PiSettings(readConfig(undefined), file)
   await a2.open(sa)
@@ -2386,23 +2397,14 @@ test('pi: two sessions on one flow.json: B saves, then A changes and saves exact
   const old = new PiSettings(readConfig(undefined), file)
   await old.open(undefined)
   await old.change({ style: 'ski' }, undefined)
-  expect(json.style).toBe('ski')
+  expect(disk.json.style).toBe('ski')
 })
 
 test("pi: the volume is a session's own too: /flow sound 4 in one leaves the other, and flow.json, as they were", async () => {
-  let json: Record<string, unknown> = {}
-  const file = {
-    load: async () => readConfig(json),
-    save: async (changes: Own) => {
-      json = { ...json, ...storedOwn(changes) }
-    },
-  }
-  const sessionOf = (): SessionEntries & { entries: PiSessionEntry[] } => {
-    const entries: PiSessionEntry[] = []
-    return { entries, branch: () => entries, keep: data => void entries.push({ type: 'custom', id: String(entries.length), customType: 'flow', data }) }
-  }
-  const sa = sessionOf()
-  const sb = sessionOf()
+  const disk = flowJson()
+  const file = disk.file
+  const sa = piSession()
+  const sb = piSession()
   const a = new PiSettings(readConfig(undefined), file)
   const b = new PiSettings(readConfig(undefined), file)
   await a.open(sa)
@@ -2411,14 +2413,14 @@ test("pi: the volume is a session's own too: /flow sound 4 in one leaves the oth
   expect(a.cfg).toMatchObject({ sound: 'on', volume: 4 })
   expect(ownInSession(sa.entries)).toEqual({ sound: 'on', volume: 4 })
   expect(b.cfg).toMatchObject({ sound: 'off', volume: 7 })
-  expect(json).toEqual({})
+  expect(disk.json).toEqual({})
   // Resumed: its own volume back.
   const a2 = new PiSettings(readConfig(undefined), file)
   await a2.open(sa)
   expect(a2.cfg.volume).toBe(4)
   // Saved: flow.json's; B shows what it showed (its own now) until it's reset.
   expect((await a.save(sa)).text).toBe('saved as your default: new sessions start with sound on, volume 4/10')
-  expect(json).toMatchObject({ sound: 'on', volume: 4 })
+  expect(disk.json).toMatchObject({ sound: 'on', volume: 4 })
   await b.refresh(sb)
   expect(b.cfg).toMatchObject({ sound: 'off', volume: 7 })
   expect(b.reset(sb)).toBe('back to your default: sound on, volume 4/10')
