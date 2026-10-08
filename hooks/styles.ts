@@ -1,4 +1,4 @@
-// REVISION: flow-v143-fire-crew
+// REVISION: flow-v170-dry-scenes
 //
 // The scenes, all driven by the same dials (strength 0..10, coverage boost,
 // the agents one by one, tint, night, waiting): SCENES, the one list of them (each scene file exports its
@@ -16,7 +16,7 @@
 import type { AgentDial } from './agents'
 import { Crew, type AgentMark, type Mate } from './crew'
 import { AsciiFire, colorFor, glyphFor, params, SMOKE_TIPS } from './fire'
-import { Cells, Rng } from './cells'
+import { Cells, freshSeed, Rng } from './cells'
 export type { Cells }
 import { heatColor, smokeColor } from './fire-palette'
 import { BRAILLE, clamp, hash1, lowerBlock, mix } from './pixels'
@@ -72,7 +72,8 @@ function defOf(style: SceneName): SceneDef {
   return SCENES.find(d => d.name === style)!
 }
 
-export function makeScene(style: SceneName, seed?: number): Scene {
+/** A new scene; `seed` makes it repeatable (tests, previews), else each one made starts its own way. */
+export function makeScene(style: SceneName, seed = freshSeed()): Scene {
   return defOf(style).make(seed)
 }
 
@@ -170,9 +171,9 @@ class Ember implements Scene {
   private rows = 0
   private t = 0
 
-  constructor(seed?: number) {
+  constructor(seed = freshSeed()) {
     this.core = new AsciiFire(seed)
-    this.rng = new Rng((seed ?? Date.now()) ^ 0x27d4eb2f)
+    this.rng = new Rng(seed ^ 0x27d4eb2f)
   }
 
   get strength(): number {

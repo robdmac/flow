@@ -1,13 +1,24 @@
-// REVISION: flow-v103-sound
+// REVISION: flow-v170-dry-scenes
 //
 // Shared by the styles: a small PRNG and the cell grid every harness draws
 // from (packed for Claude Code's Raster, rendered as ANSI lines for pi).
+
+let seeds = 0
+
+/**
+ * A seed for something made without one: a counter, scattered. The mod's
+ * sandbox has no clock to seed from, and every scene a process makes still
+ * starts its own way.
+ */
+export function freshSeed(): number {
+  return Math.imul(++seeds, 0x9e3779b9) >>> 1
+}
 
 /** xorshift32: only the flicker depends on it. */
 export class Rng {
   private s: number
 
-  constructor(seed = Date.now()) {
+  constructor(seed = freshSeed()) {
     this.s = (seed | 1) >>> 0 || 0x9e3779b9
   }
 

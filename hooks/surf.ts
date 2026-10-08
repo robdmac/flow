@@ -1,4 +1,4 @@
-// REVISION: flow-v142-surf-riders
+// REVISION: flow-v170-dry-scenes
 //
 // Surf (the `surf` style): a surfer and the ocean on the same dials as the
 // fire; the level is the swell. At 1 the sea is glassy under a dawn sky and
@@ -37,7 +37,7 @@
 // sight. While the whole scene waits on you, they sit up with the surfer.
 
 import type { AgentDial } from './agents'
-import { Cells, Rng, isTall } from './cells'
+import { Cells, freshSeed, Rng, isTall } from './cells'
 import { Crew, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
 import { MOON, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
@@ -307,8 +307,8 @@ export class Surf {
   private gulls: { x: number; y: number; ph: number; v: number }[] = []
   private clouds: { x: number; y: number; w: number; h: number }[] = []
 
-  constructor(seed?: number) {
-    this.seed = (seed ?? Date.now()) % 100_000
+  constructor(seed = freshSeed()) {
+    this.seed = seed % 100_000
     this.rng = new Rng(this.seed + 17)
   }
 

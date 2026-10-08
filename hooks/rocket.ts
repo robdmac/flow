@@ -1,4 +1,4 @@
-// REVISION: flow-v162-spine-minis
+// REVISION: flow-v170-dry-scenes
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -67,7 +67,7 @@
 // and the whole view breathes in sepia (waiting.ts).
 
 import type { AgentDial } from './agents'
-import { type Cells, DEFAULT_COLOR, Rng } from './cells'
+import { type Cells, DEFAULT_COLOR, freshSeed, Rng } from './cells'
 import { Crew, type AgentMark, type Mate } from './crew'
 import { layered, snap } from './clouds/layered'
 import { STAR, STAR_DIM } from './night'
@@ -839,9 +839,9 @@ abstract class LaunchSite extends SkyWorld {
   private padL = 0
   private padR = 0
 
-  constructor(seed?: number) {
+  constructor(seed = freshSeed()) {
     super(seed)
-    this.rng = new Rng((seed ?? Date.now()) * 2654435761)
+    this.rng = new Rng(seed * 2654435761)
   }
 
   override ensure(columns: number, rows: number): void {

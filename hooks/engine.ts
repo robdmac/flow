@@ -1,4 +1,4 @@
-// REVISION: flow-v127-crew-room
+// REVISION: flow-v170-dry-scenes
 //
 // Engine (the `engine` style): a Victorian steam engine room on the same dials
 // as the fire; the level is how hard it is being driven. At 1 it stands cold,
@@ -35,7 +35,7 @@
 // breath, the whole room breathing in sepia (waiting.ts).
 
 import type { AgentDial } from './agents'
-import { Cells, DEFAULT_COLOR, Rng, isTall } from './cells'
+import { Cells, DEFAULT_COLOR, freshSeed, Rng, isTall } from './cells'
 import { Crew, type AgentMark } from './crew'
 import type { Tint } from './styles'
 import { BRAILLE, clamp01, dist, mix, QUAD } from './pixels'
@@ -234,8 +234,8 @@ export class Engine {
   private boilerTop = 0
   private boilerBottom = 0
 
-  constructor(seed?: number) {
-    this.seed = (seed ?? Date.now()) >>> 0
+  constructor(seed = freshSeed()) {
+    this.seed = seed >>> 0
     this.rng = new Rng(seed)
   }
 

@@ -1,4 +1,4 @@
-// REVISION: flow-v140-mini-balloons
+// REVISION: flow-v170-dry-scenes
 //
 // The world the balloon and the rockets fly through, on the fire's dials: the
 // level is a target altitude, eased toward, and the world scrolls past the
@@ -22,7 +22,7 @@
 // person the vehicle holds where it is (the balloon hovers, its climb easing
 // off) and the whole sky breathes in sepia (waiting.ts).
 
-import { Cells, DEFAULT_COLOR } from './cells'
+import { Cells, DEFAULT_COLOR, freshSeed } from './cells'
 import { layered, snap } from './clouds/layered'
 import type { Tint } from './styles'
 import { MOON, MOON_ACROSS, MOON_ROW, NIGHT_HORIZON, NIGHT_ZENITH, STAR, STAR_DIM } from './night'
@@ -138,8 +138,8 @@ export abstract class SkyWorld {
   protected alt = 0
   protected t = 0
 
-  constructor(seed?: number) {
-    this.t = (seed ?? Date.now()) % 10_000
+  constructor(seed = freshSeed()) {
+    this.t = seed % 10_000
   }
 
   /** The vehicle's height in rows on this grid (it may differ by layout). */

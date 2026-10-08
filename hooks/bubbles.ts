@@ -1,4 +1,4 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v170-dry-scenes
 //
 // Bubbles (the `bubbles` style): a glass of fizz on the same dials as the
 // fire; the level is the fizz. At 1 a couple of airstones let lazy bubbles
@@ -20,7 +20,7 @@
 // creamy line of head at the top. While Claude waits on the person it settles
 // to a few slow strings, the whole glass breathing in sepia (waiting.ts).
 
-import { Cells, Rng } from './cells'
+import { Cells, freshSeed, Rng } from './cells'
 import type { SoundEvent } from './sound'
 import type { Tint } from './styles'
 import { BRAILLE, clamp, hash1, mix } from './pixels'
@@ -114,9 +114,9 @@ export class Bubbles {
   /** What lit each cell's brightest dot: 0 bubble, 1 surface, 2 silt. */
   private kind = new Uint8Array(0)
 
-  constructor(seed?: number) {
+  constructor(seed = freshSeed()) {
     this.rng = new Rng(seed)
-    this.seedN = (seed ?? 0) | 0
+    this.seedN = seed | 0
   }
 
   ensure(columns: number, rows: number): void {

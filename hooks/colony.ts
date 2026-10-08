@@ -1,4 +1,4 @@
-// REVISION: flow-v147-slim-probes
+// REVISION: flow-v170-dry-scenes
 //
 // A colony ship on the same dials as the fire: the level is its speed. A
 // long ship like the Avalon holds steady (nose to the right in the band,
@@ -55,7 +55,7 @@
 // glyphs; the bare spine, the shield, rocks and embers are braille dots.
 
 import type { AgentDial } from './agents'
-import { Cells, DEFAULT_COLOR, Rng, isTall } from './cells'
+import { Cells, DEFAULT_COLOR, freshSeed, Rng, isTall } from './cells'
 import { Crew, smooth, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
 import { BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, NEAR, noise2, QUAD, type QuadFit } from './pixels'
@@ -293,9 +293,9 @@ export class Colony {
   private sa = 0
   private sc = 0
 
-  constructor(seed?: number) {
+  constructor(seed = freshSeed()) {
     this.rng = new Rng(seed)
-    this.seedBase = (seed ?? this.rng.int()) % 100_000
+    this.seedBase = seed % 100_000
     this.voyage = new Rng(this.seedBase * 7919 + 17)
     this.gapLeft = this.between(VOYAGE.first)
   }

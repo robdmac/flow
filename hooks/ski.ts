@@ -1,4 +1,4 @@
-// REVISION: flow-v150-review-fixes
+// REVISION: flow-v170-dry-scenes
 //
 // A skier on a mountain, on the fire's dials: the level is the speed and the
 // steepness. At 1 the skier stands at the top of the run, poles planted,
@@ -35,7 +35,7 @@
 // breathing in sepia (waiting.ts).
 
 import type { AgentDial } from './agents'
-import { Cells, DEFAULT_COLOR, Rng, isTall } from './cells'
+import { Cells, DEFAULT_COLOR, freshSeed, Rng, isTall } from './cells'
 import { Crew, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
 import { MOON, moonCover, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
@@ -381,8 +381,8 @@ export class Ski {
 
   private skiers: Skier[] = []
 
-  constructor(seed?: number) {
-    this.seed = (seed ?? Date.now()) % 100_000
+  constructor(seed = freshSeed()) {
+    this.seed = seed % 100_000
     this.rng = new Rng(this.seed * 2654435761 + 7)
     const offs = [0, 2.2, 4.1, 1.1, 3.3]
     const anchors = [0.28, 0.52, 0.12, 0.7, 0.86]
