@@ -848,8 +848,12 @@ export const register: Register = (on, options) => {
    */
   const desktopSites = new Map<string, { columns: number; rows: number; at: number }>()
   const desktopSite = () => {
-    for (const [id, site] of desktopSites) if (ticks - site.at > DESKTOP_STALE_TICKS) desktopSites.delete(id)
-    return [...desktopSites.values()].at(-1)
+    let newest: { columns: number; rows: number; at: number } | undefined
+    for (const [id, site] of desktopSites) {
+      if (ticks - site.at > DESKTOP_STALE_TICKS) desktopSites.delete(id)
+      else newest = site
+    }
+    return newest
   }
   /**
    * Desktop's redraws: the frame loop steps desktop's scene (`steps`), and a
@@ -1099,6 +1103,8 @@ export const register: Register = (on, options) => {
           if (!retrying && take !== undefined && sound.takes.get(take) === stop) sound.takes.delete(take)
         })
     }
+    /** What the scene on show has to be heard this frame (one array, emptied each frame). */
+    const events: SoundEvent[] = []
     /** What the bed's planner is told each heard frame (one object, its fields set afresh). */
     const mood: SoundMood = { scene: '', level: 0, tint: 'normal', night: false, amb: {}, volume: cfg.volume }
 
@@ -1117,7 +1123,7 @@ export const register: Register = (on, options) => {
       // A wait on the person beginning: a soft chime (once a wait; not for one right behind another).
       const chime = chimeStep(sound.chime, driver.waiting(), sound.clock)
       const shownScene = site ? driver.scene : deskSite ? desktopDriver.scene : undefined
-      const events: SoundEvent[] = []
+      events.length = 0
       for (const sc of [driver.scene, desktopDriver.scene]) {
         if (!sc.sounds) continue
         if (heard && sc === shownScene) events.push(...sc.sounds)
