@@ -466,6 +466,9 @@ function agentCards(
   })
 }
 
+/** A desktop site's frame: its Svg, where its companions are, and their agents (for the hover cards). */
+type DesktopFrame = { svg: { source: string; alt: string; width: number; height: number }; marks: readonly AgentMark[] | undefined; dials: readonly AgentDial[] }
+
 /** What `/flow` needs of the loaded module. */
 export type SceneCtx = {
   driver: SceneDriver
@@ -819,12 +822,28 @@ export const register: Register = (on, options) => {
     return [...desktopSites.values()].at(-1)
   }
   /**
+   * Desktop's redraws: the frame loop steps desktop's scene (`steps`), and a
+   * redraw is asked for once something has stepped (`dirty`: the scene, or the
+   * picker's thumbnails), at most once a DESKTOP_MS (`wait`: ms since the last).
+   * Each site's frame is drawn once a step, and kept for every render till the next.
+   */
+  const desk = {
+    steps: 0,
+    dirty: false,
+    wait: 0,
+    frames: new Map<string, { key: string; frame: DesktopFrame }>(),
+  }
+  /**
    * A desktop site's frame: the scene at its size, as one Svg sized to its
    * cells, and where its companions are (for their agents' hover cards).
    */
-  const desktopSvg = (requestId: string, columns: number, rows: number) => {
+  const desktopSvg = (requestId: string, columns: number, rows: number): DesktopFrame => {
     desktopSites.delete(requestId) // re-added last: the newest site steps the scene
     desktopSites.set(requestId, { columns, rows, at: ticks })
+    // (Drawn and encoded once a step: a render asked for by anything else reuses it.)
+    const key = `${columns}x${rows}@${desk.steps}:${cfg.style}`
+    const kept = desk.frames.get(requestId)
+    if (kept?.key === key) return kept.frame
     const scene = desktopDriver.dial()
     scene.ensure(columns, rows)
     const svg = {
@@ -835,7 +854,9 @@ export const register: Register = (on, options) => {
     }
     // A scene with companions is always drawn under a Box (so one arriving doesn't remount the Svg).
     const marks = scene.agentMarks?.()
-    return { svg, marks, dials: marks?.length ? (scene.agents ?? []) : [] }
+    const frame = { svg, marks, dials: marks?.length ? (scene.agents ?? []) : [] }
+    desk.frames.set(requestId, { key, frame })
+    return frame
   }
 
   /**
@@ -858,6 +879,9 @@ export const register: Register = (on, options) => {
     /** The step the last thumbnails' blits went out on, -1 once they're all in. */
     blitAt: -1,
     deskAt: -1,
+    /** How many times desktop's thumbnails have stepped, and each one's Svg source as last drawn (at which step and size). */
+    deskSteps: 0,
+    svgs: new Map<SceneName, { key: string; source: string }>(),
     /** Seated beside the transcript (sharing the dock with the spine) when last drawn in the terminal. */
     docked: false,
     steps: 0,
@@ -879,8 +903,11 @@ export const register: Register = (on, options) => {
     pick.timer = undefined
     pick.term.clear()
     pick.desk.clear()
+    pick.svgs.clear()
     return docked
   }
+  /** Whether the picker's timer is redrawing desktop's thumbnails (it asks for desktop's redraws then, the scene's with them). */
+  const pickerDrawsDesktop = () => pick.timer !== undefined && pick.deskAt >= 0 && pick.steps - pick.deskAt <= PICK_DESKTOP_STALE && pick.desk.isBuilt
 
   /** Apply a change here at once and redraw from scratch (the caller invalidates). */
   const applyLocal = (changes: Partial<FlowConfig>) => {
@@ -995,14 +1022,14 @@ export const register: Register = (on, options) => {
       ticks++
       activity.tick(elapsed / FRAME_MS)
       const site = mounted
-      const desk = desktopSite()
+      const deskSite = desktopSite()
       // The soundscape, while the scene is on screen: beds crossfading one
       // into the next, and what happens on screen heard as it happens.
       sound.clock += elapsed
-      const heard = !sound.over && sound.present && cfg.sound === 'on' && (site || desk) && driver.isShown()
+      const heard = !sound.over && sound.present && cfg.sound === 'on' && (site || deskSite) && driver.isShown()
       // A wait on the person beginning: a soft chime (once a wait; not for one right behind another).
       const chime = chimeStep(sound.chime, driver.waiting(), sound.clock)
-      const shownScene = site ? driver.scene : desk ? desktopDriver.scene : undefined
+      const shownScene = site ? driver.scene : deskSite ? desktopDriver.scene : undefined
       const events: SoundEvent[] = []
       for (const sc of [driver.scene, desktopDriver.scene]) {
         if (!sc.sounds) continue
@@ -1107,7 +1134,7 @@ export const register: Register = (on, options) => {
       // Every second or so, while it's the balloon, note its altitude if it moved, so a /config change made
       // from the menu (a reload) resumes it too.
       if (ticks % 15 === 0 && cfg.style === 'balloon') {
-        const b = (site || !desk ? driver : desktopDriver).scene
+        const b = (site || !deskSite ? driver : desktopDriver).scene
         if (b instanceof Balloon && Math.abs(b.altitude - keptAltitude) > 0.5) {
           keptAltitude = b.altitude
           void keepAltitude($, b.altitude)
@@ -1129,14 +1156,23 @@ export const register: Register = (on, options) => {
           }
         }
       }
-      if (desk) {
-        // Desktop steps its own scene here and redraws its Svg.
+      if (deskSite) {
+        // Desktop steps its own scene here; its render draws the Svg, once a step.
         const scene = desktopDriver.dial()
-        scene.ensure(desk.columns, desk.rows)
+        scene.ensure(deskSite.columns, deskSite.rows)
         scene.step()
-        $.ui.invalidate('ui.render')
-        if (!site) return Math.max(DESKTOP_MS, desktopDriver.pace())
+        desk.steps++
+        desk.dirty = true
       }
+      // A redraw once a DESKTOP_MS on the average, not every frame (the picker's timer asks for them while it
+      // draws there). (Due within half a frame: frames that don't divide it evenly still keep the pace.)
+      desk.wait = Math.min(desk.wait + elapsed, 2 * DESKTOP_MS)
+      if (desk.dirty && desk.wait >= DESKTOP_MS - FRAME_MS / 2 && !pickerDrawsDesktop()) {
+        desk.dirty = false
+        desk.wait -= DESKTOP_MS
+        $.ui.invalidate('ui.render')
+      }
+      if (deskSite && !site) return Math.max(DESKTOP_MS, desktopDriver.pace())
       if (!site) return HIDDEN_MS
       const scene = driver.dial()
       const pace = driver.pace()
@@ -1213,10 +1249,13 @@ export const register: Register = (on, options) => {
             }
           }
         }
-        // Desktop's: stepped here, redrawn as Svgs by its render.
-        if (pick.deskAt >= 0 && pick.steps - pick.deskAt <= PICK_DESKTOP_STALE && pick.desk.isBuilt) {
+        // Desktop's: stepped here, redrawn as Svgs by its render (one redraw a step: the scene's with it).
+        if (pickerDrawsDesktop()) {
           pick.desk.night = night
           pick.desk.step()
+          pick.deskSteps++
+          desk.dirty = false
+          desk.wait = 0
           $.ui.invalidate('ui.render')
         }
       })
@@ -1598,10 +1637,16 @@ export const register: Register = (on, options) => {
       pick.desk.ensure(layout.columns, layout.rows)
       pick.deskAt = pick.steps
       const { Svg } = $.ui.resolve(e)
+      // (Each thumbnail drawn and encoded once a step: a render asked for by anything else reuses it.)
+      const key = `${layout.columns}x${layout.rows}@${pick.deskSteps}:${pick.desk.night}`
       picture = name => {
-        const grid = pick.desk.grid(name)
-        if (!grid) return null
-        return <Svg source={frameSvg(grid)} alt={`flow: ${name}`} width={layout.columns * DESKTOP_CELL_W} height={layout.rows * DESKTOP_CELL_H} />
+        let kept = pick.svgs.get(name)
+        if (kept?.key !== key) {
+          const grid = pick.desk.grid(name)
+          if (!grid) return null
+          pick.svgs.set(name, (kept = { key, source: frameSvg(grid) }))
+        }
+        return <Svg source={kept.source} alt={`flow: ${name}`} width={layout.columns * DESKTOP_CELL_W} height={layout.rows * DESKTOP_CELL_H} />
       }
     } else if (e.surface === 'terminal') pick.mounted = false
 

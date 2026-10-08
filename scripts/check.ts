@@ -1,11 +1,11 @@
-// REVISION: flow-v127-agents
+// REVISION: flow-v150-review-fixes
 //
 // What every scene must hold to (AGENTS.md), measured: plugin.json lists
 // the scenes in SCENES, hooks/sound-files.ts lists the clips in sounds/,
 // level 0 draws nothing, a frame has at most 1024 colour pairs, and
 // step() + grid() takes under ~2 ms at the band's and the spine's sizes
-// (with subagents' companions too). Exits 1 on any failure. Not part of the
-// mod (Node).
+// (with subagents' companions too, working and waiting on the person: the
+// slower is shown). Exits 1 on any failure. Not part of the mod (Node).
 //
 //   npm run check                every scene
 //   npm run check -- surf ski    just these
@@ -84,15 +84,20 @@ for (const scene of scenesFrom(process.argv.slice(2))) {
       }
     }
   }
+  // (Working at 10, and waiting on the person, its sepia over every cell: the slower of the two.)
   const ms = TIMED.map(([columns, rows]) => {
-    const f = build(scene, columns, rows, { level: 10, night: false, tint: 'normal', agents: true }, 60)
-    const n = 200
-    const t0 = performance.now()
-    for (let i = 0; i < n; i++) {
-      f.step()
-      f.grid()
+    let worst = 0
+    for (const waiting of [false, true]) {
+      const f = build(scene, columns, rows, { level: 10, night: false, tint: 'normal', agents: true, waiting }, 60)
+      const n = 200
+      const t0 = performance.now()
+      for (let i = 0; i < n; i++) {
+        f.step()
+        f.grid()
+      }
+      worst = Math.max(worst, (performance.now() - t0) / n)
     }
-    return (performance.now() - t0) / n
+    return worst
   })
   console.log(`${scene.padEnd(10)} ${String(most).padStart(10)}   ${ms.map(m => m.toFixed(2).padStart(11)).join('   ')}`)
   if (most > MAX_PAIRS) bad(`${scene}: ${most} colour pairs (at ${where}); Raster paints ${MAX_PAIRS}, quantize the gradients`)

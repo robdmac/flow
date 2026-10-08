@@ -1,4 +1,4 @@
-// REVISION: flow-v134-softer-breath
+// REVISION: flow-v150-review-fixes
 //
 // The shared wait: how every scene looks while Claude waits on the person (a
 // permission to grant, a question to answer, a plan to approve). The work
@@ -87,7 +87,8 @@ export function waitTone(out: Cells, k: number, t: number, amount = SEPIA_AMOUNT
     const bg = out.background(i)
     if (fg === DEFAULT_COLOR && bg === DEFAULT_COLOR) continue
     const lamp = lamps ? lamps[i]! : -1
-    const tone = (c: number) => (c === lamp ? waitColor(c, k, lift, 0) : waitColor(c, k, lift, amount, glow))
-    out.set(i, out.codePoint(i), tone(fg), tone(bg))
+    const f = fg === lamp ? waitColor(fg, k, lift, 0) : waitColor(fg, k, lift, amount, glow)
+    const b = bg === lamp ? waitColor(bg, k, lift, 0) : waitColor(bg, k, lift, amount, glow)
+    out.set(i, out.codePoint(i), f, b)
   }
 }

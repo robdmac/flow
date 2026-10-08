@@ -1,4 +1,4 @@
-// REVISION: flow-v146-mini-balloons
+// REVISION: flow-v150-review-fixes
 //
 // A scene's companions: one for each running subagent (the `agents` dial,
 // agents.ts), so a glance tells you which are busy, which have gone quiet or
@@ -81,6 +81,8 @@ export class Crew {
   readonly marks: AgentMark[] = []
   /** How many slots the scene's layout can show now (at most `capacity`): only these are given. */
   room: number
+  /** This frame's agents by id (kept between frames, refilled each). */
+  private readonly byId = new Map<string, AgentDial>()
 
   /**
    * @param capacity the most companions the scene has room for
@@ -98,7 +100,8 @@ export class Crew {
   /** Once a frame: who's about now. `coverageBoost` stands in when an adapter gives no list. */
   update(agents: readonly AgentDial[] | undefined, coverageBoost = 0): void {
     const list = agents && agents.length ? agents : anonymous(coverageBoost)
-    const byId = new Map<string, AgentDial>()
+    const byId = this.byId
+    byId.clear()
     for (const a of list) byId.set(a.id, a)
     for (const m of this.mates) {
       const a = byId.get(m.id)
