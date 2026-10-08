@@ -1,4 +1,4 @@
-// REVISION: flow-v125-crew-room
+// REVISION: flow-v139-probes
 //
 // A scene's companions: one for each running subagent (the `agents` dial,
 // agents.ts), so a glance tells you which are busy, which have gone quiet or
@@ -71,7 +71,8 @@ export function seedOf(id: string): number {
   return (h >>> 0) / 0x100000000
 }
 
-const smooth = (p: number) => p * p * (3 - 2 * p)
+/** Smoothstep on 0..1: how `here` eases from `p`; a scene can ease its own steps of an arrival with it. */
+export const smooth = (p: number) => p * p * (3 - 2 * p)
 
 export class Crew {
   /** Every companion on screen, arriving, here or leaving, in the order they came. */

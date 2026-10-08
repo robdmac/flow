@@ -1,4 +1,4 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v139-probes
 //
 // A colony ship on the same dials as the fire: the level is its speed. A
 // long ship like the Avalon holds steady (nose to the right in the band,
@@ -15,11 +15,25 @@
 // shield is faint. As the level climbs the stars stretch into streaks and
 // the rocks come thicker and faster; by 10 the stars blur past, the plume
 // burns long and impacts keep the shield lit. Subagents light more of the
-// habitat windows; smoke dims the engine to gray, coughs puffs out behind
-// it, and leaves the shield flickering weakly; a nearly-full context turns
-// the shield a hard-glowing cyan and the stars a deep blue. While Claude waits on
-// the person the ship comes to a stop among still stars, breathing in sepia
-// (waiting.ts).
+// habitat windows, and each one flies a probe of its own (below); smoke
+// dims the engine to gray, coughs puffs out behind it, leaves the shield
+// flickering weakly and makes the probes' drives misfire gray; a
+// nearly-full context turns the shield a hard-glowing cyan and the stars a
+// deep blue. While Claude waits on the person the ship comes to a stop among
+// still stars, breathing in sepia (waiting.ts).
+//
+// Each subagent's probe is a little craft like the Hail Mary's Beetles, in its
+// own hull color with its own bright drive (crew.ts; four at most, two up by
+// the bow and two along the habitat, on the band's top and bottom rows or
+// either side of the spine): it's launched from a bay at the habitat's aft
+// hub (the hatch glowing in its drive's color as it slides out sideways from
+// behind the hull, then flies up to its station), holds station beside the
+// ship on a flickering burn while its agent works, cuts
+// its drive and falls back along the ship while it's quiet (a running light
+// blinking slowly; an amber beacon flashing, a light through the waiting
+// sepia, while it waits on you), and when its agent is done turns about and
+// burns away aft, off toward home; if it failed, its drive goes dead and it
+// tumbles away dark, out of the lane.
 //
 // Everything is placed in a flight frame (a = along the direction of
 // travel, c = across it, both in braille dots: square, two a cell across and
@@ -27,7 +41,9 @@
 // spine share every rule. The hull is a pixel layer folded into quadrant
 // glyphs; the bare spine, the shield, rocks and embers are braille dots.
 
+import type { AgentDial } from './agents'
 import { Cells, DEFAULT_COLOR, Rng, isTall } from './cells'
+import { Crew, smooth, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
 import { BRAILLE, clamp, fitQuad, g, hash1 as hash, mix, NEAR, QUAD, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
@@ -72,6 +88,40 @@ const C = {
   starBlue: [0x1c4f9c, 0x2d7fe0, 0x86c4ff] as const,
 }
 
+/** Probes for subagents, at most: the Beetles, four of them. */
+const PROBES = 4
+/** Each probe's hull and its drive's glow, by slot; and what every one shares. */
+const PROBE = {
+  hull: [0xf0903c, 0x36c4b0, 0xa47cff, 0xb4dc4c] as const,
+  drive: [0xffd27a, 0x8cf2ff, 0xf0b4ff, 0xe6ff8c] as const,
+  nozzle: 0x4e545c,
+  dead: 0x4a4d52,
+  light: 0xffffff,
+  beacon: 0xffb020,
+}
+
+/** A probe's pixel kinds: nozzle (its drive's glow trails from it), hull, the hull's lit side, nose. */
+const PK = { nozzle: 1, hull: 2, light: 3, nose: 4 } as const
+/**
+ * A probe's pixels as (along, across, kind) triples, nose toward +along,
+ * from a picture: the band's (pixels twice as tall as wide) drawn as it
+ * flies, rear on the left; the spine's nose up, rear at the bottom.
+ */
+function sprite(rows: readonly string[], tall: boolean): Int8Array {
+  const kinds: Record<string, number> = { Z: PK.nozzle, H: PK.hull, L: PK.light, N: PK.nose }
+  const out: number[] = []
+  rows.forEach((row, r) =>
+    [...row].forEach((ch, col) => {
+      if (kinds[ch]) out.push(tall ? 1 - r : col - 2, tall ? col - 2 : r - 1, kinds[ch]!)
+    }),
+  )
+  return Int8Array.from(out)
+}
+/** The band's probe: a stubby craft, 2½ cells long, one row tall. */
+const PROBE_WIDE = sprite(['ZLLLN', 'ZHHHN'], false)
+/** The spine's: two cells across, two rows tall, a rounded nose and its drive below. */
+const PROBE_TALL = sprite(['.NN.', 'HLLH', 'HHHH', '.ZZ.'], true)
+
 /** Rock radii in dots, smallest first. */
 const ROCK_R = [2.2, 3.8, 6.2] as const
 /** Draw order when a braille cell holds two things: the higher wins its color. */
@@ -115,6 +165,8 @@ type Geo = {
 export class Colony {
   strength = 8
   coverageBoost = 0
+  /** The subagents, one by one: each flies a probe. */
+  agents: readonly AgentDial[] = []
   sounds: SoundEvent[] = []
   tint: Tint = 'normal'
   /** Claude waits on the person: the ship comes to a stop. */
@@ -153,6 +205,21 @@ export class Colony {
   private spin = 0
   private q = [0, 0, 0, 0]
   private fit: QuadFit = { mask: 0, fg: 0, bg: 0, spread: 0 }
+  /** (A probe takes a while to launch: out of its bay, then up to its station.) */
+  private crew = new Crew(PROBES, 34)
+  // The probes' pixel layer, 2 × 2 a cell (0 = none), the pixel each cell must keep, and the cells it touches.
+  private probePx = new Int32Array(0)
+  private probeKeep = new Int8Array(0)
+  private probeCells = new Int32Array(0)
+  private probeCount = 0
+  /** Per cell: a light that shines through the waiting sepia (a probe's beacon); -1 none. */
+  private lamps = new Int32Array(0)
+  /** The bay's hatch, lit as a probe slides out: how brightly (0..1), and in its drive's color. */
+  private bayGlow = 0
+  private bayColor = 0
+  /** A probe's station, worked out by `station`. */
+  private sa = 0
+  private sc = 0
 
   constructor(seed?: number) {
     this.rng = new Rng(seed)
@@ -179,11 +246,19 @@ export class Colony {
     this.puff = new Int32Array(n)
     this.puffColor = new Int32Array(n)
     this.solid = new Uint8Array(n)
+    this.probePx = new Int32Array(n * 4)
+    this.probeKeep = new Int8Array(n).fill(-1)
+    this.probeCells = new Int32Array(n)
+    this.probeCount = 0
+    this.lamps = new Int32Array(n).fill(-1)
     this.rocks = []
     this.embers = []
     this.smoke = []
     this.hits = []
     this.geo = this.layout()
+    // Every probe fits beside the ship in both layouts. Placed afresh for this one.
+    this.crew.room = PROBES
+    for (const m of this.crew.mates) m.x = m.y = Number.NaN
     // u runs along the direction of travel, v across it; both in cells.
     const along = this.isVertical ? rows : columns
     const across = this.isVertical ? columns : rows
@@ -260,6 +335,7 @@ export class Colony {
     this.level += Math.abs(want - this.level) < 0.01 ? want - this.level : (want - this.level) * 0.05
     const speed = this.speed
     const along = this.isVertical ? this.rows : this.columns
+    this.crew.update(this.agents, this.coverageBoost)
     // Stars stream past the ship: leftward in the band (it flies right),
     // downward in the spine (it flies up).
     const dir = this.isVertical ? 1 : -1
@@ -275,6 +351,47 @@ export class Colony {
     this.hits = this.hits.filter(hit => hit.age < RIPPLE)
     this.stepRocks()
     this.stepMotes()
+    this.stepProbes()
+  }
+
+  agentMarks(): readonly AgentMark[] {
+    return this.strength > 0 ? this.crew.marks : []
+  }
+
+  /**
+   * Where a probe holds station (dots, into `sa`, `sc`): beside the ship, two
+   * up by the bow and two along the habitat, on the band's top and bottom
+   * rows or either side of the spine. Resting, drive off, it has fallen back
+   * along the ship (and, in the spine, out a little).
+   */
+  private station(m: Mate): void {
+    const { aS, aN, c0, Cd, R } = this.geo
+    const v = this.isVertical
+    const side = m.slot & 1 ? 1 : -1
+    const a = m.slot < 2 ? aN + (v ? 2 : 3) : aS + (aN - aS) * (v ? 0.32 : 0.4)
+    const c = v ? c0 + side * (R + 5) : side < 0 ? 2 : Cd - 2
+    const rest = 1 - m.busy
+    this.sa = a - (v ? 14 : 12) * rest
+    this.sc = clamp(c + (v ? side * 2 * rest : 0), 2, Cd - 2)
+  }
+
+  /** The probes ease toward their stations; the bay's hatch glows while one comes out of it. */
+  private stepProbes(): void {
+    this.bayGlow = 0
+    for (const m of this.crew.mates) {
+      this.station(m)
+      if (Number.isNaN(m.x)) {
+        m.x = this.sa
+        m.y = this.sc
+      } else {
+        m.x += (this.sa - m.x) * 0.05
+        m.y += (this.sc - m.y) * 0.05
+      }
+      if (!m.leaving && 1 - m.p > this.bayGlow) {
+        this.bayGlow = 1 - m.p
+        this.bayColor = PROBE.drive[m.slot % PROBES]!
+      }
+    }
   }
 
   /** Rocks: spawn at the leading edge (rarely at 1, every second or so at 10), drift in, burn up on the shield. */
@@ -434,8 +551,11 @@ export class Colony {
       else if (bg !== DEFAULT_COLOR) out.set(i, out.codePoint(i), out.foreground(i), bg)
     }
     this.drawFlashes(out)
+    // The probes go behind the ship: one sliding out of its bay shows only as it clears the hull.
+    this.lamps.fill(-1)
+    this.drawProbes(out)
     this.drawShip(out, level)
-    waitTone(out, this.kWait, this.t)
+    waitTone(out, this.kWait, this.t, undefined, this.lamps)
     return out
   }
 
@@ -639,7 +759,8 @@ export class Colony {
       // Hubs at both ends of the habitat, where the blades meet the spine.
       if ((s < geo.h0 + 2 || s >= geo.h1 - 2) && ad < geo.R * 0.4) {
         px.kind = K.hull
-        px.color = C.hub
+        // The aft hub's bay: its hatch lit while a probe comes out.
+        px.color = s < geo.h0 + 2 && this.bayGlow > 0.05 ? mix(C.hub, this.bayColor, Math.ceil(this.bayGlow * 3) / 3) : C.hub
         return
       }
       const twist = (TAU * 0.55) / (geo.h1 - geo.h0)
@@ -707,7 +828,6 @@ export class Colony {
     const y1 = Math.min(h - 1, Math.floor((vertical ? Hd - a0 : cHi) / 4))
     const px = { color: 0, kind: 0 }
     const q = this.q
-    const f = this.fit
     for (let row = y0; row <= y1; row++)
       for (let col = x0; col <= x1; col++) {
         const cell = row * w + col
@@ -734,21 +854,7 @@ export class Colony {
         }
         if (hull) {
           for (let p = 0; p < 4; p++) q[p] = this.pk[cell * 4 + p] ? this.pc[cell * 4 + p]! : 0
-          fitQuad(q, f, NEAR, keep)
-          if (f.spread === 0) {
-            out.set(cell, 0x2588, q[0]!)
-            continue
-          }
-          let mask = f.mask
-          let fg = f.fg
-          let bg = f.bg
-          if (fg === 0) {
-            // The empty pixels are the background: the hull is the glyph.
-            mask ^= 15
-            fg = bg
-            bg = 0
-          }
-          out.set(cell, QUAD[mask]!, fg, bg === 0 ? DEFAULT_COLOR : bg)
+          this.putQuad(out, cell, keep)
         } else if (spine) {
           // An open truss: two rails and a zigzag between them.
           let bits = 0
@@ -768,6 +874,162 @@ export class Colony {
           if (bits) out.set(cell, 0x2800 | bits, C.truss)
         }
       }
+  }
+
+  /** A cell's four pixels in `q` (0: none, the terminal's own color) folded into one quadrant glyph. */
+  private putQuad(out: Cells, cell: number, keep: number): void {
+    const q = this.q
+    const f = this.fit
+    fitQuad(q, f, NEAR, keep)
+    if (f.spread === 0) {
+      out.set(cell, 0x2588, q[0]!)
+      return
+    }
+    let mask = f.mask
+    let fg = f.fg
+    let bg = f.bg
+    if (fg === 0) {
+      // The empty pixels are the background: the drawing is the glyph.
+      mask ^= 15
+      fg = bg
+      bg = 0
+    }
+    out.set(cell, QUAD[mask]!, fg, bg === 0 ? DEFAULT_COLOR : bg)
+  }
+
+  /**
+   * The probes, each where its state has it: sliding out of the bay as it
+   * arrives, on station or fallen back, turned for home and burning away
+   * aft when its agent is done, or tumbling off dark when it failed.
+   */
+  private drawProbes(out: Cells): void {
+    this.crew.clearMarks()
+    const mates = this.crew.mates
+    if (mates.length === 0) return
+    const geo = this.geo
+    const t = this.t
+    const bayA = geo.aS + geo.h0 + 1
+    for (const m of mates) {
+      if (Number.isNaN(m.x)) continue
+      const side = m.slot & 1 ? 1 : -1
+      const away = 1 - m.here
+      // Holding station it bobs a little on its burn; coasting, it drifts slowly to and fro.
+      const phase = m.seed * TAU
+      let a = m.x + Math.sin(t * 0.08 + phase) * 0.7 * m.busy + Math.sin(t * 0.025 + phase) * 1.5 * (1 - m.busy)
+      let c = m.y
+      let turn = 0
+      let drive = m.busy
+      let dead = false
+      if (!m.leaving) {
+        if (away > 0) {
+          // Launched: out of the bay sideways, clear of the habitat, then up to its station under its own drive.
+          a = bayA + (a - bayA) * smooth(clamp((m.p - 0.35) / 0.65))
+          c = geo.c0 + (c - geo.c0) * smooth(clamp(m.p / 0.55))
+          drive = Math.max(drive, 0.6)
+        }
+      } else if (m.ok) {
+        // Done: turned about for home, burning hard aft till it's out of sight.
+        turn = 2
+        drive = 1
+        a -= away * away * (a + 18)
+      } else {
+        // Failed: its drive dead, it tumbles out of the lane into the dark.
+        dead = true
+        drive = 0
+        turn = ((t + m.slot * 3) >> 2) & 3
+        a -= away * 18
+        c += away * (side < 0 ? -(c + 12) : geo.Cd + 12 - c)
+      }
+      this.stampProbe(m, a, c, turn, drive, dead)
+    }
+    // Fold what they painted into glyphs, and clear the layer for the next frame.
+    const q = this.q
+    for (let k = 0; k < this.probeCount; k++) {
+      const cell = this.probeCells[k]!
+      for (let p = 0; p < 4; p++) {
+        q[p] = this.probePx[cell * 4 + p]!
+        this.probePx[cell * 4 + p] = 0
+      }
+      this.putQuad(out, cell, this.probeKeep[cell]!)
+      this.probeKeep[cell] = -1
+    }
+    this.probeCount = 0
+  }
+
+  /**
+   * One probe, centered at (a, c) in dots, its nose along the flight (turned
+   * a quarter at a time by `turn`): its sprite for the layout, the drive's
+   * glow trailing behind its nozzle while lit.
+   */
+  private stampProbe(m: Mate, a: number, c: number, turn: number, drive: number, dead: boolean): void {
+    const v = this.isVertical
+    // Pixels are 2 a cell each way: the band's run along x with the flight, the spine's up.
+    const x0 = Math.round(v ? c : a)
+    const y0 = Math.round((v ? this.rows * 4 - a : c) / 2)
+    // The nose's way and across it, in pixels, turned.
+    let ux = v ? 0 : 1
+    let uy = v ? -1 : 0
+    for (let k = 0; k < turn; k++) {
+      const tx = ux
+      ux = -uy
+      uy = tx
+    }
+    const bx = -uy
+    const by = ux
+    const slot = m.slot % PROBES
+    const smoke = this.tint === 'smoke'
+    const flick = hash(this.seedBase + this.t * 7 + slot * 131)
+    // Smoke: its drive misfires and burns grey, like the ship's.
+    const lit = !dead && !(smoke && flick < 0.3) && drive > 0.3
+    const glow = smoke ? C.plumeSmoke[0] : PROBE.drive[slot]!
+    const hull = dead ? PROBE.dead : PROBE.hull[slot]!
+    const resting = !m.leaving && m.busy < 0.5
+    const beacon = resting && m.waiting && ((this.t + slot * 3) >> 2) % 2 === 0
+    const running = resting && !m.waiting && (this.t + slot * 9) % 30 < 3
+    const sprite = v ? PROBE_TALL : PROBE_WIDE
+    let minX = x0
+    let maxX = x0
+    let minY = y0
+    let maxY = y0
+    let noses = 0
+    for (let k = 0; k < sprite.length; k += 3) {
+      const i = sprite[k]!
+      const j = sprite[k + 1]!
+      const kind = sprite[k + 2]!
+      const x = x0 + i * ux + j * bx
+      const y = y0 + i * uy + j * by
+      minX = Math.min(minX, x)
+      maxX = Math.max(maxX, x)
+      minY = Math.min(minY, y)
+      maxY = Math.max(maxY, y)
+      if (kind === PK.nozzle) {
+        this.probePixel(x, y, lit ? mix(glow, 0xffffff, 0.6) : PROBE.nozzle, false)
+        if (!lit) continue
+        // The glow behind it: longer as it burns harder, flickering.
+        const len = m.leaving ? 3 + (flick > 0.5 ? 1 : 0) : drive > 0.8 ? 2 + (flick > 0.6 ? 1 : 0) : 1 + (flick > 0.7 ? 1 : 0)
+        for (let d = 1; d <= len; d++) {
+          if (d === len && len > 2 && j === 0) continue // a tapering tail
+          this.probePixel(x - d * ux, y - d * uy, d === 1 ? glow : mix(glow, 0, Math.min(0.8, (d - 1) * 0.35)), false)
+        }
+      } else if (kind === PK.hull) this.probePixel(x, y, hull, false)
+      else if (kind === PK.light) this.probePixel(x, y, dead ? hull : mix(hull, 0xffffff, 0.3), false)
+      else if (beacon) this.probePixel(x, y, PROBE.beacon, true, true)
+      else if (running && noses++ === 0) this.probePixel(x, y, PROBE.light, true)
+      else this.probePixel(x, y, dead ? hull : mix(hull, 0xffffff, 0.6), false)
+    }
+    this.crew.mark(m, minX >> 1, minY >> 1, (maxX >> 1) - (minX >> 1) + 1, (maxY >> 1) - (minY >> 1) + 1, this.columns, this.rows)
+  }
+
+  /** One of a probe's pixels; `keep`, it must survive its cell's fit; `lamp`, it shines through the waiting sepia. */
+  private probePixel(x: number, y: number, color: number, keep: boolean, lamp = false): void {
+    if (x < 0 || y < 0 || x >= this.columns * 2 || y >= this.rows * 2) return
+    const cell = (y >> 1) * this.columns + (x >> 1)
+    const k = cell * 4
+    const px = this.probePx
+    if (px[k] === 0 && px[k + 1] === 0 && px[k + 2] === 0 && px[k + 3] === 0) this.probeCells[this.probeCount++] = cell
+    px[k + (((y & 1) << 1) | (x & 1))] = color
+    if (keep) this.probeKeep[cell] = ((y & 1) << 1) | (x & 1)
+    if (lamp) this.lamps[cell] = color
   }
 
   /** Whether a cell's center lies inside the ship's silhouette (the habitat as a solid drum). */

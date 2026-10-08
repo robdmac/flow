@@ -1,4 +1,4 @@
-// REVISION: flow-v144-surf-riders
+// REVISION: flow-v145-probes
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -3256,7 +3256,7 @@ test('crew: only places the layout can show are given; less room sends the rest 
 })
 
 /** The scenes that give each subagent a companion of its own. */
-const CREW_SCENES = ['fire', 'surf', 'ski', 'balloon', 'falcon', 'starship', 'engine', 'train'] as const
+const CREW_SCENES = ['fire', 'surf', 'ski', 'balloon', 'falcon', 'starship', 'engine', 'train', 'avalon'] as const
 
 test('companion scenes: each agent gets one that arrives, is marked where it is, and leaves when done, in the band and the spine', () => {
   for (const style of CREW_SCENES) {
