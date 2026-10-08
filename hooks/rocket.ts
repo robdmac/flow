@@ -1,4 +1,4 @@
-// REVISION: flow-v161-mini-rockets-heard
+// REVISION: flow-v162-spine-minis
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -921,8 +921,8 @@ abstract class LaunchSite extends SkyWorld {
 
   /**
    * A mini rocket's site by slot: where its body starts (pixels), right of
-   * the tower, left of the rocket (clear of where Starship's Ship is parked
-   * to be stacked), then further out each way; NaN where the grid has no
+   * the tower, left of the rocket (in the band clear of where Starship's Ship
+   * is parked to be stacked), then further out each way; NaN where the grid has no
    * room for its rocket (its tower may be cut off by the edge of a narrow pane).
    */
   private siteX(slot: number): number {
@@ -934,7 +934,9 @@ abstract class LaunchSite extends SkyWorld {
     const l = -m.bodyL
     const r = ceilEven(l + m.fly.w) + m.towerW
     let right = this.tx + s.towerW + gap
-    let left = this.ox - (this.look.catches ? s.fly.w + 3 : 0) - gap
+    // (Clear of where Starship's Ship is parked to be stacked, in the band; the narrow spine has no room to spare,
+    // so there a mini site stands behind it: the minis are the background.)
+    let left = this.ox - (this.look.catches && !this.tall ? s.fly.w + 3 : 0) - gap
     let x = 0
     for (let k = 0; k <= slot; k++) {
       if (k % 2 === 0) {
@@ -945,7 +947,14 @@ abstract class LaunchSite extends SkyWorld {
         left = x + l - gap
       }
     }
-    return x >= 0 && x + m.bodyW <= pw ? x : NaN
+    if (x >= 0 && x + m.bodyW <= pw) return x
+    // Out of room either side in the narrow spine: the next one stands right behind the big site, between its
+    // rocket and its tower, seen through the lattice (the minis are the background); one there, no more.
+    if (this.tall && slot === MINIS - 1) {
+      const behind = Math.floor(ceilEven((this.ox + this.spec.fly.w + this.tx) / 2) - m.bodyW)
+      if (behind >= 0) return behind
+    }
+    return NaN
   }
 
   /** The camera's place along the ground in whole cells' worth of pixels, so the pixels and the cells move together. */
