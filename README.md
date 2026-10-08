@@ -59,7 +59,7 @@ Every scene has a level from 0 (off) to 10 (as busy as it gets).
 |---|---|---|
 | `fire` | a low glow of embers | a roaring fire throwing sparks |
 | `warp` | stars drifting past | hyperspace streaks |
-| `avalon` | a colony ship among still stars, its habitat turning, the odd rock burning up on its shield | stars streaking past, rocks flaring on the shield every second |
+| `avalon` | a colony ship among still stars, its habitat turning, now and then a rock burning up on its shield; every few minutes it passes a sun or flies through a nebula | stars streaking past, a rock flaring on the shield every few seconds |
 | `balloon` | a hot-air balloon on the grass | up through the clouds to the edge of space |
 | `engine` | a steampunk engine standing still | cogs, belts and pistons at full speed |
 | `falcon`, `starship` | the rocket on its pad | climbing through the sky (2–7), separating at about 7, the upper stage in orbit (8–10); as it stages the screen splits, one side following the booster back down (falcon's lands on its legs, starship's is caught by the tower's arms), the other staying with the upper stage; brought home, falcon's Dragon capsule comes down under parachutes to a splashdown and the view slides back to the pad, and starship's Ship splashes down at sea and is carried back for the arms to lift on |

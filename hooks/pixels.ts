@@ -1,4 +1,4 @@
-// REVISION: flow-v122-noise-grey
+// REVISION: flow-v144-avalon-voyage
 //
 // Small pieces the scene renderers share: packed-RGB color math, hashes,
 // glyph tables, and the fit of a cell's four quadrant pixels to the two
@@ -59,6 +59,21 @@ export function noise1(x: number, seed: number): number {
   const a = hash1(i * 7919 + seed)
   const b = hash1((i + 1) * 7919 + seed)
   return a + (b - a) * f * f * (3 - 2 * f)
+}
+
+/** Smooth 2-D value noise in [0, 1): `hash` at each whole (x, y), eased between (avalon's nebulae). */
+export function noise2(x: number, y: number, seed: number): number {
+  const i = Math.floor(x)
+  const j = Math.floor(y)
+  let fx = x - i
+  let fy = y - j
+  fx = fx * fx * (3 - 2 * fx)
+  fy = fy * fy * (3 - 2 * fy)
+  const a = hash(i, j, seed)
+  const b = hash(i + 1, j, seed)
+  const c = hash(i, j + 1, seed)
+  const d = hash(i + 1, j + 1, seed)
+  return a + (b - a) * fx + (c - a + (a - b - c + d) * fx) * fy
 }
 
 /** `c` moved `k` (0..1) of the way to its own grey (by luma): an overcast, smoky cast. */

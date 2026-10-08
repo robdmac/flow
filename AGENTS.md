@@ -26,7 +26,7 @@ hooks/
   scene-def.ts       SceneDef / defineScene: what a scene file exports so it can be listed
   pixel-scene.ts     PixelScene: the quick base for a scene that paints pixels (easing, fold, specks, level 0)
   cells.ts           Cells (the grid every scene returns), Rng, Raster encoding
-  pixels.ts          shared helpers: mix, dist, clamp, hash*, noise1, grey, QUAD, BRAILLE, fitQuad, groupColor
+  pixels.ts          shared helpers: mix, dist, clamp, hash*, noise1, noise2, grey, QUAD, BRAILLE, fitQuad, groupColor
   night.ts           the shared night: sky colors, STAR, MOON, moon placement
   waiting.ts         the shared wait on the person: easeWait, the breath, waitTone (sepia, breathing)
   fire.ts            the fire scene's automaton (its heat grid), glyphs and 256-color ramps
