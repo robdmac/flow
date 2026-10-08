@@ -4,7 +4,7 @@
 
 <img width="1200" height="384" alt="Flow's fire above the prompt: pilot lights at idle, climbing with each of Claude's tool calls, an inferno with three subagents, then back down when Claude is done" src="https://github.com/user-attachments/assets/0f0120cc-af23-44ec-9398-309cccd42764" />
 
-Ambient scenes in your terminal that move with the work your coding agent is doing: a fire, fizzing bubbles, the surf, a ski run, two rockets, a hot-air balloon, a steam engine, a train through the countryside, and a colony ship behind its shield. They run above the prompt of Claude Code (in the terminal or the Claude desktop app) or [pi](https://github.com/badlogic/pi-mono), or in a tall pane beside Claude Code's transcript.
+Ambient scenes in your terminal that move with the work your coding agent is doing: a fire, fizzing bubbles, the surf, a ski run, two rockets, a hot-air balloon, a steam engine, a train through the countryside, a colony ship behind its shield, and the Earth rising over the moon. They run above the prompt of Claude Code (in the terminal or the Claude desktop app) or [pi](https://github.com/badlogic/pi-mono), or in a tall pane beside Claude Code's transcript.
 
 Each scene is drawn in 24-bit color from Unicode block, quadrant and braille characters, so several pixels share each terminal cell. In the Claude desktop app, which has no character grid to draw into, the same frames are drawn as images.
 
@@ -69,6 +69,7 @@ Every scene has a level from 0 (off) to 10 (as busy as it gets).
 | `ski` | an easy run | a steep mogul run at speed |
 | `bubbles` | a couple of lazy strings of bubbles | a rolling, fizzing boil |
 | `train` | waiting at a red signal or a platform, its diesel idling (when the work starts the signal clears, the horn sounds and it pulls away; when it winds down the train pulls up again) | flat out past fields, villages, woods, rivers and stations, the poles and the line beside it a blur |
+| `earthrise` | the Earth over a cratered lunar horizon in long, low sunlight, turning once in about two minutes (after [earthrise](https://ascii.rest/earthrise/) by @bas3line on ascii.rest) | the Earth spinning once every four seconds, its clouds running ahead |
 
 `/flow pick` shows them all at once, each one live, to choose from with the arrow keys and Enter (in pi, a list).
 
@@ -88,9 +89,9 @@ Balloon, falcon, starship, surf, ski and train also have a **night** version: st
 | running commands | sparks; a slow command keeps it ticking over |
 | reading or searching, or using any other tool (an MCP server's too) | a small spark each |
 | running subagents | busier with each one (with diminishing returns), and each one gets a companion of its own (see below); the rest add company: more stars, more lit windows, more streams of bubbles, more lights on the launch tower |
-| hitting a failed command, or compacting | smoke for a moment: smoky flame tips, sooty steam, a grey sky, a wipeout, a rocket's plume sputtering grey, black smoke pouring from the train's diesel |
-| near a full context (≥85%) | blue: a blue-white flame, a storm, dusk on the slopes, a blue gas flame, rain driving past the train |
-| waiting on you: a permission to grant, its question, a plan to approve | settles to a calm 2 and holds, the whole scene turned a warm sepia that breathes slowly, about every 4 s: the fire banks to a bed of glowing coals, the stars stop, the colony ship comes to rest, the balloon hovers with its pilot light glowing, the engine runs down and lets off steam, a rocket holds its stage with amber lights up the tower, the surfer sits up waiting for a wave, the skier stops, the bubbles slow, the train draws up at a red signal or a platform, its headlight and the signal glowing with each breath. With sound on, a soft chime as the wait begins |
+| hitting a failed command, or compacting | smoke for a moment: smoky flame tips, sooty steam, a grey sky, a wipeout, a rocket's plume sputtering grey, black smoke pouring from the train's diesel, a pall of moondust over the lunar horizon |
+| near a full context (≥85%) | blue: a blue-white flame, a storm, dusk on the slopes, a blue gas flame, rain driving past the train, cold blue light over the moon |
+| waiting on you: a permission to grant, its question, a plan to approve | settles to a calm 2 and holds, the whole scene turned a warm sepia that breathes slowly, about every 4 s: the fire banks to a bed of glowing coals, the stars stop, the colony ship comes to rest, the balloon hovers with its pilot light glowing, the engine runs down and lets off steam, a rocket holds its stage with amber lights up the tower, the surfer sits up waiting for a wave, the skier stops, the bubbles slow, the train draws up at a red signal or a platform, its headlight and the signal glowing with each breath, the Earth stops turning. With sound on, a soft chime as the wait begins |
 
 A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes several subagents editing in parallel, or a long turn: it climbs a level every 30 s it keeps going.
 

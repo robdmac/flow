@@ -1,4 +1,4 @@
-// REVISION: flow-v170-dry-scenes
+// REVISION: flow-v172-earthrise
 //
 // The scenes, all driven by the same dials (strength 0..10, coverage boost,
 // the agents one by one, tint, night, waiting): SCENES, the one list of them (each scene file exports its
@@ -32,6 +32,7 @@ import { falconScene, starshipScene } from './rocket'
 import { warpScene } from './starfield'
 import { bubblesScene } from './bubbles'
 import { trainScene } from './train'
+import { earthriseScene } from './earthrise'
 
 
 /** What shows over a scene: smoke after a failure or a compaction, blue when the context is nearly full. */
@@ -557,6 +558,7 @@ export const SCENES = [
   skiScene,
   bubblesScene,
   trainScene,
+  earthriseScene,
 ] as const
 export type SceneName = (typeof SCENES)[number]['name']
 export const STYLES: readonly SceneName[] = SCENES.map(d => d.name)
