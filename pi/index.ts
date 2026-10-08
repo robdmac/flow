@@ -1,4 +1,4 @@
-// REVISION: flow-v171-dry-adapter
+// REVISION: flow-v172-pictures
 //
 // Flow for pi (badlogic/pi-mono), by Rob Macrae: the same ambient
 // scenes as the Claude Code mod, in a widget above pi's editor. pi's events
@@ -26,8 +26,16 @@
 // and no side panes, so there is no spine, and `/flow pick` is a plain list (pi's own select)
 // rather than thumbnails, its choice going the way `/flow <scene>` goes. Nor has it a player, so
 // there is no soundscape: `/flow sound` says so, and the help and the status leave it out.
+//
+// In a terminal that draws kitty images (Ghostty, kitty, WezTerm, Warp), a
+// scene that can draw itself at real pixels (earthrise) shows as a picture
+// instead of its cells, taller than the band (picture.ts): flow.json's
+// `"rows"` sets how tall (14 unless it says; never more than half the
+// terminal), `"pictures": false` keeps the cells. A new size's picture is made
+// a little each frame, the cells showing meanwhile, and what took long is
+// kept in ~/.cache/flow for the next time.
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -35,8 +43,9 @@ import { Activity } from '../hooks/activity'
 import { FRAME_MS, SceneDriver } from '../hooks/scene'
 import { pickBlurb } from '../hooks/picker'
 import { type Host, parseFlowArgs, readConfig, replyTo, storedValue, type FlowConfig } from '../hooks/settings'
-import { SCENES } from '../hooks/styles'
+import { SCENES, type Scene } from '../hooks/styles'
 import { gridToAnsi } from './ansi'
+import { cellPixels, kittyImages, kittyLines, pictureId, pictureSize } from './picture'
 import { COMMAND_TOOLS, effortOf, FLOW_ENTRY, piLinesWritten, READ_TOOLS } from './mapping'
 import { PiSettings, type SessionEntries } from './session'
 import type { PiApi, PiComponent, PiContext, PiTui } from './types'
@@ -51,6 +60,38 @@ const SETTINGS = join(homedir(), '.pi', 'agent', 'flow.json')
 const PI: Host = { panes: false, sound: false }
 /** Where the settings lived before, newest first: as vista, then as ascii-fire. */
 const OLD_SETTINGS = [join(homedir(), '.pi', 'agent', 'vista.json'), join(homedir(), '.pi', 'agent', 'ascii-fire.json')]
+/** A picture's rows unless flow.json says (`rows`), and at most this share of the terminal's. */
+const PICTURE_ROWS = 14
+const PICTURE_SHARE = 0.5
+/** At most this many pixels a picture (the terminal scales it up to its cells), and at most one this often. */
+const PICTURE_PIXELS = 160_000
+const PICTURE_MS = 100
+/** A new size's picture is made between frames, this long at a time, with this long between for everything else. */
+const PICTURE_BUILD_MS = 12
+const PICTURE_YIELD_MS = 4
+/** Where what a picture took long to make is kept: the most recent few sizes. */
+const CACHE = join(homedir(), '.cache', 'flow')
+const CACHE_KEPT = 8
+
+/** Drop all but the CACHE_KEPT newest kept pictures' parts. */
+async function pruneCache(): Promise<void> {
+  const names = (await readdir(CACHE)).filter(n => n.endsWith('.f32'))
+  const dated = await Promise.all(names.map(async n => ({ n, t: (await stat(join(CACHE, n))).mtimeMs })))
+  dated.sort((a, b) => b.t - a.t)
+  await Promise.all(dated.slice(CACHE_KEPT).map(({ n }) => unlink(join(CACHE, n))))
+}
+
+/** flow.json's own keys for pi's pictures: whether to draw them, and how many rows. */
+async function loadPicturePrefs(): Promise<{ pictures: boolean; rows: number }> {
+  let raw: Record<string, unknown> = {}
+  try {
+    raw = JSON.parse(await readFile(SETTINGS, 'utf8')) as Record<string, unknown>
+  } catch {
+    // None yet: the defaults.
+  }
+  const rows = typeof raw.rows === 'number' && Number.isFinite(raw.rows) ? Math.round(raw.rows) : PICTURE_ROWS
+  return { pictures: raw.pictures !== false, rows: Math.max(3, Math.min(60, rows)) }
+}
 
 async function loadSettings(): Promise<FlowConfig> {
   for (const file of [SETTINGS, ...OLD_SETTINGS]) {
@@ -111,6 +152,117 @@ export default function flow(pi: PiApi) {
   let sinceContext = 0
   let sinceDefaults = 0
 
+  /** Pictures: whether the terminal draws them, its cells' pixels, flow.json's say, and the one image id this pi uses. */
+  let kitty = false
+  let cell = { width: 9, height: 18 }
+  let prefs = { pictures: true, rows: PICTURE_ROWS }
+  const picId = pictureId()
+  /** Whether the widget shows a picture now, and how long since the last was sent. */
+  let showingPicture = false
+  let sincePicture = 0
+  /** How much of a new size's picture one slice makes (the scene's own units), learned from how long it takes. */
+  let budget = 300
+  /** The size being made between frames (`w`x`h`), if any. */
+  let making: string | undefined
+  /** What a picture of each size took long to make, kept in CACHE: being read back, read back, not there, or written. */
+  const kept = new Map<string, 'reading' | 'restored' | 'absent' | 'written'>()
+  /** The rows a picture takes now. */
+  const pictureRows = () => {
+    const terminal = process.stdout.rows || 40
+    return Math.max(3, Math.min(prefs.rows, Math.floor(terminal * PICTURE_SHARE)))
+  }
+
+  /** Whether this scene shows as a picture here. */
+  const pictured = (f: Scene) => kitty && prefs.pictures && typeof f.picture === 'function'
+
+  /** Read back what a picture of this size took long to make, if it was kept: false until that's known (make nothing yet). */
+  const readKept = (f: Scene, w: number, h: number): boolean => {
+    const key = f.pictureKey?.(w, h)
+    if (!key) return true
+    const state = kept.get(key)
+    if (state) return state !== 'reading'
+    kept.set(key, 'reading')
+    void readFile(join(CACHE, `${key}.f32`))
+      .then(buf => {
+        const data = new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength))
+        kept.set(key, f.restorePicture?.(w, h, data) ? 'restored' : 'absent')
+      })
+      .catch(() => kept.set(key, 'absent'))
+    return false
+  }
+
+  /** Keep what a picture made here took long to make, once (written aside, then moved in, so no reader sees half). */
+  const writeKept = (f: Scene) => {
+    const made = f.pictureCache?.()
+    if (!made || kept.get(made.key) !== 'absent') return
+    kept.set(made.key, 'written')
+    const file = join(CACHE, `${made.key}.f32`)
+    const bytes = new Uint8Array(made.data.buffer, made.data.byteOffset, made.data.byteLength).slice()
+    const tmp = `${file}.${process.pid}.tmp`
+    void mkdir(CACHE, { recursive: true })
+      .then(() => writeFile(tmp, bytes))
+      .then(() => rename(tmp, file))
+      .then(pruneCache)
+      .catch(() => {
+        // Not kept: made afresh next time.
+      })
+  }
+
+  /** This frame as a picture's lines, or undefined while it's still being made (draw the cells). */
+  const drawPicture = (f: Scene): string[] | undefined => {
+    if (!f.picture || width <= 0) return undefined
+    const rows = pictureRows()
+    const { w, h } = pictureSize(width, rows, cell, PICTURE_PIXELS)
+    if (!readKept(f, w, h)) return undefined
+    const rgba = f.picture(w, h, 0)
+    if (!rgba) {
+      makeBetweenFrames(f, w, h)
+      return undefined
+    }
+    writeKept(f)
+    return kittyLines(rgba, w, h, width, rows, picId)
+  }
+
+  /** Make a new size's picture a slice at a time, off the frame loop, until it's made (or the size or scene moves on). */
+  const makeBetweenFrames = (f: Scene, w: number, h: number) => {
+    const key = `${w}x${h}`
+    if (making === key) return
+    making = key
+    const slice = () => {
+      if (making !== key) return
+      if (driver.built(driver.cfg.style) !== f || !f.picture) {
+        making = undefined
+        return
+      }
+      const t0 = performance.now()
+      const made = f.picture(w, h, budget) !== undefined
+      if (made) {
+        making = undefined
+        writeKept(f)
+        return
+      }
+      const ms = performance.now() - t0
+      budget = Math.max(20, Math.min(1e6, (budget * PICTURE_BUILD_MS) / Math.max(1, ms)))
+      setTimeout(slice, PICTURE_YIELD_MS)
+    }
+    setTimeout(slice, 0)
+  }
+
+  /** This frame's lines: a picture when it's time for one, else the cells; undefined to keep the last picture. */
+  const nextLines = (f: Scene, force = false): string[] | undefined => {
+    if (pictured(f)) {
+      if (showingPicture && !force && sincePicture < PICTURE_MS) return undefined
+      const p = drawPicture(f)
+      if (p) {
+        showingPicture = true
+        sincePicture = 0
+        return p
+      }
+    }
+    showingPicture = false
+    return gridToAnsi(f.grid())
+  }
+
   /** Read the local clock (pi runs on this machine, so its time is the person's). */
   const readClock = () => {
     const d = new Date()
@@ -130,7 +282,7 @@ export default function flow(pi: PiApi) {
       render(w: number) {
         if (w !== width) {
           width = w
-          lines = gridToAnsi(dial().grid())
+          lines = nextLines(dial(), true) ?? lines
         }
         return lines
       },
@@ -161,6 +313,7 @@ export default function flow(pi: PiApi) {
         const usage = ctx.getContextUsage()
         if (usage?.percent != null) activity.contextPercent = usage.percent
         readClock()
+        void cellPixels().then(c => (cell = c))
       }
       sinceDefaults += elapsed
       if (sinceDefaults >= DEFAULTS_EVERY_MS && !refreshing) {
@@ -177,8 +330,12 @@ export default function flow(pi: PiApi) {
       f.step()
       // pi has no player: a scene's events (for Claude Code's soundscape) are taken and dropped each frame.
       if (f.sounds) f.sounds.length = 0
-      lines = gridToAnsi(f.grid())
-      tui.requestRender()
+      sincePicture += elapsed
+      const next = nextLines(f)
+      if (next) {
+        lines = next
+        tui.requestRender()
+      }
     }
     const pace = driver.pace()
     timer = setTimeout(() => frame(pace), pace)
@@ -197,6 +354,9 @@ export default function flow(pi: PiApi) {
     if (ctx.mode !== 'tui' || !ctx.hasUI) return
     ctxRef = ctx
     width = 0
+    kitty = await kittyImages()
+    cell = await cellPixels()
+    prefs = await loadPicturePrefs()
     readClock()
     stop()
     isMounted = false
@@ -261,6 +421,7 @@ export default function flow(pi: PiApi) {
     const entries = entriesOf(ctx)
     // flow.json as it is now: what follows compares with it.
     await settings.refresh(entries)
+    prefs = await loadPicturePrefs()
     if (cmd.kind === 'pick') {
       // No panes for thumbnails here: pi's own list, each scene with its blurb; the one chosen is
       // `/flow <scene>` from here on.

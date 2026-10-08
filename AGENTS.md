@@ -38,6 +38,7 @@ hooks/
                      engine, rocket (falcon, starship), surf, ski, bubbles, train
 pi/
   index.ts           pi adapter (widget above the editor, /flow, ~/.pi/agent/flow.json)
+  picture.ts         a scene's `picture` as a kitty image: whether the terminal draws them, its size, the escape sequence
   session.ts         pi's settings for a session: flow.json's defaults and the session's own (pure)
   ansi.ts mapping.ts types.ts
 sounds/              the soundscapes' clips (AAC), built by scripts/make-sounds.ts
@@ -68,6 +69,7 @@ A scene implements `Scene` (`hooks/styles.ts`). Its file exports a `SceneDef` (`
   - Most scenes paint a pixel layer at 2 × 2 pixels per cell, then fold it into quadrant glyphs with `fitQuad`. A cell holds only two colors; give `fitQuad` a sprite's pixels as its `keep` so a small figure never drops out of its own cell.
   - Braille (`BRAILLE`, 2 × 4 dots a cell) is for fine specks: spray, stars, bubbles.
   - `DEFAULT_COLOR` (0x01000000) is the terminal's own color, i.e. transparent.
+  - A scene can also draw itself at real pixels (`Scene.picture(w, h, budget)`: RGBA, the open sky transparent), which pi shows as a kitty image in a terminal that draws them (`pi/picture.ts`); earthrise alone does so far. A new size may take a while to make: `picture` makes `budget` of it a call and returns undefined until it's done (pi makes it between frames, showing the cells meanwhile). What took long goes in `pictureCache()` under `pictureKey(w, h)`, and pi keeps it in `~/.cache/flow` (`restorePicture` takes it back): bump the scene's version of it when what it makes changes.
 - **Limits**:
   - Claude Code's `Raster` paints at most 1024 distinct (fg, bg) pairs a frame and nearest-maps the rest, so quantize gradients.
   - Keep `step()` + `grid()` under ~2 ms at 250 × 5 and 22 × 60; frames run at ~14 fps (8 when calm).

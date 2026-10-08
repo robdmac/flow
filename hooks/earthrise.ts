@@ -1,11 +1,17 @@
-// REVISION: flow-v1-earthrise
+// REVISION: flow-v2-earthrise-picture
 //
 // Earthrise (the `earthrise` scene): the Earth coming up over a cratered
 // lunar horizon in long, low sunlight, after "earthrise" by @bas3line on
-// ascii.rest (https://ascii.rest/earthrise/, MIT). The level is how fast the
-// Earth turns: a slow two minutes a turn at 1, a few seconds at 10, its
-// clouds running a little ahead. It climbs and settles very slowly whatever
-// the level, and a few stars breathe.
+// ascii.rest (https://ascii.rest/earthrise/, MIT). The level is how high the
+// Earth stands and how fast it turns: at 1 it is half behind the horizon,
+// turning once in about two minutes; at 10 it stands clear of the horizon,
+// turning every few seconds, its clouds running a little ahead. It climbs
+// and sinks over several seconds as the work picks up or winds down, and a
+// few stars breathe.
+//
+// Where the terminal draws images (pi in Ghostty, kitty, WezTerm), it is
+// also drawn as a picture at real pixels (`picture`): the same world, its
+// ground built a few columns a frame for each new size, the sky left clear.
 //
 // The ground is the original's heightfield of craters and boulders, seen
 // from a camera standing on it and marched column by column, with real
@@ -18,13 +24,14 @@
 //
 // Smoke raises a grey pall of moondust over the horizon and greys
 // everything; a full context turns the light cold and blue. While Claude
-// waits on the person the Earth stops turning and holds (PixelScene breathes
-// the frame in sepia).
+// waits on the person the Earth holds where it stands and stops turning
+// (PixelScene breathes the frame in sepia; a picture takes the same tone).
 
 import { FRAME_MS } from './activity'
 import { CLEAR, PixelScene, type Dials, type Painter } from './pixel-scene'
 import { clamp, grey, hash, hash1, luma, mix, rampAt, smoothstep as smooth } from './pixels'
 import { defineScene } from './scene-def'
+import { SEPIA_AMOUNT, waitColor, waitGlow, waitLift } from './waiting'
 
 // --- the world, in the original's units --------------------------------------
 
@@ -42,9 +49,17 @@ const EC_Y = 32
 const ER = 22
 /** Which face of the globe is turned to us at the start. */
 const LON0 = 3.5
-/** It climbs RISE rows and settles back over RISE_S seconds. */
-const RISE = 5
-const RISE_S = 150
+/**
+ * How much of the Earth is behind the horizon at level 1 and at 10 (below 0:
+ * clear of it, by that much of its radius), and how far its height moves
+ * toward the level each frame (a whole climb in about ten seconds).
+ */
+const HID_CALM = 0.62
+const HID_BUSY = -0.14
+const CLIMB = 0.007
+/** In the spine: the Earth's centre this many radii below the original's at level 1, and above it at 10. */
+const SPINE_LOW = 0.5
+const SPINE_HIGH = 0.35
 /** Toward the sun: low, from the right and a little behind us (z is forward). */
 const SUN = (() => {
   const v = [0.94, 0.14, -0.3]
@@ -62,15 +77,26 @@ const CLOUD_AHEAD = 0.27
  * The band: BAND_S of the original's cells to a pixel across (twice that
  * down), its skyline (where most of it falls) BAND_SKY of the way down,
  * and the Earth BAND_R pixels high from its centre, rising where the
- * skyline dips lowest between BAND_FROM and BAND_TO of the way across, its
- * lower BAND_HID behind the horizon (or more, so its top stays in the band).
+ * skyline dips lowest between BAND_FROM and BAND_TO of the way across, as
+ * far behind the horizon as the level puts it (or more, so its top stays in
+ * the band).
  */
 const BAND_S = 2.4
 const BAND_SKY = 0.6
-const BAND_R = 3.9
+const BAND_R = 3.4
 const BAND_FROM = 0.62
 const BAND_TO = 0.86
-const BAND_HID = 0.2
+/**
+ * A picture: the Earth PIC_R of its height from its centre, PIC_SIZE of the
+ * original's size against the ground, the skyline PIC_SKY of the way down,
+ * the ground's brightness in PIC_STEPS steps.
+ */
+const PIC_R = 0.28
+const PIC_SIZE = 0.85
+const PIC_SKY = 0.55
+const PIC_STEPS = 255
+/** Bump when the ground changes: a picture's ground kept from before (`pictureCache`) is then made afresh. */
+const GROUND_VERSION = 1
 /** The widest view, in radians: a wider band is squeezed into it rather than looking round behind. */
 const SPAN = 2.8
 /** The spine: the Earth this much of the width, its centre this far down. */
@@ -235,9 +261,10 @@ function groundLight(X: number, Z: number, Y: number, camY: number, crest: numbe
   const mu = Math.max(0.02, (-hx * vx + vy - hz * vz) / (nl * vl))
   let lit = 0
   if (lam > 0) {
-    // March toward the sun; a soft edge for the sun's own width.
+    // March toward the sun; a soft edge for the sun's own width. Each point starts its steps a little
+    // differently, so the shadows' edges don't step with the march.
     lit = 1
-    let s = 0.1 + Z * 0.003
+    let s = (0.1 + Z * 0.003) * (0.6 + 0.8 * hash(Math.floor(X * 37), Math.floor(Z * 37), 41))
     while (s < 120) {
       const d = Y + SUN[1] * s - height(X + SUN[0] * s, Z + SUN[2] * s)
       if (d < 0) {
@@ -454,150 +481,77 @@ function earthAt(dx: number, dy: number, er: number, spin: number, drift: number
   out[3] = a
 }
 
-/** Light (0..~1.2 a channel) as a colour, a little lifted, held to 5 bits a channel. */
-function lightColor(r: number, g: number, b: number): number {
-  const c = (v: number) => Math.min(255, Math.round(Math.pow(clamp(v, 0, 1.2) / 1.2, 0.72) * 255 * 1.22)) & 0xf8
+/** Light (0..~1.2 a channel) as a colour, a little lifted, held to 5 bits a channel (`bits`: Raster's colour pairs are few). */
+function lightColor(r: number, g: number, b: number, bits = 0xf8): number {
+  const c = (v: number) => Math.min(255, Math.round(Math.pow(clamp(v, 0, 1.2) / 1.2, 0.72) * 255 * 1.22)) & bits
   return (c(r) << 16) | (c(g) << 8) | c(b)
 }
 
 // --- the scene ---------------------------------------------------------------
 
 /**
- * The view: the original's (col, row) under pixel (x, y) is (col0 + x·s,
- * row0 + y·2s), its columns turned by `k`; the Earth's centre (ex, ey, before
- * it rises) and radius `er`, in the same units.
+ * One way of seeing the world at one size: the original's (col, row) under
+ * pixel (x, y) is (col0 + x·s, row0 + y·sy), its columns turned by `k`; the
+ * Earth's centre `ex` and radius `er` in the same units, its centre `eyLow`
+ * at level 1 and `eyHigh` at 10. The ground under each pixel (its
+ * brightness, or -1 for sky) is built `done` columns so far; `near` marks
+ * the sky the Earth and its air can reach, once it's all built.
  */
-type View = { s: number; col0: number; row0: number; k: number; ex: number; ey: number; er: number }
+type Layout = {
+  pw: number
+  ph: number
+  s: number
+  sy: number
+  col0: number
+  row0: number
+  k: number
+  ex: number
+  eyLow: number
+  eyHigh: number
+  er: number
+  ground: Float32Array
+  near: Uint8Array
+  done: number
+  /** Ground samples down each pixel, and their rows. */
+  sub: number
+  at: Float32Array
+  /** How many steps the ground's brightness is held to. */
+  steps: number
+}
+
+/** The ground's sample buffers, shared (one column at a time). */
+let gx = new Float32Array(0)
+let gz = new Float32Array(0)
+let gy = new Float32Array(0)
+
+/** A picture's pixels: its colour (CLEAR for the open sky) and how much it covers (0..1). */
+type Canvas = { w: number; h: number; px: Int32Array; alpha: Float32Array; rgba: Uint8Array }
 
 export class Earthrise extends PixelScene {
-  private view: View = { s: 1, col0: 0, row0: 0, k: 1, ex: EC_X, ey: EC_Y, er: ER }
-  /** Per pixel: the ground's brightness (0..1), or -1 for sky. */
-  private ground = new Float32Array(0)
-  /** Per pixel: the Earth may show here (sky, near it). */
-  private near = new Uint8Array(0)
+  /** The view the cells see, and a picture's. */
+  private cells: Layout = layout(0, 0, 2, false)
+  private pic: Layout | undefined
+  private canvas: Canvas | undefined
   /** How far the Earth has turned, and its clouds (radians): each one made starts on its own face. */
   private spin = hash1(this.seed) * Math.PI * 2
   private drift = 0
+  /** How high the Earth stands, 0 (level 1) .. 1 (level 10), eased; NaN until the first frame. */
+  private alt = Number.NaN
   /** Smoke and blue, eased (0..1). */
   private kSmoke = 0
   private kBlue = 0
   private readonly rgba = new Float32Array(4)
 
   protected resize(d: Dials): void {
-    const pw = d.columns * 2
-    const ph = d.rows * 2
-    let v: View
-    if (!d.tall) {
-      const s = BAND_S
-      const col0 = 100 - 0.5 * pw * s
-      const k = Math.min(1, (SPAN * F) / (pw * s))
-      const er = BAND_R * 2 * s
-      const skyAt = (col: number) => skyline(((col - 100) / F) * k)
-      // Where the skyline falls, across the band: its middle sets how much ground shows.
-      const sky: number[] = []
-      for (let i = 0; i < 24; i++) sky.push(skyAt(col0 + ((i + 0.5) / 24) * pw * s))
-      sky.sort((p, q) => p - q)
-      const row0 = sky[12]! - BAND_SKY * ph * 2 * s
-      // The Earth: where the skyline under it dips lowest.
-      let ex = col0 + BAND_TO * pw * s
-      let low = -Infinity
-      for (let i = 0; i <= 12; i++) {
-        const col = col0 + (BAND_FROM + ((BAND_TO - BAND_FROM) * i) / 12) * pw * s
-        const under = Math.min(skyAt(col - er * 0.6), skyAt(col), skyAt(col + er * 0.6))
-        if (under > low) {
-          low = under
-          ex = col
-        }
-      }
-      const ey = Math.max(row0 + er + RISE * (er / ER), low + er * (2 * BAND_HID - 1))
-      v = { s, col0, row0, k, ex, ey, er }
-    } else {
-      // As wide as the Earth wants of the width, or no more than four tenths of the height.
-      const s = Math.max((2 * ER) / (EARTH_W * pw), (2 * ER) / (0.4 * 2 * ph))
-      v = { s, col0: EC_X - 0.5 * pw * s, row0: EC_Y - EARTH_DOWN * ph * 2 * s, k: 1, ex: EC_X, ey: EC_Y, er: ER }
-    }
-    v.k = Math.min(1, (SPAN * F) / (pw * v.s))
-    this.view = v
-    this.buildGround(pw, ph)
-  }
-
-  /** March every pixel column from near to far, then light what each pixel sees. */
-  private buildGround(pw: number, ph: number): void {
-    const { s, col0, row0, k, ex, ey, er } = this.view
-    const sub = Math.max(1, Math.min(GROUND_SUB, Math.round(2 * s)))
-    const n = pw * ph
-    const ground = new Float32Array(n).fill(-1)
-    const near = new Uint8Array(n)
-    const rows = ph * sub
-    const at = new Float32Array(rows)
-    for (let i = 0; i < rows; i++) at[i] = row0 + ((i + 0.5) / sub) * 2 * s
-    const gx = new Float32Array(rows)
-    const gz = new Float32Array(rows)
-    const gy = new Float32Array(rows)
-    const cam = camY()
-    for (let x = 0; x < pw; x++) {
-      const col = col0 + (x + 0.5) * s
-      const ang = ((col - 100) / F) * k
-      const sx = Math.sin(ang)
-      const cz = Math.cos(ang)
-      // The sample rows still sky above the ground found so far: [0, top).
-      let top = rows
-      let D = 3
-      let prevY = 0
-      let prevD = 0
-      let prevF = 1e9
-      let skyline = Infinity
-      while (D < ZMAX && top > 0) {
-        const X = sx * D
-        const Z = cz * D
-        const hy = height(X, Z)
-        const Y = hy - (D * D) / (2 * RM)
-        const yf = EYE - (F * (Y - cam)) / D
-        while (top > 0 && at[top - 1]! >= yf) {
-          const i = --top
-          // Between this sample and the last, by where its row falls.
-          const a = prevF > yf + 1e-6 ? clamp((prevF - at[i]!) / (prevF - yf)) : 1
-          const dd = prevD ? lerp(prevD, D, a) : D
-          gx[i] = sx * dd
-          gz[i] = cz * dd
-          gy[i] = prevD ? lerp(prevY, hy, a) : hy
-        }
-        skyline = Math.min(skyline, yf)
-        prevF = yf
-        prevY = hy
-        prevD = D
-        D += 0.03 + D * 0.012
-      }
-      // Each pixel: the ground if most of its samples are, lit as their mean.
-      for (let y = 0; y < ph; y++) {
-        let sum = 0
-        let m = 0
-        for (let j = 0; j < sub; j++) {
-          const i = y * sub + j
-          if (i < top) continue
-          sum += groundLight(gx[i]!, gz[i]!, gy[i]!, cam, (at[i]! - skyline) / (2 * s))
-          m++
-        }
-        if (m * 2 > sub) ground[y * pw + x] = sum / m
-      }
-    }
-    // Where the Earth and its air can reach, as it rises and settles.
-    for (let y = 0; y < ph; y++) {
-      const row = row0 + (y + 0.5) * 2 * s
-      for (let x = 0; x < pw; x++) {
-        const col = col0 + (x + 0.5) * s
-        const i = y * pw + x
-        const air = (13 * er) / ER
-        if (ground[i]! < 0 && Math.abs(col - ex) < er + air && row > ey - RISE - er - air - 2 * s && row < ey + er + air) near[i] = 1
-      }
-    }
-    this.ground = ground
-    this.near = near
+    this.cells = layout(d.columns * 2, d.rows * 2, 2, d.tall)
+    build(this.cells, Infinity)
   }
 
   protected update(d: Dials): void {
-    // The level is how fast it turns; waiting on the person, it stops.
+    // The level is how high it stands and how fast it turns; waiting on the person, it holds and stops.
     const busy = clamp((d.level - 1) / 9)
+    if (Number.isNaN(this.alt)) this.alt = busy
+    else if (d.wait < 0.5) this.alt += clamp(busy - this.alt, -CLIMB, CLIMB)
     const rate = SPIN_CALM * Math.pow(SPIN_BUSY / SPIN_CALM, busy) * (1 - d.wait)
     const dt = FRAME_MS / 1000
     this.spin += rate * dt
@@ -617,31 +571,41 @@ export class Earthrise extends PixelScene {
     return c
   }
 
-  paint(px: Painter, d: Dials): void {
-    const { s, col0, row0, ex, er } = this.view
-    const pw = px.w
-    const ph = px.h
+  /**
+   * The ground, the moondust and the Earth into `px` (CLEAR left for the open
+   * sky); `alpha`, for a picture, takes how much of each pixel they cover
+   * (without it, the faint edge of the Earth's air is left out).
+   */
+  private paintWorld(L: Layout, px: Int32Array, alpha: Float32Array | undefined, d: Dials): void {
+    const { pw, ph, s, sy, col0, row0, ex, er, steps } = L
     const tSec = (d.t * FRAME_MS) / 1000
-    const ey = this.view.ey - RISE * (er / ER) * (0.5 - 0.5 * Math.cos((tSec / RISE_S) * Math.PI * 2))
+    const ey = lerp(L.eyLow, L.eyHigh, Number.isNaN(this.alt) ? clamp((d.level - 1) / 9) : this.alt)
+    const bits = alpha ? 0xff : 0xf8
 
     // The ground, as built.
     for (let i = 0; i < pw * ph; i++) {
-      const b = this.ground[i]!
+      const b = L.ground[i]!
       if (b < 0) continue
-      const q = Math.round(Math.pow(clamp(b), 0.85) * GROUND_STEPS) / GROUND_STEPS
-      px.px[i] = this.tinted(rampAt(GROUND, q))
+      const q = Math.round(Math.pow(clamp(b), 0.85) * steps) / steps
+      px[i] = this.tinted(rampAt(GROUND, q))
+      if (alpha) alpha[i] = 1
     }
 
     // Moondust (smoke): a grey pall over the horizon, drifting.
     if (this.kSmoke > 0) {
+      const dustSteps = alpha ? 24 : 6
       for (let x = 0; x < pw; x++) {
         let sky = 0
-        while (sky < ph && this.ground[sky * pw + x]! < 0) sky++
+        while (sky < ph && L.ground[sky * pw + x]! < 0) sky++
+        const col = col0 + x * s
         for (let y = 0; y < sky; y++) {
           const up = (sky - y) / Math.max(4, ph * 0.5)
-          const n = fbm(x * 0.08 + tSec * 0.4, y * 0.3, 2, 0)
+          const n = fbm(col * 0.033 + tSec * 0.4, (row0 + y * sy) * 0.0625, 2, 0)
           const k = this.kSmoke * clamp(1.3 - up) * (0.55 + 0.45 * n)
-          if (k > 0.12) px.px[y * pw + x] = mix(0x1c1b1a, DUST, Math.round(k * 6) / 6)
+          if (k <= 0.12) continue
+          const i = y * pw + x
+          px[i] = mix(0x1c1b1a, DUST, Math.round(k * dustSteps) / dustSteps)
+          if (alpha) alpha[i] = Math.min(1, k * 1.6)
         }
       }
     }
@@ -649,20 +613,20 @@ export class Earthrise extends PixelScene {
     // The Earth and its air.
     const out = this.rgba
     const nx = Math.max(1, Math.min(EARTH_SUB_X, Math.round(s)))
-    const ny = Math.max(1, Math.min(EARTH_SUB_Y, Math.round(2 * s)))
+    const ny = Math.max(1, Math.min(EARTH_SUB_Y, Math.round(sy)))
     const sw = s / nx
-    const shh = (2 * s) / ny
+    const shh = sy / ny
     const pall = this.kSmoke
     for (let y = 0; y < ph; y++) {
       for (let x = 0; x < pw; x++) {
         const i = y * pw + x
-        if (!this.near[i]) continue
+        if (!L.near[i]) continue
         let r = 0
         let g = 0
         let b = 0
         let a = 0
         for (let jy = 0; jy < ny; jy++) {
-          const dy = row0 + y * 2 * s + (jy + 0.5) * shh - ey
+          const dy = row0 + y * sy + (jy + 0.5) * shh - ey
           for (let jx = 0; jx < nx; jx++) {
             const dx = col0 + x * s + (jx + 0.5) * sw - ex
             earthAt(dx, dy, er, this.spin, this.drift, out)
@@ -674,13 +638,31 @@ export class Earthrise extends PixelScene {
         }
         const m = nx * ny
         a /= m
-        if (a < 0.3) continue
-        const c = this.tinted(lightColor(r / m / a, g / m / a, b / m / a))
-        // Through the pall the Earth shows dimmer.
-        const under = px.px[i]!
-        px.px[i] = under === CLEAR ? c : mix(under, c, 1 - pall * 0.5)
+        if (a < (alpha ? 0.02 : 0.3)) continue
+        const c = this.tinted(lightColor(r / m / a, g / m / a, b / m / a, bits))
+        const under = px[i]!
+        if (!alpha) {
+          // Through the pall the Earth shows dimmer.
+          px[i] = under === CLEAR ? c : mix(under, c, 1 - pall * 0.5)
+          continue
+        }
+        const k = Math.min(1, a) * (1 - pall * 0.5)
+        if (under === CLEAR) {
+          px[i] = c
+          alpha[i] = Math.min(1, a)
+        } else {
+          px[i] = mix(under, c, k / Math.max(k, alpha[i]!) || 1)
+          alpha[i] = Math.max(alpha[i]!, k)
+        }
       }
     }
+  }
+
+  paint(px: Painter, d: Dials): void {
+    const L = this.cells
+    const { pw, s, sy, col0, row0 } = L
+    this.paintWorld(L, px.px, undefined, d)
+    const tSec = (d.t * FRAME_MS) / 1000
 
     // Stars: braille specks in the open sky, thicker along the galaxy, none near the Earth; a few breathe.
     const dw = px.dw
@@ -688,27 +670,17 @@ export class Earthrise extends PixelScene {
     const density = 0.011 * (1 + d.boost / 30)
     for (let y = 0; y < dh; y++) {
       const pyy = y >> 1
-      const row = row0 + ((y + 0.5) / 2) * 2 * s
+      const row = row0 + ((y + 0.5) / 2) * sy
       for (let x = 0; x < dw; x++) {
         const i = pyy * pw + x
-        if (this.near[i] || px.px[i] !== CLEAR) continue
+        if (L.near[i] || px.px[i] !== CLEAR) continue
         const cell = (pyy >> 1) * (pw >> 1) + (x >> 1)
         // A cell any of whose pixels are painted keeps clear of specks.
         const c0 = (pyy & ~1) * pw + (x & ~1)
         if (px.px[c0] !== CLEAR || px.px[c0 + 1] !== CLEAR || px.px[c0 + pw] !== CLEAR || px.px[c0 + pw + 1] !== CLEAR) continue
-        const col = col0 + (x + 0.5) * s
-        const bandD = (row - (4 + col * 0.32)) / 1.05
-        const band = Math.exp(-((bandD / 10) ** 2)) * smooth(120, 70, col)
-        const h = hash(x * 3 + 1, y * 7 + 2, 11)
-        if (h < 1 - density * (1 + 3 * band)) continue
-        let v = 0.25 + 0.75 * Math.pow(hash(x + 17, y + 29, 5), 3)
-        // One in eight breathes, each at its own pace.
-        const tw = hash(x, y, 23)
-        if (tw > 0.875) v *= 0.55 + 0.45 * Math.sin((tSec / (3 + 3 * hash(x, y, 31))) * Math.PI * 2 + tw * 50)
-        v *= 1 - 0.6 * this.kSmoke
-        const tint = hash(x + 5, y + 77, 3)
-        const [tr, tg, tb] = tint < 0.3 ? [0.84, 0.9, 1] : tint > 0.88 ? [1, 0.93, 0.84] : [0.96, 0.96, 0.98]
-        const star = this.tinted(lightColor(v * tr, v * tg, v * tb) | 0x101010)
+        const v = this.star(x, y, col0 + (x + 0.5) * s, row, density, tSec)
+        if (v < 0) continue
+        const star = this.tinted(v | 0x101010)
         // A cell's specks share one colour: the brightest of them.
         const prev = px.dots[cell] ? px.dotColor[cell]! : -1
         px.dot(x, y, star)
@@ -716,10 +688,265 @@ export class Earthrise extends PixelScene {
       }
     }
   }
+
+  /** A star at speck (x, y), at (col, row) in the original's view: its colour, or -1 for none. */
+  private star(x: number, y: number, col: number, row: number, density: number, tSec: number, bits = 0xf8): number {
+    const bandD = (row - (4 + col * 0.32)) / 1.05
+    const band = Math.exp(-((bandD / 10) ** 2)) * smooth(120, 70, col)
+    const h = hash(x * 3 + 1, y * 7 + 2, 11)
+    if (h < 1 - density * (1 + 3 * band)) return -1
+    let v = 0.25 + 0.75 * Math.pow(hash(x + 17, y + 29, 5), 3)
+    // One in eight breathes, each at its own pace.
+    const tw = hash(x, y, 23)
+    if (tw > 0.875) v *= 0.55 + 0.45 * Math.sin((tSec / (3 + 3 * hash(x, y, 31))) * Math.PI * 2 + tw * 50)
+    v *= 1 - 0.6 * this.kSmoke
+    const tint = hash(x + 5, y + 77, 3)
+    const [tr, tg, tb] = tint < 0.3 ? [0.84, 0.9, 1] : tint > 0.88 ? [1, 0.93, 0.84] : [0.96, 0.96, 0.98]
+    return lightColor(v * tr, v * tg, v * tb, bits)
+  }
+
+  /**
+   * This frame as a picture `w` × `h` pixels (square), RGBA, the open sky
+   * transparent: for a terminal that draws images. A new size's ground is
+   * built at most `budget` pixels a call; until it's all built (and at level
+   * 0) there is no picture: draw `grid()`.
+   */
+  picture(w: number, h: number, budget = Infinity): Uint8Array | undefined {
+    if (this.strength <= 0 || w < 2 || h < 2) return undefined
+    let L = this.pic
+    if (!L || L.pw !== w || L.ph !== h) L = this.pic = layout(w, h, 1, h > w)
+    if (L.done < w) {
+      build(L, budget)
+      if (L.done < w) return undefined
+    }
+    let cv = this.canvas
+    if (!cv || cv.w !== w || cv.h !== h) {
+      cv = this.canvas = { w, h, px: new Int32Array(w * h), alpha: new Float32Array(w * h), rgba: new Uint8Array(w * h * 4) }
+    }
+    const d = this.dials()
+    const { px, alpha, rgba } = cv
+    px.fill(CLEAR)
+    alpha.fill(0)
+    this.paintWorld(L, px, alpha, d)
+
+    // Stars: a pixel each in the open sky, as thick across the sky as the specks are.
+    const tSec = (d.t * FRAME_MS) / 1000
+    const density = 0.011 * (1 + d.boost / 30) * ((L.s * L.sy) / (BAND_S * BAND_S))
+    for (let y = 0; y < h; y++) {
+      const row = L.row0 + (y + 0.5) * L.sy
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x
+        if (L.near[i] || px[i] !== CLEAR) continue
+        const v = this.star(x, y, L.col0 + (x + 0.5) * L.s, row, density, tSec, 0xff)
+        if (v < 0) continue
+        px[i] = this.tinted(v)
+        alpha[i] = 1
+      }
+    }
+
+    // Waiting on the person: the same sepia breath as the cells'.
+    const lift = d.wait > 0 ? waitLift(d.wait, d.t) : 1
+    const glow = d.wait > 0 ? waitGlow(d.wait, d.t) : 0
+    for (let i = 0, o = 0; i < w * h; i++, o += 4) {
+      let c = px[i]!
+      if (c === CLEAR) {
+        rgba[o + 3] = 0
+        continue
+      }
+      if (d.wait > 0) c = waitColor(c, d.wait, lift, SEPIA_AMOUNT, glow)
+      rgba[o] = (c >> 16) & 255
+      rgba[o + 1] = (c >> 8) & 255
+      rgba[o + 2] = c & 255
+      rgba[o + 3] = Math.round(clamp(alpha[i]!) * 255)
+    }
+    return rgba
+  }
+
+  pictureKey(w: number, h: number): string {
+    return `earthrise-ground-v${GROUND_VERSION}-${w}x${h}`
+  }
+
+  pictureCache(): { key: string; data: Float32Array } | undefined {
+    const L = this.pic
+    return L && L.done >= L.pw ? { key: this.pictureKey(L.pw, L.ph), data: L.ground } : undefined
+  }
+
+  restorePicture(w: number, h: number, data: Float32Array): boolean {
+    if (w < 2 || h < 2 || data.length !== w * h) return false
+    const L = layout(w, h, 1, h > w)
+    L.ground.set(data)
+    L.done = w
+    markNear(L)
+    this.pic = L
+    return true
+  }
+}
+
+/** The view for `pw` × `ph` pixels, each `ry` times as tall as it is wide; its ground not yet built. */
+function layout(pw: number, ph: number, ry: number, tall: boolean): Layout {
+  let s: number
+  let col0: number
+  let row0: number
+  let ex: number
+  let er: number
+  let eyLow: number
+  let eyHigh: number
+  if (pw <= 0 || ph <= 0) {
+    s = 1
+    col0 = row0 = 0
+    ex = EC_X
+    er = ER
+    eyLow = eyHigh = EC_Y
+  } else if (!tall) {
+    // A picture's pixels are square and many: the Earth a share of its height. The cells' are BAND_S across.
+    const pic = ry === 1
+    const rpx = pic ? PIC_R * ph : BAND_R
+    s = pic ? (ER * PIC_SIZE) / (rpx * ry) : BAND_S
+    const sy = ry * s
+    er = rpx * sy
+    col0 = 100 - 0.5 * pw * s
+    const k = Math.min(1, (SPAN * F) / (pw * s))
+    const skyAt = (col: number) => skyline(((col - 100) / F) * k)
+    // Where the skyline falls, across the band: its middle sets how much ground shows.
+    const sky: number[] = []
+    for (let i = 0; i < 24; i++) sky.push(skyAt(col0 + ((i + 0.5) / 24) * pw * s))
+    sky.sort((p, q) => p - q)
+    row0 = sky[12]! - (pic ? PIC_SKY : BAND_SKY) * ph * sy
+    // The Earth: where the skyline under it dips lowest.
+    ex = col0 + BAND_TO * pw * s
+    let low = -Infinity
+    for (let i = 0; i <= 12; i++) {
+      const col = col0 + (BAND_FROM + ((BAND_TO - BAND_FROM) * i) / 12) * pw * s
+      const under = Math.min(skyAt(col - er * 0.6), skyAt(col), skyAt(col + er * 0.6))
+      if (under > low) {
+        low = under
+        ex = col
+      }
+    }
+    // Its top kept in the band, a little clear of the edge.
+    const top = row0 + er + Math.max(0.4 * sy, 0.08 * er)
+    eyLow = Math.max(top, low + er * (2 * HID_CALM - 1))
+    eyHigh = Math.max(top, low + er * (2 * HID_BUSY - 1))
+  } else {
+    // As wide as the Earth wants of the width, or no more than four tenths of the height.
+    s = Math.max((2 * ER) / (EARTH_W * pw), (2 * ER) / (0.4 * ry * ph))
+    col0 = EC_X - 0.5 * pw * s
+    row0 = EC_Y - EARTH_DOWN * ph * ry * s
+    ex = EC_X
+    er = ER
+    eyLow = EC_Y + SPINE_LOW * ER
+    eyHigh = EC_Y - SPINE_HIGH * ER
+  }
+  const sy = ry * s
+  const sub = Math.max(1, Math.min(GROUND_SUB, Math.round(sy)))
+  const rows = ph * sub
+  const at = new Float32Array(rows)
+  for (let i = 0; i < rows; i++) at[i] = row0 + ((i + 0.5) / sub) * sy
+  return {
+    pw,
+    ph,
+    s,
+    sy,
+    col0,
+    row0,
+    k: Math.min(1, (SPAN * F) / (Math.max(1, pw) * s)),
+    ex,
+    eyLow,
+    eyHigh,
+    er,
+    ground: new Float32Array(pw * ph).fill(-1),
+    near: new Uint8Array(pw * ph),
+    done: 0,
+    sub,
+    at,
+    steps: ry === 1 ? PIC_STEPS : GROUND_STEPS,
+  }
+}
+
+/**
+ * Build `L`'s ground on from where it got to, about `budget` pixels' worth:
+ * march each pixel column from near to far, then light what each pixel sees.
+ * Once the last column is in, mark where the Earth can reach.
+ */
+function build(L: Layout, budget: number): void {
+  const { pw, ph, s, sy, col0, row0, k, ex, er, sub, at, ground } = L
+  if (L.done >= pw) return
+  const rows = ph * sub
+  if (gx.length < rows) {
+    gx = new Float32Array(rows)
+    gz = new Float32Array(rows)
+    gy = new Float32Array(rows)
+  }
+  const cam = camY()
+  let spent = 0
+  while (L.done < pw && spent < budget) {
+    const x = L.done++
+    const col = col0 + (x + 0.5) * s
+    const ang = ((col - 100) / F) * k
+    const sx = Math.sin(ang)
+    const cz = Math.cos(ang)
+    // The sample rows still sky above the ground found so far: [0, top).
+    let top = rows
+    let D = 3
+    let prevY = 0
+    let prevD = 0
+    let prevF = 1e9
+    let skyline = Infinity
+    while (D < ZMAX && top > 0) {
+      const X = sx * D
+      const Z = cz * D
+      const hy = height(X, Z)
+      const Y = hy - (D * D) / (2 * RM)
+      const yf = EYE - (F * (Y - cam)) / D
+      while (top > 0 && at[top - 1]! >= yf) {
+        const i = --top
+        // Between this sample and the last, by where its row falls.
+        const a = prevF > yf + 1e-6 ? clamp((prevF - at[i]!) / (prevF - yf)) : 1
+        const dd = prevD ? lerp(prevD, D, a) : D
+        gx[i] = sx * dd
+        gz[i] = cz * dd
+        gy[i] = prevD ? lerp(prevY, hy, a) : hy
+      }
+      skyline = Math.min(skyline, yf)
+      prevF = yf
+      prevY = hy
+      prevD = D
+      D += 0.03 + D * 0.012
+    }
+    // Each pixel: the ground if most of its samples are, lit as their mean.
+    for (let y = 0; y < ph; y++) {
+      let sum = 0
+      let m = 0
+      for (let j = 0; j < sub; j++) {
+        const i = y * sub + j
+        if (i < top) continue
+        sum += groundLight(gx[i]!, gz[i]!, gy[i]!, cam, (at[i]! - skyline) / sy)
+        m++
+      }
+      if (m * 2 > sub) ground[y * pw + x] = sum / m
+    }
+    spent += Math.max(1, rows - top) + 16
+  }
+  if (L.done >= pw) markNear(L)
+}
+
+/** Where the Earth and its air can reach, as it climbs and sinks: the sky round it, once the ground is in. */
+function markNear(L: Layout): void {
+  const { pw, ph, s, sy, col0, row0, ex, er, ground } = L
+  const air = (13 * er) / ER
+  for (let y = 0; y < ph; y++) {
+    const row = row0 + (y + 0.5) * sy
+    if (row <= L.eyHigh - er - air - sy || row >= L.eyLow + er + air) continue
+    for (let x = 0; x < pw; x++) {
+      const col = col0 + (x + 0.5) * s
+      const i = y * pw + x
+      if (ground[i]! < 0 && Math.abs(col - ex) < er + air) L.near[i] = 1
+    }
+  }
 }
 
 export const earthriseScene = defineScene({
   name: 'earthrise',
-  blurb: 'the Earth over the moon, turning faster with the work',
+  blurb: 'the Earth over the moon, rising and turning faster with the work',
   make: seed => new Earthrise(seed),
 })

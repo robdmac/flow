@@ -1,4 +1,4 @@
-// REVISION: flow-v172-earthrise
+// REVISION: flow-v173-pictures
 //
 // The scenes, all driven by the same dials (strength 0..10, coverage boost,
 // the agents one by one, tint, night, waiting): SCENES, the one list of them (each scene file exports its
@@ -67,6 +67,18 @@ export interface Scene {
   sounds?: SoundEvent[]
   /** What it's doing now, for its soundscape's background. */
   ambience?(): Ambience
+  /**
+   * This frame at real pixels, `w` × `h` (square), RGBA with the open sky
+   * transparent, for a terminal that draws images (pi's, earthrise's alone
+   * so far). A new size may take a while to make, `budget` a call: until
+   * then (and at level 0) undefined, and the adapter draws `grid()`.
+   */
+  picture?(w: number, h: number, budget?: number): Uint8Array | undefined
+  /** What a picture's size takes long to make, to keep across runs (`key` names it): once it's made, else undefined. */
+  pictureCache?(): { key: string; data: Float32Array } | undefined
+  /** The key `pictureCache` would give a picture `w` × `h`, and taking back what was kept under it (false: not usable). */
+  pictureKey?(w: number, h: number): string
+  restorePicture?(w: number, h: number, data: Float32Array): boolean
 }
 
 function defOf(style: SceneName): SceneDef {
