@@ -1,4 +1,4 @@
-// REVISION: flow-v42-renderer-polish
+// REVISION: flow-v170-dry-scenes
 //
 // The balloon's clouds are drawn by a painter (layered.ts), asked cell by
 // cell for the world rows the clouds live in. Painters are pure and
@@ -32,6 +32,6 @@ export interface CloudPainter {
   readonly name: string
   /** One line describing the look. */
   readonly description: string
-  /** The cell at a world position, or undefined for open sky. */
+  /** The cell at a world position, or undefined for open sky (it may be one object, refilled: read it before the next call). */
   cell(c: CloudContext): CloudCell | undefined
 }

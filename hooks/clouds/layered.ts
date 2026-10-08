@@ -19,7 +19,7 @@
 // blended toward each layer's color by its coverage.
 
 import { clamp01, hash, mix, noise2 as noise, rampStops, smoothstep } from '../pixels'
-import type { CloudPainter } from './types'
+import type { CloudCell, CloudPainter } from './types'
 
 const TOP_HALF = 0x2580 // ▀
 
@@ -372,6 +372,9 @@ export function snap(c: number, sky: number): number {
   return (ch(16) << 16) | (ch(8) << 8) | ch(0)
 }
 
+/** What `cell` hands back, refilled each call. */
+const sample: CloudCell = { glyph: TOP_HALF, fg: 0, bg: 0 }
+
 export const layered: CloudPainter = {
   name: 'layered',
   description: 'changes with height: soft cumulus low, broken banks mid, cirrus streaks high',
@@ -379,6 +382,8 @@ export const layered: CloudPainter = {
     const top = half(x, y + 0.25, sky)
     const bot = half(x, y - 0.25, sky)
     if (top === sky && bot === sky) return undefined
-    return { glyph: TOP_HALF, fg: top, bg: bot }
+    sample.fg = top
+    sample.bg = bot
+    return sample
   },
 }

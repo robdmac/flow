@@ -500,8 +500,6 @@ type Ghost = { part: Part; d: number; v: number; acc: number; life: number; max:
 
 /** The layer (world rows) where the climbing stack separates: about level 7. */
 const SEP_LAYER = 80
-/** Frames a landed Falcon stands at the landing zone before it's moved back to the pad. */
-const LANDED_FRAMES = 42
 
 
 // Flight. Aloft, the level picks a layer of the atmosphere (world rows, the
@@ -1040,7 +1038,7 @@ abstract class LaunchSite extends SkyWorld {
         const mid = (this.bodyPx + this.spec.bodyW / 2) >> 1
         return x === mid || (this.spec.bodyW > 2 && x === mid - 1) ? TRENCH : PAD
       }
-      if (x < this.shore()) return { glyph: SEA.glyph, fg: mix(SEA.fg, 0x10243c, this.dark), bg: mix(SEA.bg!, 0x0a1628, this.dark) }
+      if (x < this.shore()) return this.cellOf(SEA.glyph, mix(SEA.fg, 0x10243c, this.dark), mix(SEA.bg!, 0x0a1628, this.dark))
       if (!this.look.catches && this.lz && x >= this.lzL() && x <= this.lzL() + Math.ceil(this.spec.land.w / 2)) return PAD
     }
     return super.scenery(x, y, sky)
@@ -1202,7 +1200,12 @@ abstract class LaunchSite extends SkyWorld {
   /** A cloud sample from the layered painter into cFg / cBg (top and bottom half). */
   private cloud(x: number, y: number, sky: number): boolean {
     if (y < CLOUD_LO || y > CLOUD_HI) return false
-    const c = layered.cell({ x: x / PAINT, y: y / PAINT, sky, t: this.t })
+    const at = this.cloudAt
+    at.x = x / PAINT
+    at.y = y / PAINT
+    at.sky = sky
+    at.t = this.t
+    const c = layered.cell(at)
     if (!c) return false
     this.cFg = this.cloudLight(c.fg, sky)
     this.cBg = this.cloudLight(c.bg ?? sky, sky)

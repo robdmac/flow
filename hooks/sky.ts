@@ -24,6 +24,7 @@
 
 import { Cells, DEFAULT_COLOR, freshSeed } from './cells'
 import { layered, snap } from './clouds/layered'
+import type { CloudContext } from './clouds/types'
 import type { Tint } from './styles'
 import { easeNight, MOON, MOON_ACROSS, MOON_ROW, NIGHT_HORIZON, NIGHT_ZENITH, STAR, STAR_DIM } from './night'
 import { g, hash, lowerBlock, mix, rampStops } from './pixels'
@@ -101,6 +102,15 @@ const C = {
 
 export type SceneryCell = { glyph: number; fg: number; bg?: number }
 
+const GRASS = g('▀')
+const TREE = g('♣')
+const HOUSE = g('⌂')
+const MOON_GLYPH = g('●')
+const BIRD_UP = g('v')
+const BIRD_DOWN = g('~')
+const STAR_BIG = g('*')
+const STAR_SMALL = g('·')
+
 export abstract class SkyWorld {
   strength = 8
   coverageBoost = 0
@@ -124,6 +134,9 @@ export abstract class SkyWorld {
   protected rowBg: number[] = []
   protected alt = 0
   protected t = 0
+  /** What `scenery` hands back, refilled each call (`cellOf`), and what it asks the clouds with. */
+  private readonly sc: SceneryCell = { glyph: 0x20, fg: 0 }
+  protected readonly cloudAt: CloudContext = { x: 0, y: 0, sky: 0, t: 0 }
 
   constructor(seed = freshSeed()) {
     this.t = seed % 10_000
@@ -228,11 +241,23 @@ export abstract class SkyWorld {
     return k >= 1 ? m : mix(c, m, k)
   }
 
+  /**
+   * A scenery cell, in the one object `scenery` hands back: read it before
+   * asking for the next (the grid is drawn a cell at a time; nothing is allocated).
+   */
+  protected cellOf(glyph: number, fg: number, bg?: number): SceneryCell {
+    const s = this.sc
+    s.glyph = glyph
+    s.fg = fg
+    s.bg = bg
+    return s
+  }
+
   /** What stands on the ground row at world column x: trees and houses by default (lit at night). */
   protected groundFeature(x: number): SceneryCell | undefined {
     const h = hash(x, 0, 1)
-    if (h < 0.06) return { glyph: g('♣'), fg: mix(C.tree, C.treeNight, this.dark) }
-    if (h < 0.08) return { glyph: g('⌂'), fg: mix(C.house, C.window, this.dark) }
+    if (h < 0.06) return this.cellOf(TREE, mix(C.tree, C.treeNight, this.dark))
+    if (h < 0.08) return this.cellOf(HOUSE, mix(C.house, C.window, this.dark))
     return undefined
   }
 
@@ -245,31 +270,37 @@ export abstract class SkyWorld {
     const i = r * this.columns + x
     if (x < this.columns && out.codePoint(i) === 0x20) {
       const bg = out.background(i)
-      out.set(i, g('●'), k >= 1 ? MOON : mix(bg, MOON, k), bg)
+      out.set(i, MOON_GLYPH, k >= 1 ? MOON : mix(bg, MOON, k), bg)
     }
   }
 
-  /** The scenery at world (x, y), or undefined for open sky. */
+  /** The scenery at world (x, y), or undefined for open sky (see `cellOf`: read it before the next). */
   protected scenery(x: number, y: number, sky: number): SceneryCell | undefined {
-    if (y === -1) return { glyph: g('▀'), fg: mix(C.grass, C.grassNight, this.dark) }
+    if (y === -1) return this.cellOf(GRASS, mix(C.grass, C.grassNight, this.dark))
     if (y === 0) return this.groundFeature(x)
     if (y < -1) return undefined
     // Clouds drift together at one speed, drawn at the sky's scale; birds and
     // stars ride the wind of their own row, which can't shear a single cell.
     const drift = Math.floor((this.t * CLOUD_DRIFT) % 100_000)
-    let cloud = y >= CLOUDS_FROM && y <= CLOUDS_TO
-      ? layered.cell({ x: (x + drift) / SCALE, y: y / SCALE, sky, t: this.t })
-      : undefined
-    if (cloud) {
-      // Lit for the hour, then snapped to a few steps off the sky (see snap).
-      const fg = snap(this.cloudLight(cloud.fg, sky), sky)
-      const bg = snap(this.cloudLight(cloud.bg ?? sky, sky), sky)
-      cloud = fg === sky && bg === sky ? undefined : { glyph: cloud.glyph, fg, bg }
+    let cloud: SceneryCell | undefined
+    if (y >= CLOUDS_FROM && y <= CLOUDS_TO) {
+      const at = this.cloudAt
+      at.x = (x + drift) / SCALE
+      at.y = y / SCALE
+      at.sky = sky
+      at.t = this.t
+      const c = layered.cell(at)
+      if (c) {
+        // Lit for the hour, then snapped to a few steps off the sky (see snap).
+        const fg = snap(this.cloudLight(c.fg, sky), sky)
+        const bg = snap(this.cloudLight(c.bg ?? sky, sky), sky)
+        if (fg !== sky || bg !== sky) cloud = this.cellOf(c.glyph, fg, bg)
+      }
     }
     x += this.wind(y)
     if (y >= 2 && y <= 14 * SCALE && hash(x, y, 2) < 0.005) {
       // A bird in front of a cloud takes the cloud behind it, not a box of sky.
-      return { glyph: g((this.t >> 3) % 2 ? 'v' : '~'), fg: C.bird, bg: cloud ? (cloud.bg ?? cloud.fg) : undefined }
+      return this.cellOf((this.t >> 3) % 2 ? BIRD_UP : BIRD_DOWN, C.bird, cloud ? (cloud.bg ?? cloud.fg) : undefined)
     }
     if (cloud) return cloud
     if (y >= STARS_FROM || (this.dark > 0 && y >= 2)) {
@@ -279,7 +310,7 @@ export abstract class SkyWorld {
       const h = hash(x, y, 7)
       if (h < p) {
         const twinkle = hash(x, y + (this.t >> 2), 8) < 0.15
-        return { glyph: g(h < p * 0.2 ? '*' : '·'), fg: twinkle ? STAR_DIM : STAR }
+        return this.cellOf(h < p * 0.2 ? STAR_BIG : STAR_SMALL, twinkle ? STAR_DIM : STAR)
       }
     }
     return undefined
