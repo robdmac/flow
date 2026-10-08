@@ -101,7 +101,7 @@ In fire, surf, ski, balloon, falcon, starship, engine and train, each running su
 | Scene | Arrives | Working | Quiet (nothing for 20 s) | Waiting on you (a permission dialog, its question) | Done |
 |---|---|---|---|---|---|
 | `fire` | the main fire narrows to make room and a small fire of its own kindles beside it, sparks catching (on alternate sides, a dark gap between each) | burns bright and lively, taller the busier the scene | dies down to low, glowing embers | its embers pulse a bright glow, quicker than the waiting fire's breath | burns out with a last puff of smoke and the gap closes, the main fire widening back (failed: snuffed out at once, in grey smoke) |
-| `surf` | paddles in from the edge | paddles hard, or rides a following wave | sits up on its board, bobbing | sits up waving an arm | paddles off out of sight |
+| `surf` | paddles in from the edge | paddles hard, or rides a following wave; on a big swell, rides the big wave with the surfer | sits up on its board, bobbing | sits up waving an arm | paddles off out of sight |
 | `ski` | skis in from behind | carves S-turns, throwing spray | pulls over to the side, standing on its poles | waves a pole overhead | tucks and skis off ahead (failed: drops back) |
 | `balloon` | rises into view from below | flies high, burner flickering | burner out, sinks low | its envelope blinks | climbs away off the top (failed: sinks away below) |
 | `falcon`, `starship` | an escort flies in from the side | holds station beside the rocket on a small plume like the rocket's own, pitching over with it into orbit | engine off, drops back, a light blinking | an amber beacon flashes | peels off and climbs away (failed: tumbles away trailing smoke) |

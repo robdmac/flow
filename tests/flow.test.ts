@@ -1,4 +1,4 @@
-// REVISION: flow-v143-fire-crew
+// REVISION: flow-v144-surf-riders
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -3393,6 +3393,46 @@ test('companion scenes: a working companion and a resting one look different', (
     return cells
   }
   expect(flames('working')).toBeGreaterThan(flames('idle') * 2)
+})
+
+test('surf: on a big swell a working companion rides the wave with the surfer, standing on its face clear of them; a resting one does not', () => {
+  type Inner = {
+    cx: number
+    Wf: number
+    crew: Crew
+    surferX(): number
+    surfaceAt(x: number): number
+    matePose(m: unknown): string
+  }
+  for (const [columns, rows] of [[120, 5], [250, 5], [22, 40], [13, 30]] as const) {
+    for (const level of [8, 10]) {
+      const at = `${columns}×${rows} level ${level}`
+      const look = (state: 'working' | 'idle') => {
+        const f = makeScene('surf', 7)
+        const inner = f as unknown as Inner
+        f.strength = level
+        f.ensure(columns, rows)
+        const poses: string[] = []
+        for (let i = 0; i < 300; i++) {
+          f.agents = [dial('a', state)]
+          f.step()
+          if (i < 200) continue
+          const m = inner.crew.mates[0]!
+          const pose = inner.matePose(m)
+          poses.push(pose)
+          if (pose !== 'ride' && pose !== 'crouch') continue
+          // On the face (ahead of the crest, short of the foot), on its surface, and a rider apart from the surfer.
+          expect([at, m.x > inner.cx && m.x < inner.cx + inner.Wf]).toEqual([at, true])
+          const sx = inner.surferX()
+          expect([at, Math.hypot(m.x - sx, inner.surfaceAt(m.x) - inner.surfaceAt(sx)) >= 4]).toEqual([at, true])
+        }
+        return poses
+      }
+      const working = look('working')
+      expect([at, working.every(p => p === 'ride' || p === 'crouch')]).toEqual([at, true])
+      expect([at, look('idle').some(p => p === 'ride' || p === 'crouch')]).toEqual([at, false])
+    }
+  }
 })
 
 test('desktop: the pointer over a subagent\'s companion shows its task and what it is doing', { options: { style: 'surf' } }, async ($, on) => {
