@@ -893,6 +893,45 @@ test('soundscapes: a bed never has more than two takes going, leaving the player
     expect(most).toBeLessThanOrEqual(2)
     expect(MAX_PLAYS - most).toBeGreaterThanOrEqual(2)
   }
+  // Silent just after a take renewed (the one before still fading out), back at once, then a new mood: every
+  // take is stopped with the silence, so the bed still never holds more than two.
+  const takes: (BedTake | undefined)[] = []
+  const live = new Map<number, number>()
+  const roaring = { scene: 'falcon', level: 5, tint: 'normal' as const, night: false, amb: { roar: 1 } }
+  let seed = 1
+  let most = 0
+  let renewed = -1
+  let silent = -1
+  for (let ms = 0; ms < 40_000; ms += 70) {
+    const quiet = silent >= 0 && ms < silent + 140
+    const amb = quiet ? {} : silent >= 0 && ms >= silent + 3500 ? { roar: 1, wind: 1 } : roaring.amb
+    const level = silent >= 0 && ms >= silent + 3500 ? 10 : 5
+    const { play, stop } = bedStep(takes, { ...roaring, level, amb }, ms, seed++)
+    for (const id of stop) if (live.has(id)) live.set(id, Math.min(live.get(id)!, ms + 100))
+    for (const p of play) {
+      live.set(p.id, ms + BED_MS + PLAYER_DRAIN_MS)
+      if (ms > 0 && renewed < 0) renewed = ms
+    }
+    if (renewed >= 0 && silent < 0 && ms >= renewed + 500) silent = ms
+    for (const [id, end] of live) if (end <= ms) live.delete(id)
+    most = Math.max(most, live.size)
+  }
+  expect(silent).toBeGreaterThan(0)
+  expect(most).toBeLessThanOrEqual(2)
+})
+
+test('soundscapes: a bed take the player refuses for good is replaced at once, not left silent till it would renew', { options: { mode: 'manual', level: 5, sound: 'on' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  let refusals = 5
+  const seen = engine(on, undefined, asset => asset.includes('/bed-') && refusals-- > 0)
+  await start($)
+  const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
+  const beds = () => (seen.played ?? []).filter(p => p.asset?.includes('/bed-')).length
+  await clock.advance(2000)
+  // Tried five times (refused), then a fresh take, well before the ~10 s a take lasts before it renews.
+  expect(beds()).toBe(6)
+  await ui.unmount()
 })
 
 test('soundscapes: a scene holds only a few events for the adapter, so one that never takes them (pi) stays bounded', () => {

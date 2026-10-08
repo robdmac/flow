@@ -1,4 +1,4 @@
-// REVISION: flow-v125-chime
+// REVISION: flow-v150-review-fixes
 //
 // Soundscapes. Claude Code's `$.audio.play` plays a clip (macOS `afplay`) at a
 // gain set when it starts; it can't loop smoothly or change a clip as it
@@ -14,8 +14,8 @@
 //   for events.
 // - Events: what happens on screen (a stage separating, a sonic boom, the
 //   catch, splashdown) plays its clip at once (`EVENTS`); small, dense ones
-//   (a bubble bursting, a spark) are synthesized here and gathered a quarter
-//   second at a time into one clip (`burst`), each at its moment.
+//   (a bubble bursting, a spark) are synthesized here and gathered a second
+//   at a time into one clip (`burst`), each at its moment.
 // - The volume: the sound setting (`/flow sound 1-10`) scales every play as it
 //   starts (`volumeGain`), never past the gain at which a clip clips.
 // - The chime: when Claude starts waiting on the person (a permission, a
@@ -225,7 +225,7 @@ class Mix {
 
 const decay = (dt: number, tau: number) => Math.exp(-dt / tau)
 
-/** A clip to play and how loud (linear gain, 0..4). */
+/** A clip to play and how loud (linear gain, capped at MAX_GAIN). */
 export type Play = { asset: string; gain: number }
 
 /** One layer of a scene's bed: a clip with `variants` takes, at a gain from the mood (`s`: the level, 0..1). */
@@ -497,7 +497,7 @@ export function bedPlay(mood: SoundMood, _stream: number, seed: number, not: str
   if (gain <= 0.01) return undefined
   let a = asset(`${mood.scene}/bed-${key}`, BED_TAKES, seed)
   for (let k = 1; not.includes(a) && k < 64; k++) a = asset(`${mood.scene}/bed-${key}`, BED_TAKES, seed + k * 7919)
-  return { asset: a, gain: Math.min(1.4, gain) }
+  return { asset: a, gain: Math.min(MAX_GAIN, gain) }
 }
 
 /** How many bed streams a scene has: one, or none (silent). */
@@ -511,8 +511,32 @@ export function bedGap(seed: number): number {
   return BED_MIN_MS + ((h >>> 8) % (BED_EVERY_MS - BED_MIN_MS + 1))
 }
 
-/** A bed's take playing now: its clip and gain, when it started, when the next is due, the take it's replacing (stopped `hold` ms in: once this one has faded in, or sooner when the old one is the louder), from when it plays alone, and the volume it plays at. */
-export type BedTake = { id: number; asset: string; gain: number; at: number; due: number; retire?: number; hold: number; alone: number; volume: number }
+/**
+ * A bed's take playing now: its clip and gain, when it started, when the next
+ * is due, the take it's replacing (stopped `hold` ms in: once this one has
+ * faded in, or sooner when the old one is the louder), from when it plays
+ * alone, the volume it plays at, when it leaves the player (`end`), and the
+ * take before it (`prev`: its id and when it leaves the player), stopped
+ * with it should the bed fall silent while that one still fades.
+ */
+export type BedTake = {
+  id: number
+  asset: string
+  gain: number
+  at: number
+  due: number
+  retire?: number
+  hold: number
+  alone: number
+  volume: number
+  end: number
+  prev?: { id: number; end: number }
+  /** The bed fell silent: no take plays, and those it stopped have left the player by this time. */
+  quiet?: number
+}
+
+/** A take stopped leaves the player this long after (afplay exiting). */
+const STOPPED_MS = 100
 
 /**
  * One frame of a scene's bed: which takes to start (`play`, each with an id
@@ -535,17 +559,27 @@ export function bedStep(
   const stop: number[] = []
   const volume = mood.volume ?? DEFAULT_VOLUME
   for (let i = 0; i < bedLayers(mood.scene); i++) {
-    const t = takes[i]
+    const slot = takes[i]
+    // (A bed fallen silent keeps its slot, quiet, till the takes it stopped have left the player.)
+    const quiet = slot?.quiet
+    const t = quiet === undefined ? slot : undefined
     if (t?.retire !== undefined && clock - t.at >= t.hold) {
       stop.push(t.retire)
       t.retire = undefined
     }
     const want = bedPlay(mood, i, seed * 32 + i, t ? [t.asset] : [])
     if (!want) {
-      if (t) stop.push(t.id, ...(t.retire !== undefined ? [t.retire] : []))
-      takes[i] = undefined
+      // Silent: this take, the one it's replacing, and the one before still fading out, all at once.
+      if (t) {
+        stop.push(t.id)
+        if (t.retire !== undefined) stop.push(t.retire)
+        if (t.prev && t.prev.end > clock && t.prev.id !== t.retire) stop.push(t.prev.id)
+        takes[i] = { ...t, retire: undefined, prev: undefined, quiet: clock + STOPPED_MS }
+      } else if (quiet !== undefined && clock >= quiet) takes[i] = undefined
       continue
     }
+    // Sound again straight after a silence: once what it stopped has gone.
+    if (quiet !== undefined && clock < quiet) continue
     const due = !t || clock >= t.due
     const mix = (asset: string) => asset.replace(/\d\.m4a$/, '')
     // (Only once the take before has gone, so the bed never holds more than two of the player's few plays.)
@@ -553,13 +587,44 @@ export function bedStep(
     if (!due && !moved) continue
     const id = seed * 32 + i
     const from = t && !moved ? t.due : clock
-    const hold = moved && volumeGain(want.gain, volume) < volumeGain(t!.gain, t!.volume) ? BED_FADE_MS / 3 : BED_FADE_MS
     // (A take holds its place in the player till afplay exits: stopped, a moment after; played out, its drain after.)
-    const alone = moved ? clock + hold + 100 : t ? t.at + BED_MS + PLAYER_DRAIN_MS : clock
-    takes[i] = { id, asset: want.asset, gain: want.gain, at: clock, due: Math.max(clock + BED_MIN_MS, from + bedGap(id)), retire: moved ? t!.id : undefined, hold, alone, volume }
+    const hold = moved
+      ? volumeGain(want.gain, volume) < volumeGain(t!.gain, t!.volume) ? BED_FADE_MS / 3 : BED_FADE_MS
+      : t?.retire !== undefined ? Math.max(0, t.at + t.hold - clock) : BED_FADE_MS
+    // The take before this one, still in the player: the one it replaces (stopped once this is in), or the one
+    // fading out (the later to leave of the last take and its own before, should the last have been refused).
+    const prev = !t ? undefined : moved ? { id: t.id, end: clock + hold + STOPPED_MS } : t.prev && t.prev.end > t.end ? t.prev : { id: t.id, end: t.end }
+    const alone = prev ? Math.max(clock, prev.end) : clock
+    takes[i] = {
+      id,
+      asset: want.asset,
+      gain: want.gain,
+      at: clock,
+      due: Math.max(clock + BED_MIN_MS, from + bedGap(id)),
+      // (A take refused before its own crossfade was done hands the stop of the one it replaced on.)
+      retire: moved ? t!.id : t?.retire,
+      hold,
+      alone,
+      volume,
+      end: clock + BED_MS + PLAYER_DRAIN_MS,
+      prev,
+    }
     play.push({ ...want, id })
   }
   return { play, stop }
+}
+
+/**
+ * A bed's take the player refused for good (full every time it was tried):
+ * it never played, so it's done now and its next is due at once, the next
+ * frame's `bedStep` starting a fresh one rather than leave the bed silent
+ * till the take would have renewed.
+ */
+export function bedFailed(takes: (BedTake | undefined)[], id: number, clock: number): void {
+  const t = takes.find(t => t?.id === id && t.quiet === undefined)
+  if (!t) return
+  t.end = clock
+  t.due = clock
 }
 
 /**
@@ -610,8 +675,8 @@ export function chimePlay(seed: number): Play {
 /** An event's clip at the scene's volume, or undefined when it's synthesized (gathered into a `burst`). */
 export function eventPlay(e: SoundEvent, seed: number, scene: string, level: number): Play | undefined {
   const c = EVENTS[e.kind]
-  // (Clips peak near full scale and afplay's gain multiplies: past ~1.4 it clips.)
-  return c && { asset: asset(c.clip, c.variants, seed), gain: Math.min(1.4, c.gain(e.v) * master(scene, level)) }
+  // (Clips peak near full scale and afplay's gain multiplies: past MAX_GAIN it clips.)
+  return c && { asset: asset(c.clip, c.variants, seed), gain: Math.min(MAX_GAIN, c.gain(e.v) * master(scene, level)) }
 }
 
 /** Each event's voice: how long it rings, and its sound. */

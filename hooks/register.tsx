@@ -89,7 +89,7 @@ import {
 } from './sessions'
 import { SCENES, styleNamed, type SceneName } from './styles'
 import { frameSvg } from './svg'
-import { type BedTake, bedStep, burst, chimePlay, chimeStep, gather, MAX_PLAYS, newChimeState, unit, eventPlay, master, type SoundEvent, volumeGain } from './sound'
+import { type BedTake, bedFailed, bedStep, burst, chimePlay, chimeStep, gather, MAX_PLAYS, newChimeState, unit, eventPlay, master, type SoundEvent, volumeGain } from './sound'
 import {
   hiddenNote,
   hotkeyFor,
@@ -971,13 +971,19 @@ export const register: Register = (on, options) => {
       if (!heard || !shownScene) {
         if (sound.scene) stopSound()
       } else {
+        // Another scene (or the first heard frame): what played before stops, before anything of this one starts.
+        if (cfg.style !== sound.scene) {
+          stopSound()
+          sound.scene = cfg.style
+        }
         // A clip: one of the plugin's own (`asset`) or synthesized here (base64 WAV). Claude Code plays at
         // most MAX_PLAYS at once for a plugin: a clip finding them all going stops the oldest event clip
         // (`take` undefined) first (a tail cut beats a strike unheard, or the bed dropping out); a refused
-        // one tries again a moment on.
+        // one tries again a moment on (a bed's take stopping an event clip each time: busy events never
+        // keep the bed out).
         const play = (clip: { asset: string } | { base64: string; mime: string }, gain = 1, take?: number, tries = 0): void => {
           const event = take === undefined
-          if (tries === 0 && sound.playing.size >= MAX_PLAYS) sound.events.shift()?.abort()
+          if ((tries === 0 || !event) && sound.playing.size >= MAX_PLAYS) sound.events.shift()?.abort()
           const stop = new AbortController()
           sound.playing.add(stop)
           if (event) sound.events.push(stop)
@@ -991,7 +997,12 @@ export const register: Register = (on, options) => {
           void $.audio
             .play(clip, { gain: volumeGain(gain, cfg.volume), signal: stop.signal })
             .catch((err: unknown) => {
-              if (!String(err).includes('at once') || tries >= 4 || stop.signal.aborted) return
+              if (!String(err).includes('at once') || stop.signal.aborted) return
+              if (tries >= 4) {
+                // A bed's take refused for good: its next is due now, so the bed comes back next frame.
+                if (take !== undefined && sound.takes.get(take) === stop && current(gen)) bedFailed(sound.bed, take, sound.clock)
+                return
+              }
               retrying = true
               $.clock.after(50, () => {
                 if (!current(gen) || (take !== undefined && sound.takes.get(take) !== stop)) return
@@ -1028,10 +1039,6 @@ export const register: Register = (on, options) => {
         }
         // (A rocket acts its level out a stage at a time: its own strength is the one to hear.)
         const level = shownScene.strength
-        if (cfg.style !== sound.scene) {
-          stopSound()
-          sound.scene = cfg.style
-        }
         // (The volume too: a change crossfades a fresh take in rather than wait for the next.)
         const mood = { scene: cfg.style, level, tint: driver.tint(), night: driver.isNight(), amb: shownScene.ambience?.() ?? {}, volume: cfg.volume }
         const beds = bedStep(sound.bed, mood, sound.clock, sound.seed++)
