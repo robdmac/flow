@@ -1,4 +1,4 @@
-// REVISION: flow-v160-mini-rockets
+// REVISION: flow-v171-dry-adapter
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -6,6 +6,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { AsciiFire, colorFor, params } from '../hooks/fire'
 import { effortFloor, Activity, linesWritten, WAIT_LEVEL } from '../hooks/activity'
 import { firstTips, nextTip, readTips, changedText, changesFor, helpText, isNightAt, ownHint, parseFlowArgs, readConfig, resetText, savedText, staleRows, statusText } from '../hooks/settings'
+import { CLAUDE_CODE, type FlowAdapter, replyTo } from '../hooks/settings'
 import { differences, type Own, ownAfterSwitch, pinShown, readOwn, readRecord, SESSION_KEPT_MS, SESSIONS_KEPT, sessionKey, staleSessions, storedOwn, storedRecord, withOwn } from '../hooks/sessions'
 import { gridToAnsi } from '../pi/ansi'
 import { effortOf, ownInSession, piLinesWritten } from '../pi/mapping'
@@ -20,7 +21,7 @@ import { migrateOverrides, openSession, runScene, type SceneCtx } from '../hooks
 import { coverage, frameSvg, gridPixels, SVG_LIMIT } from '../hooks/svg'
 import { Cells, isTall } from '../hooks/cells'
 import { SceneDriver } from '../hooks/scene'
-import { BED_EVERY_MS, BED_FADE_MS, BED_MIN_MS, BED_MS, BURST_MAX, CHIME_DELAY_MS, CHIME_QUIET_MS, MAX_PLAYS, MOODS, PLAYER_DRAIN_MS, PLAYER_LEAD_MS, type BedTake, bedGap, bedPlays, bedStep, burst, chimePlay, chimeStep, EVENTS, eventPlay, gather, LAYERS, newChimeState } from '../hooks/sound'
+import { BED_EVERY_MS, BED_FADE_MS, BED_MIN_MS, BED_MS, BURST_MAX, CHIME_DELAY_MS, CHIME_QUIET_MS, MAX_PLAYS, MOODS, PLAYER_DRAIN_MS, PLAYER_LEAD_MS, type BedTake, bedGap, bedPlay, bedStep, burst, chimePlay, chimeStep, EVENTS, eventPlay, gather, LAYERS, newChimeState } from '../hooks/sound'
 import { DEFAULT_VOLUME, MAX_GAIN, master, VOLUME_DB, volumeGain } from '../hooks/sound'
 import { BREATH_FRAMES, breath, easeWait, waitTone } from '../hooks/waiting'
 import { SOUND_FILES } from '../hooks/sound-files'
@@ -28,6 +29,10 @@ import { PixelScene, type Dials, type Painter } from '../hooks/pixel-scene'
 import { hotkeyFor, labelWidth, PICK_LEVEL, pickLayout, pickRows, sceneOfKey, Thumbnails } from '../hooks/picker'
 import { agentLine, DONE_MS, QUIET_MS, Roster, runTime } from '../hooks/agents'
 import { Crew, type AgentMark } from '../hooks/crew'
+import { beckon, easeTo, failed, finished, resting, type Mate } from '../hooks/crew'
+import { easeNight } from '../hooks/night'
+import { rampAt, rampStops, retain } from '../hooks/pixels'
+import { freshSeed } from '../hooks/cells'
 
 const BAND = {
   component: 'AbovePrompt',
@@ -710,7 +715,8 @@ test('soundscapes: the volume is 3 dB a step below the default, and above it a l
   for (const scene of STYLES)
     for (let level = 0; level <= 10; level++)
       for (let volume = 1; volume <= 10; volume++) {
-        for (const p of bedPlays({ scene, level, tint: 'normal', night: false, amb }, level) ?? []) expect(volumeGain(p.gain, volume)).toBeLessThanOrEqual(1.4)
+        const p = bedPlay({ scene, level, tint: 'normal', night: false, amb }, level)
+        if (p) expect(volumeGain(p.gain, volume)).toBeLessThanOrEqual(1.4)
         for (const kind of Object.keys(EVENTS) as (keyof typeof EVENTS)[])
           expect(volumeGain(eventPlay({ kind, v: 1 }, level, scene, level)!.gain, volume)).toBeLessThanOrEqual(1.4)
         expect(volumeGain(master(scene, level), volume)).toBeLessThanOrEqual(1.4)
@@ -746,7 +752,7 @@ test('the volume scales every clip as it plays, the bed and the bursts alike; a 
   await start($)
   const ui = await $.ui.mount({ plugin: 'flow', surface: 'terminal', ...BAND })
   // The fire's bed, and its sparks' bursts (synthesized here: no file), as tuned.
-  const bed = bedPlays({ scene: 'fire', level: 9, tint: 'normal', night: false, amb: {} }, 1)![0]!.gain
+  const bed = bedPlay({ scene: 'fire', level: 9, tint: 'normal', night: false, amb: {} }, 1)!.gain
   const sparks = master('fire', 9)
   const near = (a: number | undefined, b: number) => expect(Math.abs((a ?? Number.NaN) - b)).toBeLessThan(1e-9)
   const heard = async (ms: number) => {
@@ -988,13 +994,15 @@ test('soundscapes: every scene has a bed for every mood, every clip it and the e
     let heard = 0
     for (let level = 0; level <= 10; level++)
       for (const amb of ambs)
-        for (let seed = 0; seed < 6; seed++)
-          for (const p of bedPlays({ scene, level, tint: 'normal', night: false, amb }, seed) ?? []) {
+        for (let seed = 0; seed < 6; seed++) {
+          const p = bedPlay({ scene, level, tint: 'normal', night: false, amb }, seed)
+          if (p) {
             heard++
             expect(files.has(p.asset)).toBe(true)
             // Clips peak at -2 to -3 dBFS and afplay's gain multiplies: past MAX_GAIN it clips.
             expect(p.gain).toBeLessThanOrEqual(MAX_GAIN)
           }
+        }
     expect(heard).toBeGreaterThan(0)
   }
   for (const kind of Object.keys(EVENTS) as (keyof typeof EVENTS)[])
@@ -1769,6 +1777,45 @@ test('settings: the shared /flow grammar applies the same changes everywhere', a
   expect(statusText({ ...cfg, mode: 'manual', level: 3 }, 3, 'normal', { hour: 12, minute: 0 }).split('\n')[0]).toBe('fire, holding 3/10')
 })
 
+test('settings: every adapter answers /flow the same way (replyTo): the status, the help, a mistake, save, reset, a change', async () => {
+  const calls: string[] = []
+  const cfg = readConfig(undefined)
+  const defaults = readConfig({ style: 'surf' })
+  const clock = { hour: 21, minute: 5 }
+  const claude: FlowAdapter = {
+    host: CLAUDE_CODE,
+    agent: "Claude's",
+    cfg,
+    clock,
+    defaults,
+    level: () => 4,
+    tint: () => 'smoke',
+    save: async () => (calls.push('save'), { text: 'saved' }),
+    reset: async () => (calls.push('reset'), 'reset'),
+    change: async changes => {
+      calls.push(`change ${JSON.stringify(changes)}`)
+      Object.assign(cfg, changes)
+      return '  (note)'
+    },
+  }
+  expect(await replyTo(parseFlowArgs(''), claude)).toEqual({ text: statusText(cfg, 4, 'smoke', clock, defaults) })
+  expect(await replyTo(parseFlowArgs('help'), claude)).toEqual({ text: helpText() })
+  const wrong = parseFlowArgs('nonsense')
+  expect(await replyTo(wrong, claude)).toEqual({ text: wrong.kind === 'error' ? wrong.text : '', level: 'warning' })
+  expect(await replyTo(parseFlowArgs('save'), claude)).toEqual({ text: 'saved' })
+  expect(await replyTo(parseFlowArgs('reset'), claude)).toEqual({ text: 'reset' })
+  expect(calls).toEqual(['save', 'reset'])
+  // A change: the adapter keeps it, and the reply is the change's words, then the adapter's note.
+  expect(await replyTo(parseFlowArgs('ski night'), claude)).toEqual({ text: 'ski, night · `/flow next` for another  (note)' })
+  expect(calls.at(-1)).toBe('change {"style":"ski","time":"night"}')
+  expect(cfg).toMatchObject({ style: 'ski', time: 'night' })
+  // pi: its own words and what it has (no panes, no player); without session entries, no defaults to compare with.
+  const pi: FlowAdapter = { ...claude, host: { panes: false, sound: false }, agent: "pi's", defaults: undefined }
+  expect((await replyTo(parseFlowArgs(''), pi)).text).toBe(statusText(cfg, 4, 'smoke', clock, undefined, pi.host))
+  expect((await replyTo(parseFlowArgs('help'), pi)).text).toBe(helpText("pi's", pi.host))
+  expect((await replyTo(parseFlowArgs('auto'), pi)).text).toBe("auto — moves with pi's work  (note)")
+})
+
 test('balloon: sits on the grass at 1, climbs to space at 10, eases back down', async () => {
   const b = new Balloon(1)
   b.ensure(60, 5)
@@ -2291,18 +2338,29 @@ test('sessions: the defaults changing under a running session (another one\'s sa
   expect(seen.rows).toMatchObject({ 'flow.style': 'fire', 'flow.sound': 'off' })
 })
 
-test('pi: two sessions on one flow.json: B saves, then A changes and saves exactly what it shows', async () => {
-  let json: Record<string, unknown> = {}
-  const file = {
-    load: async () => readConfig(json),
-    save: async (changes: Own) => {
-      json = { ...json, ...storedOwn(changes) }
+/** flow.json in memory, as PiSettings reads and writes it (`disk.json`: what it holds). */
+function flowJson() {
+  const disk = {
+    json: {} as Record<string, unknown>,
+    file: {
+      load: async () => readConfig(disk.json),
+      save: async (changes: Own) => {
+        disk.json = { ...disk.json, ...storedOwn(changes) }
+      },
     },
   }
-  const sessionOf = (): SessionEntries & { entries: PiSessionEntry[] } => {
-    const entries: PiSessionEntry[] = []
-    return { entries, branch: () => entries, keep: data => void entries.push({ type: 'custom', id: String(entries.length), customType: 'flow', data }) }
-  }
+  return disk
+}
+
+/** A pi session's entries, in memory. */
+function piSession(): SessionEntries & { entries: PiSessionEntry[] } {
+  const entries: PiSessionEntry[] = []
+  return { entries, branch: () => entries, keep: data => void entries.push({ type: 'custom', id: String(entries.length), customType: 'flow', data }) }
+}
+
+test('pi: two sessions on one flow.json: B saves, then A changes and saves exactly what it shows', async () => {
+  const disk = flowJson()
+  const file = disk.file
   /** `/flow <args>` as the adapter runs it: flow.json read afresh first. */
   const run = async (s: PiSettings, entries: SessionEntries, args: string) => {
     await s.refresh(entries)
@@ -2311,24 +2369,24 @@ test('pi: two sessions on one flow.json: B saves, then A changes and saves exact
     if (cmd.kind === 'reset') return s.reset(entries)
     return s.change(changesFor(cmd, s.cfg) ?? {}, entries)
   }
-  const sa = sessionOf()
-  const sb = sessionOf()
+  const sa = piSession()
+  const sb = piSession()
   const a = new PiSettings(readConfig(undefined), file)
   const b = new PiSettings(readConfig(undefined), file)
   await a.open(sa)
   await b.open(sb)
   await run(b, sb, 'surf')
   expect(await run(b, sb, 'save')).toBe('saved as your default: new sessions start with surf')
-  expect(json.style).toBe('surf')
+  expect(disk.json.style).toBe('surf')
   expect(a.cfg.style).toBe('fire')
   await run(a, sa, 'night')
   expect(await run(a, sa, 'save')).toBe('saved as your default: new sessions start with fire, night')
-  expect(json).toMatchObject({ style: 'fire', time: 'night' })
+  expect(disk.json).toMatchObject({ style: 'fire', time: 'night' })
   expect(a.cfg).toMatchObject({ style: 'fire', time: 'night' })
   expect(ownInSession(sa.entries)).toEqual({})
   // A new session, and A resumed: exactly as A shows.
   const c = new PiSettings(readConfig(undefined), file)
-  await c.open(sessionOf())
+  await c.open(piSession())
   expect(c.cfg).toEqual(a.cfg)
   const a2 = new PiSettings(readConfig(undefined), file)
   await a2.open(sa)
@@ -2343,23 +2401,14 @@ test('pi: two sessions on one flow.json: B saves, then A changes and saves exact
   const old = new PiSettings(readConfig(undefined), file)
   await old.open(undefined)
   await old.change({ style: 'ski' }, undefined)
-  expect(json.style).toBe('ski')
+  expect(disk.json.style).toBe('ski')
 })
 
 test("pi: the volume is a session's own too: /flow sound 4 in one leaves the other, and flow.json, as they were", async () => {
-  let json: Record<string, unknown> = {}
-  const file = {
-    load: async () => readConfig(json),
-    save: async (changes: Own) => {
-      json = { ...json, ...storedOwn(changes) }
-    },
-  }
-  const sessionOf = (): SessionEntries & { entries: PiSessionEntry[] } => {
-    const entries: PiSessionEntry[] = []
-    return { entries, branch: () => entries, keep: data => void entries.push({ type: 'custom', id: String(entries.length), customType: 'flow', data }) }
-  }
-  const sa = sessionOf()
-  const sb = sessionOf()
+  const disk = flowJson()
+  const file = disk.file
+  const sa = piSession()
+  const sb = piSession()
   const a = new PiSettings(readConfig(undefined), file)
   const b = new PiSettings(readConfig(undefined), file)
   await a.open(sa)
@@ -2368,14 +2417,14 @@ test("pi: the volume is a session's own too: /flow sound 4 in one leaves the oth
   expect(a.cfg).toMatchObject({ sound: 'on', volume: 4 })
   expect(ownInSession(sa.entries)).toEqual({ sound: 'on', volume: 4 })
   expect(b.cfg).toMatchObject({ sound: 'off', volume: 7 })
-  expect(json).toEqual({})
+  expect(disk.json).toEqual({})
   // Resumed: its own volume back.
   const a2 = new PiSettings(readConfig(undefined), file)
   await a2.open(sa)
   expect(a2.cfg.volume).toBe(4)
   // Saved: flow.json's; B shows what it showed (its own now) until it's reset.
   expect((await a.save(sa)).text).toBe('saved as your default: new sessions start with sound on, volume 4/10')
-  expect(json).toMatchObject({ sound: 'on', volume: 4 })
+  expect(disk.json).toMatchObject({ sound: 'on', volume: 4 })
   await b.refresh(sb)
   expect(b.cfg).toMatchObject({ sound: 'off', volume: 7 })
   expect(b.reset(sb)).toBe('back to your default: sound on, volume 4/10')
@@ -3926,4 +3975,67 @@ test("the picker on desktop counts its close Button's row: the grid and it fit t
       expect(l.height).toBeLessThanOrEqual(rows)
     }
   }
+})
+
+test('night falls at one pace everywhere: as asked at the start, eased after, landing on it', () => {
+  expect(easeNight(-1, true)).toBe(1)
+  expect(easeNight(-1, false)).toBe(0)
+  let k = 0
+  let frames = 0
+  while (k < 1 && frames < 1000) {
+    k = easeNight(k, true)
+    frames++
+  }
+  // Half way in about a second (14 fps), all the way in a few.
+  expect(frames).toBeGreaterThan(40)
+  expect(frames).toBeLessThan(120)
+  expect(k).toBe(1)
+})
+
+test('ramps: evenly spaced stops and placed ones, held to their ends', () => {
+  const stops = [0x000000, 0x808080, 0xffffff]
+  expect(rampAt(stops, -1)).toBe(0x000000)
+  expect(rampAt(stops, 0.5)).toBe(0x808080)
+  expect(rampAt(stops, 2)).toBe(0xffffff)
+  const placed = [[0, 0x000000], [10, 0xff0000], [30, 0x00ff00]] as const
+  expect(rampStops(placed, 5)).toBe(0x800000)
+  expect(rampStops(placed, 99)).toBe(0x00ff00)
+})
+
+test('retain keeps what passes, in order, in the same array', () => {
+  const list = [1, 2, 3, 4, 5, 6]
+  retain(list, n => n % 2 === 0)
+  expect(list).toEqual([2, 4, 6])
+})
+
+test('a scene made without a seed gets a fresh one each time: no clock, never the same twice', () => {
+  const a = freshSeed()
+  const b = freshSeed()
+  expect(a).not.toBe(b)
+  expect(Number.isInteger(a) && a >= 0).toBe(true)
+})
+
+test('companions alike in every scene: resting, beckoning out of step by slot, leaving well or not', () => {
+  const crew = new Crew(4)
+  crew.update([
+    { id: 'a', state: 'idle', ok: true, task: '', type: '', ms: 0 },
+    { id: 'b', state: 'waiting', ok: true, task: '', type: '', ms: 0 },
+  ])
+  for (let i = 0; i < 40; i++) crew.update([
+    { id: 'a', state: 'idle', ok: true, task: '', type: '', ms: 0 },
+    { id: 'b', state: 'waiting', ok: true, task: '', type: '', ms: 0 },
+  ])
+  const a: Mate = crew.inSlot(0)!
+  const b: Mate = crew.inSlot(1)!
+  expect(resting(a) && resting(b)).toBe(true)
+  // A blink of about four frames on, four off; the next slot out of step.
+  const on = Array.from({ length: 16 }, (_, t) => beckon(b, t))
+  expect(on.filter(Boolean).length).toBe(8)
+  expect(Array.from({ length: 16 }, (_, t) => beckon(a, t))).not.toEqual(on)
+  crew.update([{ id: 'b', state: 'done', ok: false, task: '', type: '', ms: 0 }])
+  expect(finished(a) && !failed(a)).toBe(true)
+  expect(failed(b) && !finished(b)).toBe(true)
+  expect(resting(a)).toBe(false)
+  expect(easeTo(Number.NaN, 5, 0.1)).toBe(5)
+  expect(easeTo(0, 10, 0.5)).toBe(5)
 })

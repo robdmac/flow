@@ -1,4 +1,4 @@
-// REVISION: flow-v147-slim-probes
+// REVISION: flow-v170-dry-scenes
 //
 // A colony ship on the same dials as the fire: the level is its speed. A
 // long ship like the Avalon holds steady (nose to the right in the band,
@@ -55,10 +55,10 @@
 // glyphs; the bare spine, the shield, rocks and embers are braille dots.
 
 import type { AgentDial } from './agents'
-import { Cells, DEFAULT_COLOR, Rng, isTall } from './cells'
-import { Crew, smooth, type AgentMark, type Mate } from './crew'
+import { Cells, DEFAULT_COLOR, freshSeed, Rng, isTall } from './cells'
+import { beckon, Crew, easeTo, resting, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
-import { BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, NEAR, noise2, QUAD, type QuadFit } from './pixels'
+import { BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, NEAR, noise2, QUAD, retain, smooth, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
 import { hear, leadFrames, type SoundEvent } from './sound'
 import { easeWait, waitTone } from './waiting'
@@ -293,9 +293,9 @@ export class Colony {
   private sa = 0
   private sc = 0
 
-  constructor(seed?: number) {
+  constructor(seed = freshSeed()) {
     this.rng = new Rng(seed)
-    this.seedBase = (seed ?? this.rng.int()) % 100_000
+    this.seedBase = seed % 100_000
     this.voyage = new Rng(this.seedBase * 7919 + 17)
     this.gapLeft = this.between(VOYAGE.first)
   }
@@ -428,7 +428,7 @@ export class Colony {
     // The habitat turns at its own steady pace, whatever the speed.
     this.spin = (this.spin + 0.022) % TAU
     for (const hit of this.hits) hit.age++
-    this.hits = this.hits.filter(hit => hit.age < RIPPLE)
+    retain(this.hits, hit => hit.age < RIPPLE)
     this.stepRocks()
     this.stepMotes()
     this.stepProbes()
@@ -604,7 +604,7 @@ export class Colony {
         const y = v ? row * 2 - drift : row * 2
         const n = 0.65 * noise2(x / 11, y / 7, seed) + 0.35 * noise2(x / 4.5, y / 3, seed + 1)
         const dense = clamp((n - 0.28) / 0.5)
-        const light = Math.round(dense * dense * (3 - 2 * dense) * k * BACK_STEPS) / BACK_STEPS
+        const light = Math.round(smooth(dense) * k * BACK_STEPS) / BACK_STEPS
         if (light <= 0) continue
         const hue = Math.round(noise2(x / 15, y / 9, seed + 2) * 3) / 3
         this.backBg[row * w + col] = this.backTint(mix(0, mix(ca, cb, hue), light), light)
@@ -645,13 +645,8 @@ export class Colony {
     this.bayGlow = 0
     for (const m of this.crew.mates) {
       this.station(m)
-      if (Number.isNaN(m.x)) {
-        m.x = this.sa
-        m.y = this.sc
-      } else {
-        m.x += (this.sa - m.x) * 0.05
-        m.y += (this.sc - m.y) * 0.05
-      }
+      m.x = easeTo(m.x, this.sa, 0.05)
+      m.y = easeTo(m.y, this.sc, 0.05)
       if (!m.leaving && 1 - m.p > this.bayGlow) {
         this.bayGlow = 1 - m.p
         this.bayColor = PROBE.drive[m.slot % PROBES]!
@@ -685,7 +680,7 @@ export class Colony {
     }
     const v = this.rockSpeed
     const lead = leadFrames(this.strength, this.tint)
-    this.rocks = this.rocks.filter(rock => {
+    retain(this.rocks, rock => {
       rock.a -= v * rock.k
       rock.c = clamp(rock.c + rock.dc, lo, hi - 1)
       rock.ang += rock.spin * (1 + v * 0.3)
@@ -721,7 +716,7 @@ export class Colony {
   /** Embers cool and drift back onto the shield; (smoke tint) puffs coughed out of the engine. */
   private stepMotes(): void {
     const drift = 0.04 + this.rockSpeed * 0.04
-    this.embers = this.embers.filter(m => {
+    retain(this.embers, m => {
       m.va = m.va * 0.86 - drift
       m.vc *= 0.88
       m.a += m.va
@@ -744,7 +739,7 @@ export class Colony {
         max: life,
       })
     }
-    this.smoke = this.smoke.filter(m => {
+    retain(this.smoke, m => {
       m.a += m.va
       m.c += m.vc
       return --m.life > 0 && m.a > -4
@@ -1261,9 +1256,9 @@ export class Colony {
     const lit = !dead && !(smoke && flick < 0.3) && drive > 0.3
     const glow = smoke ? C.plumeSmoke[0] : PROBE.drive[slot]!
     const hull = dead ? PROBE.dead : PROBE.hull[slot]!
-    const resting = !m.leaving && m.busy < 0.5
-    const beacon = resting && m.waiting && ((this.t + slot * 3) >> 2) % 2 === 0
-    const running = resting && !m.waiting && (this.t + slot * 9) % 30 < 3
+    const quiet = resting(m)
+    const beacon = quiet && m.waiting && beckon(m, this.t)
+    const running = quiet && !m.waiting && (this.t + slot * 9) % 30 < 3
     const sprite = v ? PROBE_TALL : PROBE_WIDE
     let minX = x0
     let maxX = x0

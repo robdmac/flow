@@ -1,11 +1,12 @@
-// REVISION: flow-v150-review-fixes
+// REVISION: flow-v171-dry-adapter
 //
 // Flow's settings and the `/flow` command's grammar, shared by every harness adapter (Claude Code's
 // register.tsx, pi's pi/index.ts). Pure: no engine imports. Replies carry no
 // `flow:` prefix: Claude Code adds the plugin's name itself; pi's adapter adds it.
 // `/flow` changes only the session it runs in; `/flow save` makes the
 // session's settings the default new sessions start with, and `/flow reset`
-// puts a session back on it (sessions.ts keeps each session's own).
+// puts a session back on it (sessions.ts keeps each session's own). Each
+// adapter answers `/flow` through `replyTo`, keeping a change its own way.
 
 import { DEFAULT_VOLUME } from './sound'
 import { hasNight, nextStyle, STYLES, styleNamed, type SceneName } from './styles'
@@ -258,16 +259,16 @@ function differingItems(a: FlowConfig, b: FlowConfig): Item[] {
 
 const inWords = (cfg: FlowConfig, items: readonly Item[]) => items.map(i => itemText(cfg, i)).join(', ')
 
-/**
- * `/flow` with no arguments: the scene, the mode and level now, any tint, the
- * time of day; then, where this session's settings differ from the default
- * (`defaults`, what new sessions start with), what the default has instead.
- */
 /** What the harness can do that `/flow` speaks of: side panes (the spine, the picker's thumbnails), and a player for the soundscape. */
 export type Host = { panes: boolean; sound: boolean }
 /** Claude Code: both. */
 export const CLAUDE_CODE: Host = { panes: true, sound: true }
 
+/**
+ * `/flow` with no arguments: the scene, the mode and level now, any tint, the
+ * time of day; then, where this session's settings differ from the default
+ * (`defaults`, what new sessions start with), what the default has instead.
+ */
 export function statusText(cfg: FlowConfig, levelNow: number, tint: string, clock: Clock, defaults?: FlowConfig, host: Host = CLAUDE_CODE): string {
   const parts = [`${cfg.style}`]
   parts.push(
@@ -370,6 +371,56 @@ export function changesFor(cmd: FlowCommand, cfg: FlowConfig): Partial<FlowConfi
     }
     default:
       return undefined
+  }
+}
+
+/** A `/flow` reply: its text, and how pi shows it (a warning: a command not taken, a save that failed). */
+export type FlowReply = { text: string; level?: 'info' | 'warning' }
+
+/**
+ * What `/flow` needs of an adapter: the settings it shows (changed in place),
+ * what's on now, and keeping a change, a save or a reset its own way (Claude
+ * Code in its store and /config, pi in the session and flow.json).
+ */
+export interface FlowAdapter {
+  readonly host: Host
+  /** Whose work auto mode follows: "Claude's", "pi's". */
+  readonly agent: string
+  readonly cfg: FlowConfig
+  readonly clock: Clock
+  /** The defaults the status compares with (none: every session shares one set, so nothing is this session's alone). */
+  readonly defaults: FlowConfig | undefined
+  /** The level now, and the tint showing. */
+  level(): number
+  tint(): string
+  /** `/flow save`, `/flow reset`: the reply. */
+  save(): Promise<FlowReply>
+  reset(): Promise<string>
+  /** Apply a change, and keep it: a note for the reply after the change's own words. */
+  change(changes: Partial<FlowConfig>): Promise<string>
+}
+
+/**
+ * `/flow <cmd>`'s reply, once the adapter has read the defaults afresh: the
+ * status, the help, what was wrong with it, or the save, reset or change done.
+ * (`/flow pick` is each adapter's own: it chooses a scene, and that's `/flow <scene>`.)
+ */
+export async function replyTo(cmd: FlowCommand, a: FlowAdapter): Promise<FlowReply> {
+  switch (cmd.kind) {
+    case 'show':
+      return { text: statusText(a.cfg, a.level(), a.tint(), a.clock, a.defaults, a.host) }
+    case 'help':
+      return { text: helpText(a.agent, a.host) }
+    case 'error':
+      return { text: cmd.text, level: 'warning' }
+    case 'save':
+      return a.save()
+    case 'reset':
+      return { text: await a.reset() }
+    default: {
+      const note = await a.change(changesFor(cmd, a.cfg) ?? {})
+      return { text: `${changedText(cmd, a.cfg, a.agent, a.clock)}${note}` }
+    }
   }
 }
 

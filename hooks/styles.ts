@@ -1,4 +1,4 @@
-// REVISION: flow-v143-fire-crew
+// REVISION: flow-v170-dry-scenes
 //
 // The scenes, all driven by the same dials (strength 0..10, coverage boost,
 // the agents one by one, tint, night, waiting): SCENES, the one list of them (each scene file exports its
@@ -14,15 +14,15 @@
 // the bottom, glowing and fading with each slow breath (waiting.ts).
 
 import type { AgentDial } from './agents'
-import { Crew, type AgentMark, type Mate } from './crew'
+import { Crew, failed, type AgentMark, type Mate } from './crew'
 import { AsciiFire, colorFor, glyphFor, params, SMOKE_TIPS } from './fire'
-import { Cells, Rng } from './cells'
+import { Cells, freshSeed, Rng } from './cells'
 export type { Cells }
 import { heatColor, smokeColor } from './fire-palette'
-import { BRAILLE, clamp, hash1, lowerBlock, mix } from './pixels'
+import { BRAILLE, clamp, hash1, lowerBlock, mix, rampAt, smooth } from './pixels'
 import { breath, easeWait, waitTone } from './waiting'
 import { defineScene, type SceneDef } from './scene-def'
-import type { Ambience, SoundEvent } from './sound'
+import { hear, type Ambience, type SoundEvent } from './sound'
 import { balloonScene } from './balloon'
 import { avalonScene } from './colony'
 import { engineScene } from './engine'
@@ -72,7 +72,8 @@ function defOf(style: SceneName): SceneDef {
   return SCENES.find(d => d.name === style)!
 }
 
-export function makeScene(style: SceneName, seed?: number): Scene {
+/** A new scene; `seed` makes it repeatable (tests, previews), else each one made starts its own way. */
+export function makeScene(style: SceneName, seed = freshSeed()): Scene {
   return defOf(style).make(seed)
 }
 
@@ -114,6 +115,8 @@ const COALS = [0x3a0a04, 0x781806, 0xb8320c, 0xe85a18, 0xff8c2a, 0xffbe58] as co
 const PULSE = [0x4a1206, 0x9a2a0a, 0xe85a18, 0xffa83a, 0xffd878, 0xfff2c0] as const
 /** Frames a waiting companion's pulse takes: about a second. */
 const PULSE_FRAMES = 14
+/** Where a glow (0..1) sits along COALS and PULSE: never quite at the brightest stop. */
+const SHY = 4.999 / 5
 
 /** Companion fires: the most the band shows; frames to arrive and to leave. */
 const CREW_MAX = 6
@@ -170,9 +173,9 @@ class Ember implements Scene {
   private rows = 0
   private t = 0
 
-  constructor(seed?: number) {
+  constructor(seed = freshSeed()) {
     this.core = new AsciiFire(seed)
-    this.rng = new Rng((seed ?? Date.now()) ^ 0x27d4eb2f)
+    this.rng = new Rng(seed ^ 0x27d4eb2f)
   }
 
   get strength(): number {
@@ -222,14 +225,12 @@ class Ember implements Scene {
 
   /** How far a companion's place has opened (0..1): first the room, then the fire in it; last to go as it leaves. */
   private static open(m: Mate): number {
-    const k = clamp(m.p * 2)
-    return k * k * (3 - 2 * k)
+    return smooth(clamp(m.p * 2))
   }
 
   /** How alight a companion's fire is (0..1): it kindles once its place opens; done, it burns out (failed: snuffed at once). */
   private static flame(m: Mate): number {
-    const k = m.leaving && !m.ok ? clamp((m.p - 0.75) / 0.25) : clamp((m.p - 0.35) / 0.65)
-    return k * k * (3 - 2 * k)
+    return smooth(failed(m) ? clamp((m.p - 0.75) / 0.25) : clamp((m.p - 0.35) / 0.65))
   }
 
   /**
@@ -386,7 +387,7 @@ class Ember implements Scene {
         if (tip < 0 || this.rng.f() >= chance) continue
         // A pilot only lets off the odd wisp of smoke, never a spark.
         const heat = s === 1 ? SMOKE_AT : 0.72 + 0.25 * this.rng.f()
-        if (heat > SMOKE_AT && this.sounds.length < 16) this.sounds.push({ kind: 'crack', v: heat })
+        if (heat > SMOKE_AT) hear(this.sounds, { kind: 'crack', v: heat })
         this.sparks.push({
           x: x * 2 + this.rng.f() * 2,
           y: tip * 4,
@@ -443,7 +444,7 @@ class Ember implements Scene {
       if (r >= FAINTEST) {
         const o = owner[i % w]!
         const mate = o >= 0 ? bySlot[o] : undefined
-        const snuffed = mate !== undefined && mate.leaving && !mate.ok
+        const snuffed = failed(mate)
         // A failed companion's fire is snuffed: what's left of it goes grey.
         const fg = snuffed
           ? heatColor(s, Math.min(r, 0.98) * SMOKE_TIPS, 'smoke')
@@ -491,8 +492,7 @@ class Ember implements Scene {
       // Each coal its own heat, shimmering a little, all swelling with the breath.
       const own = 0.45 + 0.4 * hash1(x * 131 + 3) + 0.15 * hash1(x * 977 + (this.t >> 3))
       const heat = own * (0.4 + 0.6 * b)
-      const v = Math.round(Math.min(1, heat) * 20) / 20 * (COALS.length - 1.001)
-      const fg = mix(COALS[Math.floor(v)]!, COALS[Math.floor(v) + 1]!, v - Math.floor(v))
+      const fg = rampAt(COALS, (Math.round(Math.min(1, heat) * 20) / 20) * SHY)
       out.set(i, tall ? 0x2588 : lowerBlock(4 + Math.floor(hash1(x * 17 + 1) * 5)), fg)
       const j = i - w
       if (tall && hash1(x * 53 + 11) < 0.7 && this.core.cells[j]! / peak < 0.45)
@@ -520,8 +520,7 @@ class Ember implements Scene {
         const pulse = 0.5 - 0.5 * Math.cos(((this.t % PULSE_FRAMES) / PULSE_FRAMES) * 2 * Math.PI)
         for (let x = x0; x < x1; x++) {
           const own = 0.8 + 0.2 * hash1(x * 131 + 3 + (this.t >> 2))
-          const v = Math.round(clamp(own * k * (0.45 + 0.55 * pulse)) * 15) / 15 * (PULSE.length - 1.001)
-          const fg = mix(PULSE[Math.floor(v)]!, PULSE[Math.floor(v) + 1]!, v - Math.floor(v))
+          const fg = rampAt(PULSE, (Math.round(clamp(own * k * (0.45 + 0.55 * pulse)) * 15) / 15) * SHY)
           const i = (h - 1) * w + x
           out.set(i, tall ? 0x2588 : lowerBlock(3 + Math.round(pulse * 5)), fg)
           if (tall && pulse > 0.25) out.set(i - w, lowerBlock(1 + Math.round(pulse * 6)), fg)

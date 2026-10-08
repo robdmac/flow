@@ -1,4 +1,4 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v172-cleanup-followups
 //
 // Bubbles (the `bubbles` style): a glass of fizz on the same dials as the
 // fire; the level is the fizz. At 1 a couple of airstones let lazy bubbles
@@ -20,10 +20,11 @@
 // creamy line of head at the top. While Claude waits on the person it settles
 // to a few slow strings, the whole glass breathing in sepia (waiting.ts).
 
-import { Cells, Rng } from './cells'
-import type { SoundEvent } from './sound'
+import { Cells, freshSeed, Rng } from './cells'
+import { hear, type SoundEvent } from './sound'
 import type { Tint } from './styles'
-import { BRAILLE, clamp, hash1, mix } from './pixels'
+import { BRAILLE, clamp, hash1, mix, rampAt } from './pixels'
+import { easeNight } from './night'
 import { defineScene } from './scene-def'
 import { easeWait, waitTone } from './waiting'
 
@@ -60,7 +61,6 @@ const COLD_TOP = 0x26357e
 const COLD_BOTTOM = 0x0c1238
 /** Brightness steps, so the frame holds few distinct colors. */
 const STEPS = 12
-
 type Bubble = { x: number; y: number; bx: number; r: number; r0: number; vy: number; ph: number; fq: number }
 type Stream = { x: number; life: number; rate: number; wait: number }
 type Drop = { x: number; y: number; vx: number; vy: number }
@@ -69,9 +69,7 @@ type Ripple = { x: number; age: number; amp: number }
 
 /** A ramp's color at brightness `b` (0..1), quantized to STEPS. */
 function ramp(stops: readonly number[], b: number): number {
-  const v = (Math.round(clamp(b) * STEPS) / STEPS) * (stops.length - 1)
-  const i = Math.min(stops.length - 2, Math.floor(v))
-  return mix(stops[i]!, stops[i + 1]!, v - i)
+  return rampAt(stops, Math.round(clamp(b) * STEPS) / STEPS)
 }
 
 export class Bubbles {
@@ -114,9 +112,9 @@ export class Bubbles {
   /** What lit each cell's brightest dot: 0 bubble, 1 surface, 2 silt. */
   private kind = new Uint8Array(0)
 
-  constructor(seed?: number) {
+  constructor(seed = freshSeed()) {
     this.rng = new Rng(seed)
-    this.seedN = (seed ?? 0) | 0
+    this.seedN = seed | 0
   }
 
   ensure(columns: number, rows: number): void {
@@ -206,8 +204,7 @@ export class Bubbles {
     this.kMurk += clamp((this.tint === 'smoke' ? 1 : 0) - this.kMurk, -0.05, 0.05)
     this.kCold += clamp((this.tint === 'blue' ? 1 : 0) - this.kCold, -0.04, 0.04)
     this.kWait = easeWait(this.kWait, this.waiting)
-    if (this.kNight < 0) this.kNight = this.night ? 1 : 0
-    this.kNight += clamp((this.night ? 1 : 0) - this.kNight, -0.04, 0.04)
+    this.kNight = easeNight(this.kNight, this.night)
     if (this.fresh) {
       // Begin mid-fizz, not with an empty glass: run the column full once.
       this.fresh = false
@@ -321,7 +318,8 @@ export class Bubbles {
   private pop(b: Bubble): void {
     const amp = 0.35 + b.r * 0.35
     if (this.ripples.length < 120) this.ripples.push({ x: b.x, age: 0, amp })
-    if (this.sounds.length < 24) this.sounds.push({ kind: 'pop', v: Math.min(1, b.r / 2.5) })
+    // (Its own cap, past hear()'s: a busy surface bursts more than 16 in a frame, and every one is heard.)
+    hear(this.sounds, { kind: 'pop', v: Math.min(1, b.r / 2.5) })
     const n = b.r < 0.7 ? (this.rng.f() < 0.3 ? 1 : 0) : Math.round(1 + b.r * 1.2 + this.rng.f() * 2)
     for (let i = 0; i < n && this.drops.length < MAX_DROPS; i++) {
       const a = (this.rng.f() - 0.5) * 2.2

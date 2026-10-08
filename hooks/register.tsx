@@ -1,4 +1,4 @@
-// REVISION: flow-v150-review-fixes
+// REVISION: flow-v172-cleanup-followups
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -43,7 +43,7 @@
 // does, this session alone), Esc to close.
 
 import { atom, update } from 'claude-code'
-import type { BoxProps, CommandRunInput, CommandRunResult, ElementConstructor, EngineInterface, Register, RenderElement, TextProps, Timer } from 'claude-code'
+import type { BoxProps, CommandRunInput, CommandRunResult, ElementConstructor, Elements, EngineInterface, Register, RenderElement, TextProps, Timer } from 'claude-code'
 
 import { Balloon } from './balloon'
 import { Activity, linesWritten } from './activity'
@@ -51,16 +51,14 @@ import { agentLine, type AgentDial } from './agents'
 import type { AgentMark } from './crew'
 import { FRAME_MS, SceneDriver } from './scene'
 import {
-  changedText,
-  changesFor,
+  CLAUDE_CODE,
   firstTips,
-  helpText,
   ownHint,
   parseFlowArgs,
   readConfig,
+  replyTo,
   resetText,
   savedText,
-  statusText,
   storedValue,
   type FlowCommand,
   type FlowConfig,
@@ -89,7 +87,7 @@ import {
 } from './sessions'
 import { SCENES, styleNamed, type SceneName } from './styles'
 import { frameSvg } from './svg'
-import { type BedTake, bedFailed, bedStep, burst, chimePlay, chimeStep, gather, MAX_PLAYS, newChimeState, unit, eventPlay, master, type SoundEvent, volumeGain } from './sound'
+import { type BedTake, bedFailed, bedStep, burst, chimePlay, chimeStep, gather, MAX_PLAYS, newChimeState, unit, eventPlay, master, type SoundEvent, type SoundMood, volumeGain } from './sound'
 import {
   hiddenNote,
   hotkeyFor,
@@ -110,7 +108,7 @@ import {
 } from './picker'
 
 
-const FLOW_REVISION = 'flow-v150-review-fixes'
+const FLOW_REVISION = 'flow-v172-cleanup-followups'
 const PLUGIN = 'flow'
 const KEY = 'flow'
 /** The command. */
@@ -149,6 +147,9 @@ const SPINE = 'flow'
 /** The width the spine asks for; the dock seats it no narrower than its minimum. */
 const SPINE_COLUMNS = 13
 const SPINE_INLINE_ROWS = 12 // when not fullscreen, it sits above the prompt
+/** The most a pane's body is taken as, in cells: a Raster's (or desktop image's) sensible bounds. */
+const MOST_COLUMNS = 512
+const MOST_ROWS = 256
 /** The picker (`/flow pick`): a pane of every scene's thumbnail. */
 const PICKER = 'flow-pick'
 /** A desktop picker that hasn't rendered for this many of the picker's steps (3 s) is gone. */
@@ -401,6 +402,25 @@ async function pruneSessions($: EngineInterface, keep: string | undefined): Prom
   }
 }
 
+/** A pane's body width, in the bounds a scene is drawn at. */
+const bodyColumns = (columns: number) => Math.max(1, Math.min(MOST_COLUMNS, columns))
+/** A pane's body height, at least `least` rows. */
+const bodyRows = (rows: number, least: number) => Math.max(least, Math.min(MOST_ROWS, rows))
+
+/** Ask for the spine's pane: opened, or (open already) its own size asked for again (a width the person dragged still wins). */
+function openSpine($: EngineInterface) {
+  return $.ui.open({ id: SPINE, title: 'flow', columns: SPINE_COLUMNS, rows: SPINE_INLINE_ROWS })
+}
+
+/**
+ * Close the spine's pane from here, the scene no longer drawn there first:
+ * a plugin's own `$.ui.close` doesn't come back through its `ui.close` hooks.
+ */
+async function closeSpine($: EngineInterface, ctx: SceneCtx): Promise<void> {
+  ctx.leftSpine()
+  await $.ui.close({ id: SPINE })
+}
+
 /**
  * Whether the spine's pane is up (a pane outlives a reload of the module).
  * Where the host can't say (no panes there), none is: this check must never
@@ -499,8 +519,7 @@ async function placeScene($: EngineInterface, ctx: SceneCtx, layout: FlowLayout 
 async function placePane($: EngineInterface, ctx: SceneCtx, layout: FlowLayout | undefined): Promise<string> {
   const { driver } = ctx
   if (layout === 'band') {
-    ctx.leftSpine()
-    await $.ui.close({ id: SPINE })
+    await closeSpine($, ctx)
     return ''
   }
   if (driver.cfg.layout !== 'spine') return ''
@@ -508,13 +527,10 @@ async function placePane($: EngineInterface, ctx: SceneCtx, layout: FlowLayout |
   // Asked for, it's placed at any width: docked in fullscreen, else inline.
   const shown = driver.isShown()
   if (shown && (layout === 'spine' || !(await spineIsUp($)))) {
-    const opened = await $.ui.open({ id: SPINE, title: 'flow', columns: SPINE_COLUMNS, rows: SPINE_INLINE_ROWS })
+    const opened = await openSpine($)
     return opened.isPlaced ? '' : '  (no room for the pane yet: widen the terminal)'
   }
-  if (!shown && (await spineIsUp($))) {
-    ctx.leftSpine()
-    await $.ui.close({ id: SPINE })
-  }
+  if (!shown && (await spineIsUp($))) await closeSpine($, ctx)
   return ''
 }
 
@@ -593,6 +609,18 @@ async function resetSession($: EngineInterface, ctx: SceneCtx): Promise<string> 
   return `${resetText(before, s.defaults)}${note}`
 }
 
+/** A `/flow` change: shown at once (the scene carries on: 6 → 8 eases up from 6), this session's alone, kept under its id. Answers the reply's note. */
+async function changeSession($: EngineInterface, ctx: SceneCtx, changes: Partial<FlowConfig>): Promise<string> {
+  const { driver, session } = ctx
+  const before = { ...driver.cfg }
+  $.ui.invalidate('ui.render')
+  ctx.applyLocal(changes)
+  session.own = { ...session.own, ...changes }
+  let note = (await keepOwn($, session)) ? '' : '  (not saved)'
+  note += await placeScene($, ctx, changes.layout)
+  return `${note}${ownHint(before, driver.cfg, session.defaults)}`
+}
+
 const TIPS = 'tips'
 
 /**
@@ -648,25 +676,27 @@ async function sceneReply($: EngineInterface, e: CommandRunInput, ctx: SceneCtx)
 /** `/flow <cmd>` in this session (and a scene chosen in the picker, as `/flow <scene>`): its reply. */
 async function flowReply($: EngineInterface, ctx: SceneCtx, cmd: FlowCommand): Promise<string> {
   const { driver, session } = ctx
-  const cfg = driver.cfg
   // (A /clear or a resume since the last look: the session it is now. And the
   // defaults as they are now: what follows compares with them.)
   await followSession($, ctx)
   await refreshDefaults($, ctx)
-  if (cmd.kind === 'show') return statusText(cfg, driver.level(), driver.tint(), driver.clock, session.defaults)
-  if (cmd.kind === 'help') return helpText()
-  if (cmd.kind === 'error') return cmd.text
-  if (cmd.kind === 'save') return saveDefault($, ctx)
-  if (cmd.kind === 'reset') return resetSession($, ctx)
-  const changes = changesFor(cmd, cfg) ?? {}
-  const before = { ...cfg }
-  $.ui.invalidate('ui.render')
-  ctx.applyLocal(changes) // the scene carries on: 6 → 8 eases up from 6
-  // This session's alone, kept under its id.
-  session.own = { ...session.own, ...changes }
-  let note = (await keepOwn($, session)) ? '' : '  (not saved)'
-  note += await placeScene($, ctx, changes.layout)
-  return `${changedText(cmd, cfg, "Claude's", driver.clock)}${note}${ownHint(before, cfg, session.defaults)}`
+  const reply = await replyTo(cmd, {
+    host: CLAUDE_CODE,
+    agent: "Claude's",
+    cfg: driver.cfg,
+    get clock() {
+      return driver.clock
+    },
+    get defaults() {
+      return session.defaults
+    },
+    level: () => driver.level(),
+    tint: () => driver.tint(),
+    save: async () => ({ text: await saveDefault($, ctx) }),
+    reset: () => resetSession($, ctx),
+    change: changes => changeSession($, ctx, changes),
+  })
+  return reply.text
 }
 
 /**
@@ -711,7 +741,7 @@ async function closePickerPane($: EngineInterface, ctx: SceneCtx): Promise<void>
 async function restoreSpine($: EngineInterface, ctx: SceneCtx, docked: boolean): Promise<void> {
   const { driver } = ctx
   if (!docked || driver.cfg.layout !== 'spine' || !driver.isShown() || !(await spineIsUp($))) return
-  await $.ui.open({ id: SPINE, title: 'flow', columns: SPINE_COLUMNS, rows: SPINE_INLINE_ROWS }).catch(() => {})
+  await openSpine($).catch(() => {})
 }
 
 /**
@@ -818,8 +848,12 @@ export const register: Register = (on, options) => {
    */
   const desktopSites = new Map<string, { columns: number; rows: number; at: number }>()
   const desktopSite = () => {
-    for (const [id, site] of desktopSites) if (ticks - site.at > DESKTOP_STALE_TICKS) desktopSites.delete(id)
-    return [...desktopSites.values()].at(-1)
+    let newest: { columns: number; rows: number; at: number } | undefined
+    for (const [id, site] of desktopSites) {
+      if (ticks - site.at > DESKTOP_STALE_TICKS) desktopSites.delete(id)
+      else newest = site
+    }
+    return newest
   }
   /**
    * Desktop's redraws: the frame loop steps desktop's scene (`steps`), and a
@@ -857,6 +891,18 @@ export const register: Register = (on, options) => {
     const frame = { svg, marks, dials: marks?.length ? (scene.agents ?? []) : [] }
     desk.frames.set(requestId, { key, frame })
     return frame
+  }
+  /** A desktop site's element: the scene's Svg, and over it (a scene with companions) their agents' hover cards. */
+  const desktopView = (els: Pick<Elements['desktop'], 'Box' | 'Svg' | 'Text'>, requestId: string, columns: number, rows: number) => {
+    const { Box, Svg } = els
+    const { svg, marks, dials } = desktopSvg(requestId, columns, rows)
+    if (!marks) return <Svg {...svg} />
+    return (
+      <Box>
+        <Svg {...svg} />
+        {agentCards(els, marks, dials, columns, rows)}
+      </Box>
+    )
   }
 
   /**
@@ -918,15 +964,17 @@ export const register: Register = (on, options) => {
     const d = new Date(ms)
     driver.clock = desktopDriver.clock = { hour: d.getHours(), minute: d.getMinutes() }
   }
+  /** The scene no longer draws in the spine (its pane closed, or showing the band's note). */
+  const leftSpine = () => {
+    if (mounted?.requestId === SPINE) mounted = null
+    desktopSites.delete(SPINE)
+  }
   /** What `/flow` (and following the session) needs of this load. */
   const sceneCtx: SceneCtx = {
     driver,
     session,
     applyLocal,
-    leftSpine: () => {
-      if (mounted?.requestId === SPINE) mounted = null
-      desktopSites.delete(SPINE)
-    },
+    leftSpine,
     openingPicker: () => {
       pick.open = true
       pick.closed = false
@@ -939,6 +987,9 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     const now = await $.clock.now()
     setClock(now)
+    // Each session's scenes start their own way: seeded from when it started.
+    driver.seedBase = (now % 2147483647) || 1
+    desktopDriver.seedBase = ((now + 104729) % 2147483647) || 1
     const at = new Date(now)
     $.ui.log(
       `[flow] REVISION: ${FLOW_REVISION} loaded at ${at.toISOString()} (local ${at.getHours()}:${at.getMinutes()}, UTC offset ${-at.getTimezoneOffset()} min)`,
@@ -1015,6 +1066,51 @@ export const register: Register = (on, options) => {
     const tip = await takeTip($, cfg, !e.isInteractive)
     if (tip) $.ui.toast(tip, { timeoutMs: 12_000 })
 
+    // A clip: one of the plugin's own (`asset`) or synthesized here (base64 WAV). Claude Code plays at
+    // most MAX_PLAYS at once for a plugin: a clip finding them all going stops the oldest event clip
+    // (`take` undefined) first (a tail cut beats a strike unheard, or the bed dropping out); a refused
+    // one tries again a moment on (a bed's take stopping an event clip each time: busy events never
+    // keep the bed out).
+    const play = (clip: { asset: string } | { base64: string; mime: string }, gain = 1, take?: number, tries = 0): void => {
+      const event = take === undefined
+      if ((tries === 0 || !event) && sound.playing.size >= MAX_PLAYS) sound.events.shift()?.abort()
+      const stop = new AbortController()
+      sound.playing.add(stop)
+      if (event) sound.events.push(stop)
+      else sound.takes.set(take, stop)
+      // No player (a Linux or Windows terminal), or refused for good: just silence. Refused because the
+      // player's full, it tries again a moment on: unless the soundscape has stopped since, or (a bed's
+      // take) the planner has stopped that take (it took its entry out of `takes`).
+      const gen = sound.gen
+      let retrying = false
+      // (Every clip at the sound's volume, as it is when it starts: never past the gain a clip clips at.)
+      void $.audio
+        .play(clip, { gain: volumeGain(gain, cfg.volume), signal: stop.signal })
+        .catch((err: unknown) => {
+          if (!String(err).includes('at once') || stop.signal.aborted) return
+          if (tries >= 4) {
+            // A bed's take refused for good: its next is due now, so the bed comes back next frame.
+            if (take !== undefined && sound.takes.get(take) === stop && current(gen)) bedFailed(sound.bed, take, sound.clock)
+            return
+          }
+          retrying = true
+          $.clock.after(50, () => {
+            if (!current(gen) || (take !== undefined && sound.takes.get(take) !== stop)) return
+            play(clip, gain, take, tries + 1)
+          })
+        })
+        .finally(() => {
+          sound.playing.delete(stop)
+          const i = sound.events.indexOf(stop)
+          if (i >= 0) sound.events.splice(i, 1)
+          if (!retrying && take !== undefined && sound.takes.get(take) === stop) sound.takes.delete(take)
+        })
+    }
+    /** What the scene on show has to be heard this frame (one array, emptied each frame). */
+    const events: SoundEvent[] = []
+    /** What the bed's planner is told each heard frame (one object, its fields set afresh). */
+    const mood: SoundMood = { scene: '', level: 0, tint: 'normal', night: false, amb: {}, volume: cfg.volume }
+
     // The frame loop: its own pace, rescheduled each tick.
     let wasShown = driver.isShown()
     let keptAltitude = altitude
@@ -1030,7 +1126,7 @@ export const register: Register = (on, options) => {
       // A wait on the person beginning: a soft chime (once a wait; not for one right behind another).
       const chime = chimeStep(sound.chime, driver.waiting(), sound.clock)
       const shownScene = site ? driver.scene : deskSite ? desktopDriver.scene : undefined
-      const events: SoundEvent[] = []
+      events.length = 0
       for (const sc of [driver.scene, desktopDriver.scene]) {
         if (!sc.sounds) continue
         if (heard && sc === shownScene) events.push(...sc.sounds)
@@ -1044,47 +1140,6 @@ export const register: Register = (on, options) => {
           stopSound()
           sound.scene = cfg.style
         }
-        // A clip: one of the plugin's own (`asset`) or synthesized here (base64 WAV). Claude Code plays at
-        // most MAX_PLAYS at once for a plugin: a clip finding them all going stops the oldest event clip
-        // (`take` undefined) first (a tail cut beats a strike unheard, or the bed dropping out); a refused
-        // one tries again a moment on (a bed's take stopping an event clip each time: busy events never
-        // keep the bed out).
-        const play = (clip: { asset: string } | { base64: string; mime: string }, gain = 1, take?: number, tries = 0): void => {
-          const event = take === undefined
-          if ((tries === 0 || !event) && sound.playing.size >= MAX_PLAYS) sound.events.shift()?.abort()
-          const stop = new AbortController()
-          sound.playing.add(stop)
-          if (event) sound.events.push(stop)
-          else sound.takes.set(take, stop)
-          // No player (a Linux or Windows terminal), or refused for good: just silence. Refused because the
-          // player's full, it tries again a moment on: unless the soundscape has stopped since, or (a bed's
-          // take) the planner has stopped that take (it took its entry out of `takes`).
-          const gen = sound.gen
-          let retrying = false
-          // (Every clip at the sound's volume, as it is when it starts: never past the gain a clip clips at.)
-          void $.audio
-            .play(clip, { gain: volumeGain(gain, cfg.volume), signal: stop.signal })
-            .catch((err: unknown) => {
-              if (!String(err).includes('at once') || stop.signal.aborted) return
-              if (tries >= 4) {
-                // A bed's take refused for good: its next is due now, so the bed comes back next frame.
-                if (take !== undefined && sound.takes.get(take) === stop && current(gen)) bedFailed(sound.bed, take, sound.clock)
-                return
-              }
-              retrying = true
-              $.clock.after(50, () => {
-                if (!current(gen) || (take !== undefined && sound.takes.get(take) !== stop)) return
-                play(clip, gain, take, tries + 1)
-              })
-            })
-            .finally(() => {
-              sound.playing.delete(stop)
-              const i = sound.events.indexOf(stop)
-              if (i >= 0) sound.events.splice(i, 1)
-              if (!retrying && take !== undefined && sound.takes.get(take) === stop) sound.takes.delete(take)
-            })
-        }
-        const playWav = (wav: string | undefined, gain = 1) => wav && play({ base64: wav, mime: 'audio/wav' }, gain)
         // Events with a clip of their own play now; the rest gather into a burst.
         for (const e of events) {
           const p = eventPlay(e, sound.seed++, cfg.style, shownScene.strength)
@@ -1105,10 +1160,14 @@ export const register: Register = (on, options) => {
             $.clock.after(at - sound.clock, () => current(gen) && play({ asset: p.asset }, p.gain))
           }
         }
+        mood.scene = cfg.style
         // (A rocket acts its level out a stage at a time: its own strength is the one to hear.)
-        const level = shownScene.strength
+        mood.level = shownScene.strength
+        mood.tint = driver.tint()
+        mood.night = driver.isNight()
+        mood.amb = shownScene.ambience?.() ?? {}
         // (The volume too: a change crossfades a fresh take in rather than wait for the next.)
-        const mood = { scene: cfg.style, level, tint: driver.tint(), night: driver.isNight(), amb: shownScene.ambience?.() ?? {}, volume: cfg.volume }
+        mood.volume = cfg.volume
         const beds = bedStep(sound.bed, mood, sound.clock, sound.seed++)
         for (const id of beds.stop) {
           sound.takes.get(id)?.abort()
@@ -1125,7 +1184,8 @@ export const register: Register = (on, options) => {
           sound.lastBurst = sound.clock
           sound.nextBurst = sound.clock + SOUND_BURST_MS
           if (sound.queue.length) {
-            playWav(burst(sound.queue.map(e => ({ ...e, offset: Math.max(0, (e.at - from) / 1000) })), sound.seed++), master(cfg.style, shownScene.strength))
+            const wav = burst(sound.queue.map(e => ({ ...e, offset: Math.max(0, (e.at - from) / 1000) })), sound.seed++)
+            if (wav) play({ base64: wav, mime: 'audio/wav' }, master(cfg.style, shownScene.strength))
             sound.queue.length = 0
             sound.seen = 0
           }
@@ -1147,14 +1207,7 @@ export const register: Register = (on, options) => {
         wasShown = shown
         $.ui.invalidate('ui.render')
         // The spine's pane, likewise: up while the scene shows, closed (unasked: a plugin's close) when not.
-        if (cfg.layout === 'spine') {
-          if (shown) void $.ui.open({ id: SPINE, title: 'flow', columns: SPINE_COLUMNS, rows: SPINE_INLINE_ROWS }).catch(() => {})
-          else {
-            if (mounted?.requestId === SPINE) mounted = null
-            desktopSites.delete(SPINE)
-            void $.ui.close({ id: SPINE }).catch(() => {})
-          }
-        }
+        if (cfg.layout === 'spine') void (shown ? openSpine($) : closeSpine($, sceneCtx)).catch(() => {})
       }
       if (deskSite) {
         // Desktop steps its own scene here; its render draws the Svg, once a step.
@@ -1265,9 +1318,9 @@ export const register: Register = (on, options) => {
     // has since changed to the band would otherwise draw beside it.
     if (cfg.layout === 'spine' && driver.isShown()) {
       // Unasked, a pane docks only from 144 columns; below that it waits.
-      void $.ui.open({ id: SPINE, title: 'flow', columns: SPINE_COLUMNS, rows: SPINE_INLINE_ROWS }).catch(() => {})
+      void openSpine($).catch(() => {})
     } else if (await spineIsUp($)) {
-      await $.ui.close({ id: SPINE }).catch(() => {})
+      await closeSpine($, sceneCtx).catch(() => {})
     }
 
     // Day and night by the local clock: read it every minute.
@@ -1506,8 +1559,7 @@ export const register: Register = (on, options) => {
 
   on('ui.close', async ($, e, next) => {
     if (e.id !== SPINE) return next(e)
-    if (mounted?.requestId === SPINE) mounted = null
-    desktopSites.delete(SPINE)
+    leftSpine()
     // Closing the spine yourself means you'd rather have the band (in this session).
     if (e.origin.kind === 'person' && cfg.layout === 'spine') {
       applyLocal({ layout: 'band' })
@@ -1521,27 +1573,14 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: SPINE }, ($, e) => {
     const { Text } = $.ui.resolve(e)
     if (cfg.layout !== 'spine') {
-      if (mounted?.requestId === e.requestId) mounted = null
-      desktopSites.delete(e.requestId)
+      leftSpine()
       return <Text dimColor>Flow is in the band above the prompt: `/flow spine` brings it here.</Text>
     }
-    if (e.surface === 'desktop') {
-      const columns = Math.max(1, Math.min(512, e.props.bodyColumns))
-      const rows = Math.max(2, Math.min(256, e.props.scroll.bodyRows))
-      const { Box, Svg, Text } = $.ui.resolve(e)
-      const { svg, marks, dials } = desktopSvg(e.requestId, columns, rows)
-      if (!marks) return <Svg {...svg} />
-      return (
-        <Box>
-          <Svg {...svg} />
-          {agentCards({ Box, Text }, marks, dials, columns, rows)}
-        </Box>
-      )
-    }
-    if (e.surface !== 'terminal') return <Text dimColor>The scene draws in the terminal and on desktop.</Text>
     // The scene fills the whole pane, whatever width the dock gave it.
-    const columns = Math.max(1, Math.min(512, e.props.bodyColumns))
-    const rows = Math.max(2, Math.min(256, e.props.scroll.bodyRows))
+    const columns = bodyColumns(e.props.bodyColumns)
+    const rows = bodyRows(e.props.scroll.bodyRows, 2)
+    if (e.surface === 'desktop') return desktopView($.ui.resolve(e), e.requestId, columns, rows)
+    if (e.surface !== 'terminal') return <Text dimColor>The scene draws in the terminal and on desktop.</Text>
     mounted = { requestId: e.requestId, columns, rows }
     const scene = driver.dial()
     scene.ensure(columns, rows)
@@ -1559,16 +1598,7 @@ export const register: Register = (on, options) => {
         desktopSites.delete(e.requestId)
         return next(e)
       }
-      const columns = Math.max(1, Math.min(512, e.props.bodyColumns))
-      const { Box, Svg, Text } = $.ui.resolve(e)
-      const { svg, marks, dials } = desktopSvg(e.requestId, columns, rows)
-      if (!marks) return <Svg {...svg} />
-      return (
-        <Box>
-          <Svg {...svg} />
-          {agentCards({ Box, Text }, marks, dials, columns, rows)}
-        </Box>
-      )
+      return desktopView($.ui.resolve(e), e.requestId, bodyColumns(e.props.bodyColumns), rows)
     }
     // Raster is terminal-only; any other surface's band never touches ours.
     if (e.surface !== 'terminal') return next(e)
@@ -1576,7 +1606,7 @@ export const register: Register = (on, options) => {
       if (mounted?.requestId === e.requestId) mounted = null
       return next(e)
     }
-    const columns = Math.max(1, Math.min(512, e.props.bodyColumns))
+    const columns = bodyColumns(e.props.bodyColumns)
     mounted = { requestId: e.requestId, columns, rows }
     const scene = driver.dial()
     scene.ensure(columns, rows)
@@ -1619,8 +1649,8 @@ export const register: Register = (on, options) => {
     startPicker()
     // The scene this session shows: its own over the defaults.
     const current = cfg.style
-    const columns = Math.max(1, Math.min(512, e.props.bodyColumns))
-    const rows = Math.max(1, Math.min(256, e.props.scroll.bodyRows))
+    const columns = bodyColumns(e.props.bodyColumns)
+    const rows = bodyRows(e.props.scroll.bodyRows, 1)
     // (Desktop draws a close Button under the grid: a row more.)
     const layout = e.surface === 'terminal' || e.surface === 'desktop' ? pickLayout(columns, rows, SCENES.length, undefined, e.surface === 'desktop' ? 1 : 0) : undefined
     // Each scene's picture: a Raster in the terminal (blitted by the picker's timer), an Svg on desktop (drawn anew).

@@ -1,4 +1,4 @@
-// REVISION: flow-v150-review-fixes
+// REVISION: flow-v171-dry-adapter
 //
 // How busy the agent is: the work → scene mapping for `/flow auto`. Events
 // add "heat" (the metaphor from when the only scene was a fire), the heat
@@ -33,8 +33,9 @@ const STREAM_PER_CHAR = 0.002
 const STREAM_CAP = 0.025
 /** Activity from a subagent's loop counts at this weight (its count adds the rest). */
 const SUBAGENT_WEIGHT = 0.5
-/** A turn's running time adds a level every TURN_STEP_MS (frames are 70 ms). */
-const FRAME_MS = 70
+/** A frame while busy (~14 fps): the heat model counts in these, slower ticks covering several. */
+export const FRAME_MS = 70
+/** A turn's running time adds a level every TURN_STEP_MS. */
 const TURN_STEP_MS = 30_000
 /** Frames of gray tips after a failed command / a compaction. */
 const FAIL_SMOKE = 30

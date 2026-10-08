@@ -1,4 +1,4 @@
-// REVISION: flow-v140-mini-balloons
+// REVISION: flow-v170-dry-scenes
 //
 // A hot-air balloon in the sky world (sky.ts): the level is its target
 // altitude. At 1 it sits on the grass among trees and houses; it climbs past
@@ -26,8 +26,8 @@
 
 import type { AgentDial } from './agents'
 import { isTall, type Cells } from './cells'
-import { Crew, smooth, type AgentMark, type Mate } from './crew'
-import { clamp01, dist, fitQuad, g, hash, hash1, mix, NEAR, noise1, QUAD, type QuadFit } from './pixels'
+import { beckon, Crew, finished, type AgentMark, type Mate } from './crew'
+import { clamp01, dist, fitQuad, g, hash, hash1, mix, NEAR, noise1, QUAD, smooth, type QuadFit } from './pixels'
 import { skyColor, SkyWorld } from './sky'
 import { defineScene } from './scene-def'
 import type { Ambience } from './sound'
@@ -378,14 +378,14 @@ export class Balloon extends SkyWorld {
       if (Number.isNaN(m.x)) continue
       const s = (m.seed * 0x7fffffff) | 0
       const away = 1 - smooth(clamp01(m.p * (1 + 0.8 * hash1(s + 7))))
-      const py = Math.round(m.leaving && m.ok ? m.y - away * (m.y + sp.h + 2) : m.y + away * (2 * h + 2 - m.y))
+      const py = Math.round(finished(m) ? m.y - away * (m.y + sp.h + 2) : m.y + away * (2 * h + 2 - m.y))
       const x = Math.round(m.x + (m.leaving ? away * (isTall(w, h) ? 4 : 10) : 0))
       if (py >= 2 * h || py + sp.h <= 0) continue
       const pair = COMPANION[m.slot % COMPANION.length]!
       p.a = blue ? mix(pair[0], C.blueA, 0.7) : pair[0]
       p.b = blue ? mix(pair[1], C.blueB, 0.7) : pair[1]
       // Waiting on you: the envelope blinks, out of step with any other, a light through the wait's sepia.
-      const blink = m.waiting && ((this.t + m.slot * 3) >> 2) % 2 === 0
+      const blink = m.waiting && beckon(m, this.t)
       if (blink) {
         p.a = mix(p.a, 0xffffff, 0.45)
         p.b = mix(p.b, 0xffffff, 0.45)

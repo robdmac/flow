@@ -1,4 +1,4 @@
-// REVISION: flow-v150-review-fixes
+// REVISION: flow-v171-dry-adapter
 //
 // Flow for pi (badlogic/pi-mono), by Rob Macrae: the same ambient
 // scenes as the Claude Code mod, in a widget above pi's editor. pi's events
@@ -34,7 +34,7 @@ import { dirname, join } from 'node:path'
 import { Activity } from '../hooks/activity'
 import { FRAME_MS, SceneDriver } from '../hooks/scene'
 import { pickBlurb } from '../hooks/picker'
-import { changedText, changesFor, helpText, type Host, parseFlowArgs, readConfig, statusText, storedValue, type FlowConfig } from '../hooks/settings'
+import { type Host, parseFlowArgs, readConfig, replyTo, storedValue, type FlowConfig } from '../hooks/settings'
 import { SCENES } from '../hooks/styles'
 import { gridToAnsi } from './ansi'
 import { COMMAND_TOOLS, effortOf, FLOW_ENTRY, piLinesWritten, READ_TOOLS } from './mapping'
@@ -249,6 +249,12 @@ export default function flow(pi: PiApi) {
   /** pi shows a reply bare, so it says whose it is (Claude Code adds the name itself). */
   const say = (text: string) => `flow: ${text}`
 
+  /** The widget redrawn at once in the new look, shown or hidden as it now is. */
+  const redraw = (ctx: PiContext) => {
+    width = 0
+    sync(ctx)
+  }
+
   const handler = async (args: string, ctx: PiContext) => {
     let cmd = parseFlowArgs(args)
     readClock()
@@ -274,20 +280,6 @@ export default function flow(pi: PiApi) {
       if (!name) return
       cmd = { kind: 'style', name }
     }
-    if (cmd.kind === 'show') {
-      // (Without session entries every session shares one set: none is "just this session".)
-      const defaults = entries ? settings.defaults : undefined
-      ctx.ui.notify(say(statusText(cfg, driver.level(), driver.tint(), driver.clock, defaults, PI)))
-      return
-    }
-    if (cmd.kind === 'help') {
-      ctx.ui.notify(say(helpText("pi's", PI)))
-      return
-    }
-    if (cmd.kind === 'error') {
-      ctx.ui.notify(say(cmd.text.replace(/^! /, '')), 'warning')
-      return
-    }
     if (cmd.kind === 'layout') {
       ctx.ui.notify('flow: pi has no side panes, so the scene stays in the band above the editor', 'warning')
       return
@@ -296,20 +288,36 @@ export default function flow(pi: PiApi) {
       ctx.ui.notify('flow: pi has no player for the soundscape, so the scenes are silent here', 'warning')
       return
     }
-    if (cmd.kind === 'save') {
-      const { text, saved } = await settings.save(entries)
-      ctx.ui.notify(say(text), saved ? 'info' : 'warning')
-      return
-    }
-    let text: string
-    if (cmd.kind === 'reset') text = settings.reset(entries)
-    else {
-      const note = await settings.change(changesFor(cmd, cfg) ?? {}, entries)
-      text = `${changedText(cmd, cfg, "pi's", driver.clock)}${note}`
-    }
-    width = 0 // redraw at once in the new look
-    sync(ctx)
-    ctx.ui.notify(say(text))
+    const reply = await replyTo(cmd, {
+      host: PI,
+      agent: "pi's",
+      cfg,
+      get clock() {
+        return driver.clock
+      },
+      // (Without session entries every session shares one set: none is "just this session".)
+      get defaults() {
+        return entries ? settings.defaults : undefined
+      },
+      level: () => driver.level(),
+      tint: () => driver.tint(),
+      save: async () => {
+        const { text, saved } = await settings.save(entries)
+        return { text, level: saved ? 'info' : 'warning' }
+      },
+      reset: async () => {
+        const text = settings.reset(entries)
+        redraw(ctx)
+        return text
+      },
+      change: async changes => {
+        const note = await settings.change(changes, entries)
+        redraw(ctx)
+        return note
+      },
+    })
+    // (pi shows a reply as it is: no `!` before what was wrong.)
+    ctx.ui.notify(say(cmd.kind === 'error' ? reply.text.replace(/^! /, '') : reply.text), reply.level)
   }
   pi.registerCommand('flow', {
     description:

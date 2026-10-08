@@ -1,4 +1,4 @@
-// REVISION: flow-v150-review-fixes
+// REVISION: flow-v170-dry-scenes
 //
 // A scene's companions: one for each running subagent (the `agents` dial,
 // agents.ts), so a glance tells you which are busy, which have gone quiet or
@@ -13,11 +13,14 @@
 // wait (they come in again, easing, as room comes). A scene keeps a Crew,
 // sets `room` for its layout, calls `update` once a frame and draws its
 // `mates` however it likes, noting where each is (`mark`) for desktop's hover
-// cards. An adapter that only counts subagents (`coverageBoost`, no list)
-// still gets companions: anonymous ones, that many, working.
+// cards; `resting`, `beckon`, `finished`, `failed` and `easeTo` say what every
+// scene's companions do alike. An adapter that only counts subagents
+// (`coverageBoost`, no list) still gets companions: anonymous ones, that
+// many, working.
 // Pure: no `$`.
 
 import type { AgentDial } from './agents'
+import { smooth } from './pixels'
 
 /** Where a companion is drawn this frame, in cells: what desktop's hover card for its agent sits over. */
 export interface AgentMark {
@@ -71,8 +74,35 @@ export function seedOf(id: string): number {
   return (h >>> 0) / 0x100000000
 }
 
-/** Smoothstep on 0..1: how `here` eases from `p`; a scene can ease its own steps of an arrival with it. */
-export const smooth = (p: number) => p * p * (3 - 2 * p)
+/** Resting: its agent quiet or waiting on you, and it isn't on its way out. */
+export function resting(m: Mate | null | undefined): boolean {
+  return m != null && !m.leaving && m.busy < 0.5
+}
+
+/**
+ * Whether a companion calling for you (its agent waits on you) is lit at
+ * frame `t`: on and off about twice a second, each slot out of step with the
+ * next. The scene asks only of one that's waiting.
+ */
+export function beckon(m: Mate, t: number): boolean {
+  return ((t + m.slot * 3) >> 2) % 2 === 0
+}
+
+/** Leaving with its agent's task done: it goes the good way (on ahead, up and away, home). */
+export function finished(m: Mate | null | undefined): boolean {
+  return m != null && m.leaving && m.ok
+}
+
+/** Leaving because its agent failed (an error, an interrupt, stopped): it goes another way (falls back, sinks, tumbles). */
+export function failed(m: Mate | null | undefined): boolean {
+  return m != null && m.leaving && !m.ok
+}
+
+/** A companion's coordinate `v` eased a fraction `k` toward `goal`; NaN (not yet placed) lands on it at once. */
+export function easeTo(v: number, goal: number, k: number): number {
+  return Number.isNaN(v) ? goal : v + (goal - v) * k
+}
+
 
 export class Crew {
   /** Every companion on screen, arriving, here or leaving, in the order they came. */
@@ -83,6 +113,8 @@ export class Crew {
   room: number
   /** This frame's agents by id (kept between frames, refilled each). */
   private readonly byId = new Map<string, AgentDial>()
+  /** The anonymous companions a coverage boost alone stands for (kept while their count holds). */
+  private anon: AgentDial[] = []
 
   /**
    * @param capacity the most companions the scene has room for
@@ -99,7 +131,7 @@ export class Crew {
 
   /** Once a frame: who's about now. `coverageBoost` stands in when an adapter gives no list. */
   update(agents: readonly AgentDial[] | undefined, coverageBoost = 0): void {
-    const list = agents && agents.length ? agents : anonymous(coverageBoost)
+    const list = agents && agents.length ? agents : this.anonymous(coverageBoost)
     const byId = this.byId
     byId.clear()
     for (const a of list) byId.set(a.id, a)
@@ -125,7 +157,7 @@ export class Crew {
     }
     // Newcomers, in the order they started, each in the lowest free place.
     for (const a of list) {
-      if (a.state === 'done' || this.mates.some(m => m.id === a.id)) continue
+      if (a.state === 'done' || this.find(a.id)) continue
       const slot = this.freeSlot(room)
       if (slot < 0) break
       this.mates.push({
@@ -146,8 +178,31 @@ export class Crew {
   }
 
   private freeSlot(room: number): number {
-    for (let s = 0; s < room; s++) if (!this.mates.some(m => m.slot === s)) return s
+    for (let s = 0; s < room; s++) if (!this.inSlot(s)) return s
     return -1
+  }
+
+  /** The companion in a slot, if one's there. */
+  inSlot(slot: number): Mate | undefined {
+    const mates = this.mates
+    for (let i = 0; i < mates.length; i++) if (mates[i]!.slot === slot) return mates[i]
+    return undefined
+  }
+
+  /** The companion for an agent, if it's on screen. */
+  private find(id: string): Mate | undefined {
+    const mates = this.mates
+    for (let i = 0; i < mates.length; i++) if (mates[i]!.id === id) return mates[i]
+    return undefined
+  }
+
+  /** A count's worth of companions, all working: what a coverage boost alone stands for. */
+  private anonymous(coverageBoost: number): AgentDial[] {
+    const n = Math.max(0, Math.round(coverageBoost / PER_AGENT))
+    const anon = this.anon
+    while (anon.length < n) anon.push({ id: `${ANON}${anon.length}`, state: 'working', ok: true, task: '', type: '', ms: 0 })
+    anon.length = n
+    return anon
   }
 
   /** Start a frame's marks afresh (call before drawing the mates). */
@@ -169,10 +224,4 @@ export class Crew {
     if (c1 - c0 < 1 || r1 - r0 < 1) return
     this.marks.push({ id: m.id, col: c0, row: r0, w: c1 - c0, h: r1 - r0 })
   }
-}
-
-/** A count's worth of companions, all working: what a coverage boost alone stands for. */
-function anonymous(coverageBoost: number): AgentDial[] {
-  const n = Math.max(0, Math.round(coverageBoost / PER_AGENT))
-  return Array.from({ length: n }, (_, k) => ({ id: `${ANON}${k}`, state: 'working', ok: true, task: '', type: '', ms: 0 }))
 }

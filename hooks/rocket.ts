@@ -1,4 +1,4 @@
-// REVISION: flow-v162-spine-minis
+// REVISION: flow-v170-dry-scenes
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -67,11 +67,11 @@
 // and the whole view breathes in sepia (waiting.ts).
 
 import type { AgentDial } from './agents'
-import { type Cells, DEFAULT_COLOR, Rng } from './cells'
-import { Crew, type AgentMark, type Mate } from './crew'
+import { type Cells, DEFAULT_COLOR, freshSeed, Rng } from './cells'
+import { Crew, failed, finished, resting, type AgentMark, type Mate } from './crew'
 import { layered, snap } from './clouds/layered'
 import { STAR, STAR_DIM } from './night'
-import { clamp, dist, fitQuad, g, hash, lowerBlock, mix, noise1, QUAD, type QuadFit } from './pixels'
+import { clamp, dist, fitQuad, g, hash, lowerBlock, mix, noise1, QUAD, rampAt, smooth, type QuadFit } from './pixels'
 import { type SceneryCell, SkyWorld } from './sky'
 import { defineScene } from './scene-def'
 import { hear, type Ambience, type SoundEvent } from './sound'
@@ -447,11 +447,6 @@ const RAMPS = {
   smoke: [0x2e2e2e, 0x595959, 0x7e7c78, 0xa89c88, 0xd8c8a8] as Ramp,
 }
 
-function rampColor(r: Ramp, heat: number): number {
-  const h = heat <= 0 ? 0 : heat >= 1 ? 4 : heat * 4
-  const i = Math.min(3, h | 0)
-  return mix(r[i]!, r[i + 1]!, h - i)
-}
 
 /** A rocket's site colors. */
 interface Look {
@@ -505,8 +500,6 @@ type Ghost = { part: Part; d: number; v: number; acc: number; life: number; max:
 
 /** The layer (world rows) where the climbing stack separates: about level 7. */
 const SEP_LAYER = 80
-/** Frames a landed Falcon stands at the landing zone before it's moved back to the pad. */
-const LANDED_FRAMES = 42
 
 
 // Flight. Aloft, the level picks a layer of the atmosphere (world rows, the
@@ -664,7 +657,7 @@ abstract class LaunchSite extends SkyWorld {
       const m = r.mate
       const idle = m && m.busy < 0.5 && !r.fresh && r.state === 'rest' && r.part === 'full'
       r.strength = idle ? 1 : this.log[(this.logAt - r.lag) & 31]!
-      r.tint = m && m.leaving && !m.ok ? 'smoke' : this.tint
+      r.tint = failed(m) ? 'smoke' : this.tint
       r.step()
       // Heard as the big one is, a little quieter (a smaller rocket): its ignition, sonic booms, its booster's
       // landing or catch, chutes, splashdown. A beat behind the big one's, so they never land as one.
@@ -839,9 +832,9 @@ abstract class LaunchSite extends SkyWorld {
   private padL = 0
   private padR = 0
 
-  constructor(seed?: number) {
+  constructor(seed = freshSeed()) {
     super(seed)
-    this.rng = new Rng((seed ?? Date.now()) * 2654435761)
+    this.rng = new Rng(seed * 2654435761)
   }
 
   override ensure(columns: number, rows: number): void {
@@ -1045,7 +1038,7 @@ abstract class LaunchSite extends SkyWorld {
         const mid = (this.bodyPx + this.spec.bodyW / 2) >> 1
         return x === mid || (this.spec.bodyW > 2 && x === mid - 1) ? TRENCH : PAD
       }
-      if (x < this.shore()) return { glyph: SEA.glyph, fg: mix(SEA.fg, 0x10243c, this.dark), bg: mix(SEA.bg!, 0x0a1628, this.dark) }
+      if (x < this.shore()) return this.cellOf(SEA.glyph, mix(SEA.fg, 0x10243c, this.dark), mix(SEA.bg!, 0x0a1628, this.dark))
       if (!this.look.catches && this.lz && x >= this.lzL() && x <= this.lzL() + Math.ceil(this.spec.land.w / 2)) return PAD
     }
     return super.scenery(x, y, sky)
@@ -1207,7 +1200,12 @@ abstract class LaunchSite extends SkyWorld {
   /** A cloud sample from the layered painter into cFg / cBg (top and bottom half). */
   private cloud(x: number, y: number, sky: number): boolean {
     if (y < CLOUD_LO || y > CLOUD_HI) return false
-    const c = layered.cell({ x: x / PAINT, y: y / PAINT, sky, t: this.t })
+    const at = this.cloudAt
+    at.x = x / PAINT
+    at.y = y / PAINT
+    at.sky = sky
+    at.t = this.t
+    const c = layered.cell(at)
     if (!c) return false
     this.cFg = this.cloudLight(c.fg, sky)
     this.cBg = this.cloudLight(c.bg ?? sky, sky)
@@ -1742,11 +1740,11 @@ abstract class LaunchSite extends SkyWorld {
     if (m) {
       const away = 1 - m.here
       const run = this.ph + 20
-      gap += !m.leaving || !m.ok ? away * run : -away * away * run * 1.5
+      gap += finished(m) ? -away * away * run * 1.5 : away * run
     }
     const goal = h.alt + (h.topRow() - this.topRow() - gap) / 2
     this.alt += (goal - this.alt) * 0.2
-    if (m && m.leaving && m.ok) return 1
+    if (finished(m)) return 1
     return homeward ? thrGoal : thrGoal * (1 - 0.85 * quiet)
   }
 
@@ -1824,7 +1822,7 @@ abstract class LaunchSite extends SkyWorld {
     t.strength = 1
     t.step()
     // The booster's side of the split screen is heard too.
-    for (const e of t.sounds) if (this.sounds.length < 16) this.sounds.push(e)
+    for (const e of t.sounds) hear(this.sounds, e)
     t.sounds.length = 0
     // Down: on the mount in the arms, or on its legs at the landing zone.
     if (t.state === 'rest' || t.state === 'landed') this.twinDone++
@@ -2134,7 +2132,7 @@ abstract class LaunchSite extends SkyWorld {
     // A point on the sprite (column, row) as drawn: grid pixels, before the camera.
     const px = (col: number, row: number) => cx + (col - sp.w / 2) * sc * cs - 2 * (row - sp.h / 2) * sc * sn
     const py = (col: number, row: number) => cy + ((col - sp.w / 2) * sc * sn + 2 * (row - sp.h / 2) * sc * cs) / 2
-    if (m.busy < 0.5 && !m.leaving) {
+    if (resting(m)) {
       const on = m.waiting ? ((this.t >> 2) & 1) === 0 : this.t % 21 < 3
       const col = s.bodyL + s.bodyW / 2
       const x = Math.floor(px(col, r0 - 0.5))
@@ -2162,7 +2160,7 @@ abstract class LaunchSite extends SkyWorld {
   /** A failed agent's mini rocket tumbling as it falls away (radians). */
   private get tumble(): number {
     const m = this.mate
-    return m && m.leaving && !m.ok ? (1 - m.here) * 3 * (this.slot & 1 ? -1 : 1) : 0
+    return m && failed(m) ? (1 - m.here) * 3 * (this.slot & 1 ? -1 : 1) : 0
   }
 
   /** Sizes for details (smoke, spray, chutes, the arms' pincers): the spine's for a big rocket there, the band's for every other. */
@@ -2318,7 +2316,7 @@ abstract class LaunchSite extends SkyWorld {
         // Shock diamonds in the core.
         const diamond = diamonds && ((d / 2) | 0) % 5 === 2 && k < 0.6 ? 0.15 : 0
         const heat = 1 - 0.85 * k - 0.45 * edge * edge + diamond + n * 0.15
-        this.paintP(px, py, rampColor(ramp, heat), Math.min(1, (1 - k) * body - edge * 0.35 + n * 0.4) * alpha)
+        this.paintP(px, py, rampAt(ramp, heat), Math.min(1, (1 - k) * body - edge * 0.35 + n * 0.4) * alpha)
       }
     }
   }
@@ -2334,8 +2332,8 @@ abstract class LaunchSite extends SkyWorld {
         const n = hash(x, t, 53) - 0.5
         const heat = 0.85 - 0.75 * k + n * 0.2
         const a = 1 - k * 0.85 + n * 0.3
-        this.paint(x, 0, rampColor(ramp, heat), a)
-        if (k > 0.3) this.paint(x, 1, rampColor(ramp, heat - 0.25), a * 0.6)
+        this.paint(x, 0, rampAt(ramp, heat), a)
+        if (k > 0.3) this.paint(x, 1, rampAt(ramp, heat - 0.25), a * 0.6)
       }
   }
 
@@ -2356,7 +2354,7 @@ abstract class LaunchSite extends SkyWorld {
       return [cx - 2 * off * sn, cy - off + off * cs, th, 1]
     }
     if (o <= 0) return [cx, cy, 0, 1]
-    const k = o * o * (3 - 2 * o)
+    const k = smooth(o)
     const [ocx, ocy, full] = this.host ? this.station() : this.orbitFrame()
     const sc = this.tall ? 1 - k * (1 - full) : 1
     // Centered on what's flying (after separation, the upper stage), not on the whole stack:

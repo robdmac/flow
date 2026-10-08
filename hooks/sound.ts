@@ -1,4 +1,4 @@
-// REVISION: flow-v150-review-fixes
+// REVISION: flow-v172-cleanup-followups
 //
 // Soundscapes. Claude Code's `$.audio.play` plays a clip (macOS `afplay`) at a
 // gain set when it starts; it can't loop smoothly or change a clip as it
@@ -26,14 +26,14 @@
 // Pure: no engine imports, unit-tested directly.
 
 import { Rng, toBase64 } from './cells'
-import { BED_GAINS, SOUND_FILES } from './sound-files'
+import { BED_GAINS } from './sound-files'
 import type { Tint } from './styles'
 
 const RATE = 22050
 const TAU = Math.PI * 2
 
 /**
- * A bed take's length, and the crossfade at each end. A layer's next take
+ * A bed take's length, and the crossfade at each end. A bed's next take
  * starts as the one playing begins to fade (BED_EVERY_MS after it), up to
  * half a second sooner at random (BED_MIN_MS) so no seam keeps a beat: the
  * overlap only grows, never opens a gap, though a clip starts on the first
@@ -61,7 +61,7 @@ export const PLAYER_LEAD_MS = 380
 export const PLAYER_DRAIN_MS = 900
 
 /** The most events a scene holds for the adapter to take each frame (one that never takes them stays bounded). */
-export const EVENTS_HELD = 16
+export const EVENTS_HELD = 24
 
 /** Pushes an event onto a scene's queue unless it's full. */
 export function hear(queue: SoundEvent[], e: SoundEvent): void {
@@ -135,59 +135,11 @@ class Mix {
     return this.rng.f() * 2 - 1
   }
 
-  /** Filtered noise across the clip: `lo` low-passes, `hi` takes off what's under it (one-pole coefficients); `amp(t)` shapes it. */
-  noise(lo: number, hi: number, amp: (t: number) => number, from = 0, to = this.n): void {
-    let a = 0
-    let b = 0
-    for (let i = from; i < to; i++) {
-      const w = this.white()
-      a += lo * (w - a)
-      b += hi * (a - b)
-      this.buf[i]! += (a - b) * amp((i - from) / RATE)
-    }
-  }
-
-  /** A resonant band of noise (a 2-pole filter), its centre `hz(t)`, sharpness `q`. */
-  ring(hz: (t: number) => number, q: number, amp: (t: number) => number): void {
-    let y1 = 0
-    let y2 = 0
-    const r = 1 - 1 / q
-    for (let i = 0; i < this.n; i++) {
-      const t = i / RATE
-      const c = 2 * r * Math.cos((TAU * hz(t)) / RATE)
-      const y = this.white() * (1 - r) + c * y1 - r * r * y2
-      y2 = y1
-      y1 = y
-      this.buf[i]! += y * amp(t)
-    }
-  }
-
-  /** A tone gliding by `hz(t)`, shaped by `amp(t)` (phase kept continuous through the glide). */
-  tone(hz: (t: number) => number, amp: (t: number) => number, from = 0, len = this.n / RATE): void {
-    let ph = this.rng.f() * TAU
-    const i1 = Math.min(this.n, from + Math.floor(len * RATE))
-    for (let i = from; i < i1; i++) {
-      const t = (i - from) / RATE
-      ph += (TAU * hz(t)) / RATE
-      this.buf[i]! += Math.sin(ph) * amp(t)
-    }
-  }
-
   /** An event's voice at `at` seconds, `len` long: `voice(dt)` per sample. */
   at(at: number, len: number, voice: (dt: number) => number): void {
     const i0 = Math.floor(at * RATE)
     const i1 = Math.min(this.n, i0 + Math.floor(len * RATE))
     for (let i = Math.max(0, i0); i < i1; i++) this.buf[i]! += voice((i - i0) / RATE)
-  }
-
-  /** `per` events a second scattered through the clip. */
-  sprinkle(per: number, len: number, voice: (dt: number, x: number) => number): void {
-    const seconds = this.n / RATE
-    const count = Math.floor(per * seconds + this.rng.f())
-    for (let j = 0; j < count; j++) {
-      const x = this.rng.f()
-      this.at(this.rng.f() * seconds, len, dt => voice(dt, x))
-    }
   }
 
   /** Faded in and out over `fade` seconds (equal power), soft-clipped, as base64 WAV. */
@@ -397,9 +349,19 @@ export const EVENTS: Partial<Record<SoundKind, { clip: string; variants: number;
 /** A clip's file: one of its variants, picked by a hash of the moment and the clip (no fixed rotation to fall in step with). */
 function asset(clip: string, variants: number, seed: number): string {
   if (variants <= 1) return `sounds/${clip}.m4a`
-  let h = 2166136261
-  for (let i = 0; i < clip.length; i++) h = Math.imul(h ^ clip.charCodeAt(i), 16777619)
-  return `sounds/${clip}${1 + Math.floor(unit(seed ^ h) * variants)}.m4a`
+  return `sounds/${clip}${1 + Math.floor(unit(seed ^ clipHash(clip)) * variants)}.m4a`
+}
+
+/** Each clip's name hashed (FNV-1a), worked out once: a bed asks every frame. */
+const CLIP_HASH = new Map<string, number>()
+function clipHash(clip: string): number {
+  let h = CLIP_HASH.get(clip)
+  if (h === undefined) {
+    h = 2166136261
+    for (let i = 0; i < clip.length; i++) h = Math.imul(h ^ clip.charCodeAt(i), 16777619)
+    CLIP_HASH.set(clip, h)
+  }
+  return h
 }
 
 /** A bed's mood: its key, and the level (0..1) and doings its mix is made for. */
@@ -481,31 +443,29 @@ function nearest(scene: string, key: string): string | undefined {
   return best
 }
 
-/** The clips of a scene's bed for this moment (none for a scene without one: it's silent). */
-export function bedPlays(mood: SoundMood, seed: number): Play[] | undefined {
-  if (!bedLayers(mood.scene)) return undefined
-  const p = bedPlay(mood, 0, seed)
-  return p ? [p] : []
-}
+/** Each scene's moods (`scene/key`) as the bed mixed nearest them, worked out once each (a bed asks every frame): its clip and gain, none for a scene without beds. */
+const NEAREST = new Map<string, { clip: string; gain: number } | undefined>()
 
 /** The scene's bed's next take for this mood (undefined when it's silent now), never one of those in `not`. */
-export function bedPlay(mood: SoundMood, _stream: number, seed: number, not: string[] = []): Play | undefined {
+export function bedPlay(mood: SoundMood, seed: number, not: readonly string[] = []): Play | undefined {
   const spec = MOODS[mood.scene]
-  const key = spec && nearest(mood.scene, spec(mood).key)
-  if (!key) return undefined
-  const gain = master(mood.scene, mood.level) * (BED_GAINS[`${mood.scene}/${key}`] ?? 0)
+  if (!spec) return undefined
+  const want = `${mood.scene}/${spec(mood).key}`
+  let bed = NEAREST.get(want)
+  if (bed === undefined && !NEAREST.has(want)) {
+    const key = nearest(mood.scene, want.slice(mood.scene.length + 1))
+    bed = key === undefined ? undefined : { clip: `${mood.scene}/bed-${key}`, gain: BED_GAINS[`${mood.scene}/${key}`] ?? 0 }
+    NEAREST.set(want, bed)
+  }
+  if (!bed) return undefined
+  const gain = master(mood.scene, mood.level) * bed.gain
   if (gain <= 0.01) return undefined
-  let a = asset(`${mood.scene}/bed-${key}`, BED_TAKES, seed)
-  for (let k = 1; not.includes(a) && k < 64; k++) a = asset(`${mood.scene}/bed-${key}`, BED_TAKES, seed + k * 7919)
+  let a = asset(bed.clip, BED_TAKES, seed)
+  for (let k = 1; not.includes(a) && k < 64; k++) a = asset(bed.clip, BED_TAKES, seed + k * 7919)
   return { asset: a, gain: Math.min(MAX_GAIN, gain) }
 }
 
-/** How many bed streams a scene has: one, or none (silent). */
-export function bedLayers(scene: string): number {
-  return MIXED.has(scene) ? 1 : 0
-}
-
-/** When a layer's next take is due after this one: BED_MIN_MS to BED_EVERY_MS, at random. */
+/** When a bed's next take is due after this one: BED_MIN_MS to BED_EVERY_MS, at random. */
 export function bedGap(seed: number): number {
   const h = Math.imul(seed ^ 0x9e3779b9, 2654435761) >>> 0
   return BED_MIN_MS + ((h >>> 8) % (BED_EVERY_MS - BED_MIN_MS + 1))
@@ -538,16 +498,19 @@ export type BedTake = {
 /** A take stopped leaves the player this long after (afplay exiting). */
 const STOPPED_MS = 100
 
+/** A bed take's mix, whichever of its takes it is (`sounds/fire/bed-l2`). */
+const mixOf = (asset: string) => asset.replace(/\d\.m4a$/, '')
+
 /**
  * One frame of a scene's bed: which takes to start (`play`, each with an id
  * for stopping it later) and which to stop. `takes` is the caller's, kept
- * between frames (one slot a layer). A layer renews as its take fades; it
- * starts afresh when its gain has moved by more than 3 dB or the volume
- * setting has changed (at most once a crossfade), the old take stopped when
- * the new one is in (sooner when it's the quieter, so the bed falls
- * promptly); it stops when it falls silent (a rocket's engines cutting off,
- * the burner's valve closing). Its gains are before the volume, which the
- * player applies to every clip (`volumeGain`).
+ * between frames: one slot, the bed's (a scene has one bed or none). The bed
+ * renews as its take fades; it starts afresh when its gain has moved by more
+ * than 3 dB or the volume setting has changed (at most once a crossfade), the
+ * old take stopped when the new one is in (sooner when it's the quieter, so
+ * the bed falls promptly); it stops when it falls silent (a rocket's engines
+ * cutting off, the burner's valve closing). Its gains are before the volume,
+ * which the player applies to every clip (`volumeGain`).
  */
 export function bedStep(
   takes: (BedTake | undefined)[],
@@ -557,60 +520,58 @@ export function bedStep(
 ): { play: (Play & { id: number })[]; stop: number[] } {
   const play: (Play & { id: number })[] = []
   const stop: number[] = []
+  if (!MIXED.has(mood.scene)) return { play, stop }
   const volume = mood.volume ?? DEFAULT_VOLUME
-  for (let i = 0; i < bedLayers(mood.scene); i++) {
-    const slot = takes[i]
-    // (A bed fallen silent keeps its slot, quiet, till the takes it stopped have left the player.)
-    const quiet = slot?.quiet
-    const t = quiet === undefined ? slot : undefined
-    if (t?.retire !== undefined && clock - t.at >= t.hold) {
-      stop.push(t.retire)
-      t.retire = undefined
-    }
-    const want = bedPlay(mood, i, seed * 32 + i, t ? [t.asset] : [])
-    if (!want) {
-      // Silent: this take, the one it's replacing, and the one before still fading out, all at once.
-      if (t) {
-        stop.push(t.id)
-        if (t.retire !== undefined) stop.push(t.retire)
-        if (t.prev && t.prev.end > clock && t.prev.id !== t.retire) stop.push(t.prev.id)
-        takes[i] = { ...t, retire: undefined, prev: undefined, quiet: clock + STOPPED_MS }
-      } else if (quiet !== undefined && clock >= quiet) takes[i] = undefined
-      continue
-    }
-    // Sound again straight after a silence: once what it stopped has gone.
-    if (quiet !== undefined && clock < quiet) continue
-    const due = !t || clock >= t.due
-    const mix = (asset: string) => asset.replace(/\d\.m4a$/, '')
-    // (Only once the take before has gone, so the bed never holds more than two of the player's few plays.)
-    const moved = !!t && clock >= t.alone && clock - t.at >= BED_FADE_MS && (mix(want.asset) !== mix(t.asset) || want.gain > t.gain * 1.4 || want.gain < t.gain / 1.4 || volume !== t.volume)
-    if (!due && !moved) continue
-    const id = seed * 32 + i
-    const from = t && !moved ? t.due : clock
-    // (A take holds its place in the player till afplay exits: stopped, a moment after; played out, its drain after.)
-    const hold = moved
-      ? volumeGain(want.gain, volume) < volumeGain(t!.gain, t!.volume) ? BED_FADE_MS / 3 : BED_FADE_MS
-      : t?.retire !== undefined ? Math.max(0, t.at + t.hold - clock) : BED_FADE_MS
-    // The take before this one, still in the player: the one it replaces (stopped once this is in), or the one
-    // fading out (the later to leave of the last take and its own before, should the last have been refused).
-    const prev = !t ? undefined : moved ? { id: t.id, end: clock + hold + STOPPED_MS } : t.prev && t.prev.end > t.end ? t.prev : { id: t.id, end: t.end }
-    const alone = prev ? Math.max(clock, prev.end) : clock
-    takes[i] = {
-      id,
-      asset: want.asset,
-      gain: want.gain,
-      at: clock,
-      due: Math.max(clock + BED_MIN_MS, from + bedGap(id)),
-      // (A take refused before its own crossfade was done hands the stop of the one it replaced on.)
-      retire: moved ? t!.id : t?.retire,
-      hold,
-      alone,
-      volume,
-      end: clock + BED_MS + PLAYER_DRAIN_MS,
-      prev,
-    }
-    play.push({ ...want, id })
+  const slot = takes[0]
+  // (A bed fallen silent keeps its slot, quiet, till the takes it stopped have left the player.)
+  const quiet = slot?.quiet
+  const t = quiet === undefined ? slot : undefined
+  if (t?.retire !== undefined && clock - t.at >= t.hold) {
+    stop.push(t.retire)
+    t.retire = undefined
   }
+  const id = seed * 32
+  const want = bedPlay(mood, id, t ? [t.asset] : [])
+  if (!want) {
+    // Silent: this take, the one it's replacing, and the one before still fading out, all at once.
+    if (t) {
+      stop.push(t.id)
+      if (t.retire !== undefined) stop.push(t.retire)
+      if (t.prev && t.prev.end > clock && t.prev.id !== t.retire) stop.push(t.prev.id)
+      takes[0] = { ...t, retire: undefined, prev: undefined, quiet: clock + STOPPED_MS }
+    } else if (quiet !== undefined && clock >= quiet) takes[0] = undefined
+    return { play, stop }
+  }
+  // Sound again straight after a silence: once what it stopped has gone.
+  if (quiet !== undefined && clock < quiet) return { play, stop }
+  const due = !t || clock >= t.due
+  // (Only once the take before has gone, so the bed never holds more than two of the player's few plays.)
+  const moved = !!t && clock >= t.alone && clock - t.at >= BED_FADE_MS && (mixOf(want.asset) !== mixOf(t.asset) || want.gain > t.gain * 1.4 || want.gain < t.gain / 1.4 || volume !== t.volume)
+  if (!due && !moved) return { play, stop }
+  const from = t && !moved ? t.due : clock
+  // (A take holds its place in the player till afplay exits: stopped, a moment after; played out, its drain after.)
+  const hold = moved
+    ? volumeGain(want.gain, volume) < volumeGain(t!.gain, t!.volume) ? BED_FADE_MS / 3 : BED_FADE_MS
+    : t?.retire !== undefined ? Math.max(0, t.at + t.hold - clock) : BED_FADE_MS
+  // The take before this one, still in the player: the one it replaces (stopped once this is in), or the one
+  // fading out (the later to leave of the last take and its own before, should the last have been refused).
+  const prev = !t ? undefined : moved ? { id: t.id, end: clock + hold + STOPPED_MS } : t.prev && t.prev.end > t.end ? t.prev : { id: t.id, end: t.end }
+  const alone = prev ? Math.max(clock, prev.end) : clock
+  takes[0] = {
+    id,
+    asset: want.asset,
+    gain: want.gain,
+    at: clock,
+    due: Math.max(clock + BED_MIN_MS, from + bedGap(id)),
+    // (A take refused before its own crossfade was done hands the stop of the one it replaced on.)
+    retire: moved ? t!.id : t?.retire,
+    hold,
+    alone,
+    volume,
+    end: clock + BED_MS + PLAYER_DRAIN_MS,
+    prev,
+  }
+  play.push({ ...want, id })
   return { play, stop }
 }
 
@@ -679,8 +640,11 @@ export function eventPlay(e: SoundEvent, seed: number, scene: string, level: num
   return c && { asset: asset(c.clip, c.variants, seed), gain: Math.min(MAX_GAIN, c.gain(e.v) * master(scene, level)) }
 }
 
-/** Each event's voice: how long it rings, and its sound. */
-const VOICES: Record<SoundKind, { len: number; voice: (m: Mix, dt: number, v: number, x: number) => number }> = {
+/**
+ * The voices of the events without a clip of their own (`EVENTS`): small and
+ * dense, so synthesized here and gathered into a burst. How long each rings, and its sound.
+ */
+const VOICES: Partial<Record<SoundKind, { len: number; voice: (m: Mix, dt: number, v: number, x: number) => number }>> = {
   pop: {
     // A bubble bursting rings at its resonance (lower for a bigger one), the pitch rising as it dies away.
     len: 0.08,
@@ -691,27 +655,6 @@ const VOICES: Record<SoundKind, { len: number; voice: (m: Mix, dt: number, v: nu
     },
   },
   crack: { len: 0.03, voice: (m, dt, v) => m.white() * decay(dt, 0.0025) * (0.12 + 0.12 * v) },
-  hit: {
-    len: 0.35,
-    voice: (m, dt, v) => Math.sin(TAU * (1100 - 1800 * dt) * dt) * decay(dt, 0.08) * (0.3 + 0.3 * v) + m.white() * decay(dt, 0.03) * 0.25 * (0.5 + v),
-  },
-  chuff: { len: 0.25, voice: (m, dt, v) => m.white() * decay(dt, 0.06) * Math.min(1, dt * 120) * (0.4 + 0.3 * v) },
-  clank: { len: 0.3, voice: (m, dt) => (Math.sin(TAU * 620 * dt) + 0.7 * Math.sin(TAU * 1013 * dt) + 0.4 * Math.sin(TAU * 1720 * dt)) * decay(dt, 0.07) * 0.18 },
-  ignite: { len: 2.2, voice: (m, dt) => m.white() * Math.min(1, dt / 1.2) * decay(Math.max(0, dt - 1.4), 0.35) * 0.7 },
-  sep: { len: 0.9, voice: (m, dt) => Math.sin(TAU * 58 * dt) * decay(dt, 0.25) * 0.7 + m.white() * decay(dt, 0.02) * 0.5 },
-  boom: { len: 1.8, voice: (m, dt) => (Math.sin(TAU * 42 * dt) * 0.7 + m.white() * 0.8) * decay(dt, 0.45) * Math.min(1, dt * 40) },
-  splash: { len: 1.0, voice: (m, dt) => m.white() * decay(dt, 0.25) * Math.min(1, dt * 30) * 0.6 },
-  clang: {
-    len: 0.9,
-    voice: (m, dt) => (Math.sin(TAU * 310 * dt) + 0.8 * Math.sin(TAU * 467 * dt) + 0.5 * Math.sin(TAU * 791 * dt)) * decay(dt, 0.22) * 0.3,
-  },
-  chute: { len: 0.5, voice: (m, dt) => m.white() * Math.sin(Math.PI * Math.min(1, dt / 0.5)) * 0.35 },
-  thud: { len: 0.4, voice: (m, dt) => Math.sin(TAU * 70 * dt) * decay(dt, 0.1) * 0.6 + m.white() * decay(dt, 0.015) * 0.3 },
-  sonic: { len: 1.2, voice: (m, dt) => (dt < 0.14 ? 1 - dt / 0.07 : 0) * 0.8 + m.white() * decay(dt, 0.4) * 0.3 },
-  lap: { len: 1.6, voice: (m, dt, v) => m.white() * Math.min(1, dt / 0.6) * decay(dt, 0.5) * (0.15 + 0.2 * v) },
-  crash: { len: 1.6, voice: (m, dt, v) => m.white() * Math.min(1, dt / 0.15) * decay(dt, 0.45) * (0.35 + 0.35 * v) },
-  swish: { len: 0.35, voice: (m, dt, v) => m.white() * Math.sin(Math.PI * Math.min(1, dt / 0.35)) * (0.15 + 0.25 * v) },
-  horn: { len: 1.2, voice: (m, dt) => (Math.sin(TAU * 311 * dt) + Math.sin(TAU * 370 * dt) + Math.sin(TAU * 466 * dt)) * Math.min(1, dt / 0.04) * Math.min(1, (1.2 - dt) / 0.1) * 0.15 },
 }
 
 /** A number in [0, 1) from a seed, scattered (neighbouring seeds land far apart). */
@@ -742,12 +685,14 @@ export function gather<T>(queue: T[], seen: number, e: T, seed: number): void {
 
 /** The events gathered over a moment, each at its offset (seconds), drawn into one clip. */
 export function burst(events: readonly (SoundEvent & { offset: number })[], seed: number): string | undefined {
-  if (!events.length) return undefined
+  // (Only the events without a clip of their own come here: those have a voice.)
+  const voiced = events.filter(e => VOICES[e.kind])
+  if (!voiced.length) return undefined
   let end = 0
-  for (const e of events) end = Math.max(end, e.offset + VOICES[e.kind].len)
+  for (const e of voiced) end = Math.max(end, e.offset + VOICES[e.kind]!.len)
   const m = new Mix(end, seed)
-  for (const e of events) {
-    const { len, voice } = VOICES[e.kind]
+  for (const e of voiced) {
+    const { len, voice } = VOICES[e.kind]!
     const x = m.rng.f()
     m.at(e.offset, len, dt => voice(m, dt, e.v, x))
   }

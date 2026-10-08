@@ -1,4 +1,4 @@
-// REVISION: flow-v142-surf-riders
+// REVISION: flow-v170-dry-scenes
 //
 // Surf (the `surf` style): a surfer and the ocean on the same dials as the
 // fire; the level is the swell. At 1 the sea is glassy under a dawn sky and
@@ -37,11 +37,11 @@
 // sight. While the whole scene waits on you, they sit up with the surfer.
 
 import type { AgentDial } from './agents'
-import { Cells, Rng, isTall } from './cells'
-import { Crew, type AgentMark, type Mate } from './crew'
+import { Cells, freshSeed, Rng, isTall } from './cells'
+import { beckon, Crew, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
-import { MOON, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
-import { BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, noise1 as vnoise, QUAD, type QuadFit } from './pixels'
+import { easeNight, MOON, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
+import { BITS, BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, noise1 as vnoise, QUAD, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
 import { hear, type Ambience, type SoundEvent } from './sound'
 import { easeWait, waitTone } from './waiting'
@@ -89,6 +89,7 @@ const DAY: Palette = {
   foamShade: 0xbfe0ec,
   spray: 0xeaf7ff,
 }
+const PAL_KEYS = Object.keys(DAY) as (keyof Palette)[]
 const DAWN = { skyTop: 0x5a86c8, skyHz: 0xf8c79c, sun: 0xfff0c8, sunGlow: 0xffb070, head: 0x6f7486 }
 const OVERCAST = { skyTop: 0x6e7680, skyHz: 0xadb2b8, sun: 0xc8c8c4, sunGlow: 0xa8acb0, cloud: 0xc4c8cc, cloudShade: 0x8e949a, head: 0x5d6466 }
 const STORM: Palette = {
@@ -181,8 +182,7 @@ const SPRITES = {
 type Pose = keyof typeof SPRITES
 
 const PMAX = 480
-/** Set pixels in each quadrant mask. */
-const BITS = [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4]
+
 
 /** Surfers in the line-up for subagents, at most (a wetsuit and a board each). */
 const CREW = 5
@@ -307,8 +307,8 @@ export class Surf {
   private gulls: { x: number; y: number; ph: number; v: number }[] = []
   private clouds: { x: number; y: number; w: number; h: number }[] = []
 
-  constructor(seed?: number) {
-    this.seed = (seed ?? Date.now()) % 100_000
+  constructor(seed = freshSeed()) {
+    this.seed = seed % 100_000
     this.rng = new Rng(this.seed + 17)
   }
 
@@ -472,7 +472,7 @@ export class Surf {
     this.scroll += this.speed * (this.vertical ? 1.4 : 1)
     this.kGrey += ((this.tint === 'smoke' ? 1 : 0) - this.kGrey) * 0.05
     this.kStorm += ((this.tint === 'blue' ? 1 : 0) - this.kStorm) * 0.05
-    this.kNight += ((this.night ? 1 : 0) - this.kNight) * 0.04
+    this.kNight = easeNight(this.kNight, this.night)
     this.kWait = easeWait(this.kWait, this.waiting)
     if (level <= 0) return
     this.layout()
@@ -622,8 +622,7 @@ export class Surf {
   private updatePalette(): void {
     const p = this.pal
     const dawn = clamp((4 - this.s) / 3)
-    const keys = Object.keys(DAY) as (keyof Palette)[]
-    for (const key of keys) {
+    for (const key of PAL_KEYS) {
       let c = DAY[key]
       const d = (DAWN as Partial<Palette>)[key]
       if (d !== undefined) c = mix(c, d, dawn)
@@ -916,7 +915,7 @@ export class Surf {
 
   private sprite(pose: Pose, large: boolean, x: number, y: number, facing: number, suit: number): void {
     const rows = SPRITES[pose][large ? 1 : 0]
-    const width = Math.max(...rows.map(r => r.length))
+    const width = rows[0].length
     // Snapped so the head fills whole cells: three colors never share one.
     const x0 = 2 * Math.round((x - width / 2) / 2)
     const yb = Math.floor(y)
@@ -1000,12 +999,6 @@ export class Surf {
     return x > this.cx ? this.pw + 8 : -8
   }
 
-  /** The companion in a slot, if there is one. */
-  private mateIn(slot: number): Mate | undefined {
-    const mates = this.crew.mates
-    for (let i = 0; i < mates.length; i++) if (mates[i]!.slot === slot) return mates[i]
-    return undefined
-  }
 
   /** The stretch of the big wave's face its riders share (u, 0 the crest .. 1 the foot): under a barrel, its open part. */
   private faceLo(): number {
@@ -1074,7 +1067,7 @@ export class Surf {
     let given = 0
     let share = 0
     for (let slot = 0; slot < CREW; slot++) {
-      const m = this.mateIn(slot)
+      const m = this.crew.inSlot(slot)
       if (!m) {
         this.rideGoal[slot] = 0
         this.rideK[slot] = 0
@@ -1095,13 +1088,13 @@ export class Surf {
     // The rest of those working ride the following swells in the band, one each, while there are any.
     let f = 0
     for (let slot = 0; slot < CREW; slot++) {
-      const m = this.mateIn(slot)
+      const m = this.crew.inSlot(slot)
       const free = m && !m.leaving && m.busy >= 0.5 && !this.rideGoal[slot] && this.rideK[slot]! < 0.5
       this.follow[slot] = free && !this.vertical && this.s >= 3 && f < this.nF ? f++ : -1
     }
     for (let slot = 0; slot < CREW; slot++) {
       if (!this.rideGoal[slot] && this.rideK[slot] === 0) continue
-      const seed = this.mateIn(slot)!.seed
+      const seed = this.crew.inSlot(slot)!.seed
       this.lane(slot)
       this.ridePh[slot]! += omega * (0.8 + 0.4 * seed)
       const u = this.uAt(this.laneC - this.laneAmp() * (0.55 + 0.45 * hash(seed * 9973 + 5)) * Math.cos(this.ridePh[slot]!))
@@ -1162,7 +1155,7 @@ export class Surf {
    */
   private matePose(m: Mate): Pose {
     if (m.leaving || m.here < 1) return 'paddle'
-    if (m.busy < 0.5) return m.waiting ? (((this.t + m.slot * 3) >> 2) % 2 ? 'waveUp' : 'waveOut') : 'sit'
+    if (m.busy < 0.5) return m.waiting ? (beckon(m, this.t) ? 'waveOut' : 'waveUp') : 'sit'
     if (this.onWave(m)) return this.curl > 0.55 ? 'crouch' : 'ride'
     if (this.waiting && this.s < 2.7) return 'sit'
     return this.rides(m) ? 'ride' : 'paddle'

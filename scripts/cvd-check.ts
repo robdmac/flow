@@ -1,8 +1,9 @@
-// REVISION: flow-v120-cvd-check
+// REVISION: flow-v171-dry-adapter
 //
 // Whether the tints read for colour-blind eyes. Every scene runs at levels 1,
 // 5 and 10, in the band (120 × 5) and the spine (22 × 50), by day and (for a
-// scene with one) by night: untinted for a while, then each tint, as Flow
+// scene with one) by night, over each backdrop it passes through (avalon's
+// open stars, suns and nebulae): untinted for a while, then each tint, as Flow
 // shows it. Its frames become pixels the way desktop draws them (2 × 4 a
 // cell, svg.ts), laid over a dark terminal, and are seen with normal vision,
 // as protanopia, deuteranopia and tritanopia (Machado, Oliveira & Fernandes
@@ -47,17 +48,13 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Cells } from '../hooks/cells'
-import { makeScene, type SceneName, type Tint } from '../hooks/styles'
+import type { SceneName, Tint } from '../hooks/styles'
 import { encodePng, gridPixels } from '../hooks/svg'
-import { nightsOf, scenesFrom, TINTS } from './scene-lab'
+import { type Backdrop, backdropsOf, build, nightsOf, option, scenesFrom, TINTS } from './scene-lab'
 
 const argv = process.argv.slice(2)
-const opt = (name: string) => {
-  const i = argv.indexOf(name)
-  return i >= 0 ? argv[i + 1] : undefined
-}
-const sheetsDir = opt('--sheets')
-const jsonFile = opt('--json')
+const sheetsDir = option(argv, '--sheets')
+const jsonFile = option(argv, '--json')
 const light = argv.includes('--light')
 const every = argv.includes('--every')
 const names = argv.filter((a, i) => !a.startsWith('--') && argv[i - 1] !== '--sheets' && argv[i - 1] !== '--json')
@@ -220,13 +217,8 @@ function frameOf(grid: Cells): Frame {
 }
 
 /** A scene's frames at WINDOW and STEADY: untinted for WARM frames, then `tint`. */
-function capture(scene: SceneName, columns: number, rows: number, level: number, night: boolean, tint: Tint) {
-  const f = makeScene(scene, 7)
-  f.strength = level
-  f.tint = 'normal'
-  f.night = night
-  f.ensure(columns, rows)
-  for (let i = 0; i < WARM; i++) f.step()
+function capture(scene: SceneName, columns: number, rows: number, level: number, night: boolean, backdrop: Backdrop | undefined, tint: Tint) {
+  const f = build(scene, columns, rows, { level, night, tint: 'normal', backdrop }, WARM)
   f.tint = tint
   const frames = new Map<number, Frame>()
   for (let t = 1; t <= LAST; t++) {
@@ -272,6 +264,8 @@ type Row = {
   layout: string
   level: number
   night: boolean
+  /** The backdrop it passed (avalon's sun or nebula), if not its own. */
+  backdrop?: string
   pair: Pair
   vision: Vision
   /** Of the frame, how much the tint changes for normal vision (0..1). */
@@ -284,19 +278,22 @@ type Row = {
 
 const rows: Row[] = []
 const kept = new Map<string, Record<Tint, Frame>>()
-const where = (r: { layout: string; level: number; night: boolean }) => `${r.layout} L${r.level}${r.night ? ' night' : ''}`
+const where = (r: { layout: string; level: number; night: boolean; backdrop?: string }) =>
+  `${r.layout} L${r.level}${r.night ? ' night' : ''}${r.backdrop ? ` ${r.backdrop}` : ''}`
 
 for (const scene of scenesFrom(names)) {
   process.stderr.write(`${scene}… `)
   for (const layout of LAYOUTS) {
     for (const level of LEVELS) {
-      for (const night of nightsOf(scene)) {
+      // (By day and night, over each backdrop.)
+      for (const [night, back] of nightsOf(scene).flatMap(n => backdropsOf(scene).map(b => [n, b] as const))) {
+        const backdrop = back?.name
         const shots = Object.fromEntries(
-          TINTS.map(t => [t, capture(scene, layout.columns, layout.rows, level, night, t)]),
+          TINTS.map(t => [t, capture(scene, layout.columns, layout.rows, level, night, back, t)]),
         ) as Record<Tint, Map<number, Frame>>
         const middle = STEADY[STEADY.length >> 1]!
         kept.set(
-          `${scene} ${where({ layout: layout.name, level, night })}`,
+          `${scene} ${where({ layout: layout.name, level, night, backdrop })}`,
           Object.fromEntries(TINTS.map(t => [t, shots[t].get(middle)!])) as Record<Tint, Frame>,
         )
         for (const [pair, ta, tb, when] of PAIRS) {
@@ -317,6 +314,7 @@ for (const scene of scenesFrom(names)) {
               layout: layout.name,
               level,
               night,
+              ...(backdrop ? { backdrop } : {}),
               pair,
               vision: VISION_NAMES[v]!,
               area: count / (a.length * a[0]!.rgb.length),
@@ -343,7 +341,7 @@ const median = (xs: number[]) => [...xs].sort((x, y) => x - y)[xs.length >> 1]!
 const keyOf = (r: Row) => `${r.scene} ${where(r)} ${r.pair}`
 
 console.log(`How far apart the tints look, ΔE00 over what the tint changes: the worst setting (layout × level`)
-console.log(`× day/night) and (the median). Area: the median share of the frame it changes. Over a ${light ? 'light' : 'dark'}`)
+console.log(`× day/night × backdrop) and (the median). Area: the median share of the frame it changes. Over a ${light ? 'light' : 'dark'}`)
 console.log(`terminal. Under ${FAIL} red, under ${WEAK} yellow.`)
 for (const [pair] of PAIRS) {
   console.log(`\n\x1b[1m${pair}\x1b[0m`)
@@ -368,10 +366,11 @@ const lost = settled
 const lostHue = lost.filter(r => r.vision !== 'achromat')
 const lostLight = lost.filter(r => r.vision === 'achromat')
 console.log(`\n\x1b[1mLost to colour blindness\x1b[0m: settled tints at least ${WEAK} for normal vision, under ${WEAK} for this one (${lostHue.length})`)
-console.log('scene     setting           pair          vision      ΔE  normal   cast   area')
+const settingWidth = Math.max(18, ...lostHue.map(r => where(r).length + 2))
+console.log(`scene     ${'setting'.padEnd(settingWidth)}pair          vision      ΔE  normal   cast   area`)
 for (const r of lostHue) {
   console.log(
-    `${r.scene.padEnd(10)}${where(r).padEnd(18)}${r.pair.padEnd(14)}${r.vision.padEnd(9)}${mark(r.de)}   ${fmt(seenNormally.get(keyOf(r))!)}  ${fmt(r.cast)}  ${(r.area * 100).toFixed(1).padStart(4)}%`,
+    `${r.scene.padEnd(10)}${where(r).padEnd(settingWidth)}${r.pair.padEnd(14)}${r.vision.padEnd(9)}${mark(r.de)}   ${fmt(seenNormally.get(keyOf(r))!)}  ${fmt(r.cast)}  ${(r.area * 100).toFixed(1).padStart(4)}%`,
   )
 }
 const listed = (list: Row[], show: (r: Row) => string) => {

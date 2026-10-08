@@ -1,4 +1,4 @@
-// REVISION: flow-v127-crew-room
+// REVISION: flow-v170-dry-scenes
 //
 // Engine (the `engine` style): a Victorian steam engine room on the same dials
 // as the fire; the level is how hard it is being driven. At 1 it stands cold,
@@ -35,10 +35,10 @@
 // breath, the whole room breathing in sepia (waiting.ts).
 
 import type { AgentDial } from './agents'
-import { Cells, DEFAULT_COLOR, Rng, isTall } from './cells'
-import { Crew, type AgentMark } from './crew'
+import { Cells, DEFAULT_COLOR, freshSeed, Rng, isTall } from './cells'
+import { beckon, Crew, failed, type AgentMark } from './crew'
 import type { Tint } from './styles'
-import { BRAILLE, clamp01, dist, mix, QUAD } from './pixels'
+import { BRAILLE, clamp01, dist, mix, QUAD, rampAt } from './pixels'
 import { defineScene } from './scene-def'
 import { hear, type SoundEvent } from './sound'
 import { breath, easeWait, waitTone } from './waiting'
@@ -120,11 +120,7 @@ type Emitter = { x: number; y: number; kind: number }
 
 const frac = (n: number) => n - Math.floor(n)
 
-function fireColor(h: number, ramp: readonly number[] = FIRE): number {
-  const x = clamp01(h) * (ramp.length - 1)
-  const i = Math.min(ramp.length - 2, Math.floor(x))
-  return mix(ramp[i]!, ramp[i + 1]!, x - i)
-}
+const fireColor = (h: number, ramp: readonly number[] = FIRE) => rampAt(ramp, h)
 
 /** Solid colors are stored +1 so 0 can mean "empty" (and pure black still works). */
 const SOLID = 0x1000000
@@ -234,8 +230,8 @@ export class Engine {
   private boilerTop = 0
   private boilerBottom = 0
 
-  constructor(seed?: number) {
-    this.seed = (seed ?? Date.now()) >>> 0
+  constructor(seed = freshSeed()) {
+    this.seed = seed >>> 0
     this.rng = new Rng(seed)
   }
 
@@ -1503,12 +1499,12 @@ export class Engine {
         // group while its agent works, a low glow while it's quiet, all flashing while it waits on you.
         let lit: number
         if (m.leaving) lit = m.here
-        else if (m.waiting) lit = ((this.t + m.slot * 3) >> 2) % 2 === 0 ? 1 : 0.15
+        else if (m.waiting) lit = beckon(m, this.t) ? 1 : 0.15
         else {
           const run = lamps === 1 ? ((this.t >> 1) + m.slot) % 4 !== 0 : ((this.t >> 2) + m.slot) % lamps === k
           lit = m.here * (0.35 + 0.65 * m.busy * (run ? 1 : 0.45))
         }
-        const color = m.leaving && !m.ok ? C.lampFail : on
+        const color = failed(m) ? C.lampFail : on
         const x = mid + k * 4
         const c = mix(C.brassDk, color, Math.round(lit * 4) / 4)
         this.q(x, qy, c)

@@ -1,11 +1,12 @@
-// REVISION: flow-v150-review-fixes
+// REVISION: flow-v171-dry-adapter
 //
 // What every scene must hold to (AGENTS.md), measured: plugin.json lists
 // the scenes in SCENES, hooks/sound-files.ts lists the clips in sounds/,
 // level 0 draws nothing, a frame has at most 1024 colour pairs, and
 // step() + grid() takes under ~2 ms at the band's and the spine's sizes
 // (with subagents' companions too, working and waiting on the person: the
-// slower is shown). Exits 1 on any failure. Not part of the mod (Node).
+// slower is shown). Each over every backdrop a scene passes through (avalon's
+// suns and nebulae). Exits 1 on any failure. Not part of the mod (Node).
 //
 //   npm run check                every scene
 //   npm run check -- surf ski    just these
@@ -15,7 +16,7 @@ import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { SOUND_FILES } from '../hooks/sound-files'
 import { syncManifest } from './sync-manifest'
-import { build, LOOKS, nightsOf, pairs, scenesFrom } from './scene-lab'
+import { backdropsOf, build, LOOKS, nightsOf, pairs, scenesFrom } from './scene-lab'
 
 const MAX_PAIRS = 1024
 // CI's shared runners are slower and noisier than a laptop, so CI loosens the
@@ -56,18 +57,21 @@ console.log('scene      most pairs   ms at 250×5   ms at 22×60')
 for (const scene of scenesFrom(process.argv.slice(2))) {
   let most = 0
   let where = ''
+  const backdrops = backdropsOf(scene)
   for (const [columns, rows] of SIZES) {
-    for (const level of [1, 5, 10]) {
-      for (const night of nightsOf(scene)) {
-        for (const look of LOOKS) {
-          for (const agents of [false, true]) {
-            const f = build(scene, columns, rows, { level, night, tint: look.tint, waiting: look.waiting, agents }, 60)
-            for (let i = 0; i < 20; i++) {
-              f.step()
-              const n = pairs(f.grid())
-              if (n > most) {
-                most = n
-                where = `${columns}×${rows} level ${level}${night ? ' night' : ''} ${look.name}${agents ? ' with subagents' : ''}`
+    for (const backdrop of backdrops) {
+      for (const level of [1, 5, 10]) {
+        for (const night of nightsOf(scene)) {
+          for (const look of LOOKS) {
+            for (const agents of [false, true]) {
+              const f = build(scene, columns, rows, { level, night, tint: look.tint, waiting: look.waiting, agents, backdrop }, 60)
+              for (let i = 0; i < 20; i++) {
+                f.step()
+                const n = pairs(f.grid())
+                if (n > most) {
+                  most = n
+                  where = `${columns}×${rows} level ${level}${night ? ' night' : ''} ${look.name}${agents ? ' with subagents' : ''}${backdrop ? `, ${backdrop.name}` : ''}`
+                }
               }
             }
           }
@@ -84,18 +88,20 @@ for (const scene of scenesFrom(process.argv.slice(2))) {
       }
     }
   }
-  // (Working at 10, and waiting on the person, its sepia over every cell: the slower of the two.)
+  // (Working at 10, and waiting on the person, its sepia over every cell, over each backdrop: the slowest.)
   const ms = TIMED.map(([columns, rows]) => {
     let worst = 0
-    for (const waiting of [false, true]) {
-      const f = build(scene, columns, rows, { level: 10, night: false, tint: 'normal', agents: true, waiting }, 60)
-      const n = 200
-      const t0 = performance.now()
-      for (let i = 0; i < n; i++) {
-        f.step()
-        f.grid()
+    for (const backdrop of backdrops) {
+      for (const waiting of [false, true]) {
+        const f = build(scene, columns, rows, { level: 10, night: false, tint: 'normal', agents: true, waiting, backdrop }, 60)
+        const n = 200
+        const t0 = performance.now()
+        for (let i = 0; i < n; i++) {
+          f.step()
+          f.grid()
+        }
+        worst = Math.max(worst, (performance.now() - t0) / n)
       }
-      worst = Math.max(worst, (performance.now() - t0) / n)
     }
     return worst
   })
