@@ -24,6 +24,7 @@ import { Cells, freshSeed, Rng } from './cells'
 import type { SoundEvent } from './sound'
 import type { Tint } from './styles'
 import { BRAILLE, clamp, hash1, mix, rampAt } from './pixels'
+import { easeNight } from './night'
 import { defineScene } from './scene-def'
 import { easeWait, waitTone } from './waiting'
 
@@ -206,8 +207,7 @@ export class Bubbles {
     this.kMurk += clamp((this.tint === 'smoke' ? 1 : 0) - this.kMurk, -0.05, 0.05)
     this.kCold += clamp((this.tint === 'blue' ? 1 : 0) - this.kCold, -0.04, 0.04)
     this.kWait = easeWait(this.kWait, this.waiting)
-    if (this.kNight < 0) this.kNight = this.night ? 1 : 0
-    this.kNight += clamp((this.night ? 1 : 0) - this.kNight, -0.04, 0.04)
+    this.kNight = easeNight(this.kNight, this.night)
     if (this.fresh) {
       // Begin mid-fizz, not with an empty glass: run the column full once.
       this.fresh = false

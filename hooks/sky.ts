@@ -25,7 +25,7 @@
 import { Cells, DEFAULT_COLOR, freshSeed } from './cells'
 import { layered, snap } from './clouds/layered'
 import type { Tint } from './styles'
-import { MOON, MOON_ACROSS, MOON_ROW, NIGHT_HORIZON, NIGHT_ZENITH, STAR, STAR_DIM } from './night'
+import { easeNight, MOON, MOON_ACROSS, MOON_ROW, NIGHT_HORIZON, NIGHT_ZENITH, STAR, STAR_DIM } from './night'
 import { g, hash, lowerBlock, mix, rampStops } from './pixels'
 import { easeWait, waitTone } from './waiting'
 
@@ -160,10 +160,7 @@ export abstract class SkyWorld {
   step(): void {
     this.t++
     // Night falls (and lifts) over a couple of seconds; a fresh start begins as asked.
-    const k = this.night ? 1 : 0
-    if (this.kNight < 0) this.kNight = k
-    this.kNight += (k - this.kNight) * 0.05
-    if (Math.abs(k - this.kNight) < 0.01) this.kNight = k
+    this.kNight = easeNight(this.kNight, this.night)
     this.kWait = easeWait(this.kWait, this.waiting)
     this.advance()
   }

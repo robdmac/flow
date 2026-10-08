@@ -40,7 +40,7 @@ import type { AgentDial } from './agents'
 import { Cells, freshSeed, Rng, isTall } from './cells'
 import { beckon, Crew, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
-import { MOON, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
+import { easeNight, MOON, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
 import { BITS, BRAILLE, clamp, fitQuad, g, grey, hash1 as hash, mix, noise1 as vnoise, QUAD, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
 import { hear, type Ambience, type SoundEvent } from './sound'
@@ -472,7 +472,7 @@ export class Surf {
     this.scroll += this.speed * (this.vertical ? 1.4 : 1)
     this.kGrey += ((this.tint === 'smoke' ? 1 : 0) - this.kGrey) * 0.05
     this.kStorm += ((this.tint === 'blue' ? 1 : 0) - this.kStorm) * 0.05
-    this.kNight += ((this.night ? 1 : 0) - this.kNight) * 0.04
+    this.kNight = easeNight(this.kNight, this.night)
     this.kWait = easeWait(this.kWait, this.waiting)
     if (level <= 0) return
     this.layout()

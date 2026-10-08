@@ -38,7 +38,7 @@ import type { AgentDial } from './agents'
 import { Cells, DEFAULT_COLOR, freshSeed, Rng, isTall } from './cells'
 import { beckon, Crew, finished, resting, type AgentMark, type Mate } from './crew'
 import type { Tint } from './styles'
-import { MOON, moonCover, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
+import { easeNight, MOON, moonCover, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR } from './night'
 import { approach, BRAILLE, clamp, fitQuad, hashMurmur as hash, mix, QUAD, type QuadFit } from './pixels'
 import { defineScene } from './scene-def'
 import { hear, type Ambience, type SoundEvent } from './sound'
@@ -456,7 +456,7 @@ export class Ski {
       this.kGrey = g
       this.kDusk = b
     }
-    this.kNight = approach(this.kNight, n, 0.04)
+    this.kNight = easeNight(this.kNight, this.night)
     this.kGrey = approach(this.kGrey, g, 0.05)
     this.kDusk = approach(this.kDusk, b, 0.05)
     const p = this.palette

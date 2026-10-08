@@ -19,6 +19,7 @@
 // or less), and `resize(d)` to set up per-size state.
 
 import { Cells, DEFAULT_COLOR, isTall } from './cells'
+import { easeNight } from './night'
 import { BITS, BRAILLE, clamp, fitQuad, QUAD, type QuadFit } from './pixels'
 import type { Scene, Tint } from './styles'
 import { easeWait, waitTone } from './waiting'
@@ -141,8 +142,6 @@ export abstract class PixelScene implements Scene {
   waiting = false
   /** How far the level moves toward the dial each frame (0..1): lower glides slower. */
   protected levelEase = 0.05
-  /** How far night moves each frame (0..1). */
-  protected nightEase = 0.04
 
   private level = Number.NaN
   private kNight = -1
@@ -199,9 +198,7 @@ export abstract class PixelScene implements Scene {
     if (Number.isNaN(this.level)) this.level = want
     const dl = want - this.level
     this.level += Math.abs(dl) < 0.01 ? dl : dl * this.levelEase
-    const n = this.night ? 1 : 0
-    if (this.kNight < 0) this.kNight = n
-    this.kNight += clamp(n - this.kNight, -this.nightEase, this.nightEase)
+    this.kNight = easeNight(this.kNight, this.night)
     this.kWait = easeWait(this.kWait, this.waiting)
     this.update(this.dials())
   }
