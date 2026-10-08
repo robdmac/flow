@@ -1,4 +1,4 @@
-// REVISION: flow-v170-dry-scenes
+// REVISION: flow-v173-directory
 //
 // Surf (the `surf` style): a surfer and the ocean on the same dials as the
 // fire; the level is the swell. At 1 the sea is glassy under a dawn sky and
@@ -251,7 +251,7 @@ export class Surf {
   private Wb = 1
   private pow = 1
   private steep = 0
-  private curl = 0
+  private lip = 0
   private crestY = 0
   private ex = 0
   private ey = 0
@@ -358,7 +358,7 @@ export class Surf {
     const e = Math.pow(clamp((s - 1.2) / 8.8), 1.1)
     this.steep = clamp((s - 2.5) / 6)
     this.pow = 1.3 + 0.12 * s
-    this.curl = clamp((s - 9) / 0.9)
+    this.lip = clamp((s - 9) / 0.9)
     if (this.vertical) {
       this.seaY = ph * (0.56 + 0.036 * s)
       this.H = Math.max(0.3, (this.seaY - ph * 0.2) * e)
@@ -386,7 +386,7 @@ export class Surf {
       }
     }
     this.crestY = this.seaY - this.H
-    const c = this.curl
+    const c = this.lip
     this.ry = Math.max(1, this.H * (0.22 + 0.22 * c))
     this.rx = Math.max(1, this.vertical ? this.Wf * (0.3 + 0.2 * c) : Math.max(this.Wf * 0.4, this.ry * 2.6))
     this.ex = this.cx + this.rx * 0.95
@@ -442,7 +442,7 @@ export class Surf {
   }
 
   ambience(): Ambience {
-    return { swell: this.s / 10, curl: this.curl }
+    return { swell: this.s / 10, lip: this.lip }
   }
 
   step(): void {
@@ -489,7 +489,7 @@ export class Surf {
     const s = this.s
     const omega = 0.035 + 0.011 * s
     this.phase += omega
-    const inTube = this.curl > 0.55
+    const inTube = this.lip > 0.55
     const amp0 = inTube ? 0.05 : clamp(0.08 + 0.04 * (s - 3), 0.06, 0.36)
     const mid0 = inTube ? 0.4 : 0.52
     // Companions riding the wave with them: the face is shared out in lanes, the surfer carving in theirs.
@@ -516,19 +516,19 @@ export class Surf {
       const n = (s - 5) * 0.7 * k
       const whole = Math.floor(n) + (this.rng.f() < n - Math.floor(n) ? 1 : 0)
       for (let i = 0; i < whole; i++) {
-        const x = (this.curl > 0 ? this.ex : this.cx) + (this.rng.f() - 0.6) * 2 * k
+        const x = (this.lip > 0 ? this.ex : this.cx) + (this.rng.f() - 0.6) * 2 * k
         const y = this.crestY + this.rng.f() * 0.6
         this.emit(x, y, (-0.3 - this.rng.f() * (0.4 + s * 0.09)) * k, (-0.08 - this.rng.f() * 0.3) * k, 8 + this.rng.f() * 14, 0)
       }
     }
     // The pitching lip: falling curtain at its tip and an explosion where it lands.
-    if (this.curl > 0.3) {
+    if (this.lip > 0.3) {
       const a = (this.phiEnd * Math.PI) / 180
       const tx = this.ex + this.rx * Math.cos(a)
       const ty = this.ey + this.ry * Math.sin(a)
       for (let i = 0; i < 2 * k; i++) this.emit(tx + (this.rng.f() - 0.5), ty, (this.rng.f() - 0.3) * 0.4, 0.15 + this.rng.f() * 0.3, 6 + this.rng.f() * 6, 0)
       const bx = this.ex + this.rx * (0.9 + this.rng.f() * 0.6)
-      for (let i = 0; i < 3 * k * this.curl; i++)
+      for (let i = 0; i < 3 * k * this.lip; i++)
         this.emit(bx + this.rng.f() * 3 * k, this.seaY - 0.5, (0.1 + this.rng.f() * 0.8) * k, (-0.3 - this.rng.f() * 0.8) * k, 6 + this.rng.f() * 10, 0)
     }
     // White water churning at the foot of a breaking face.
@@ -603,7 +603,7 @@ export class Surf {
     // Waiting on the person: once the swell has settled, they sit up and wait for a wave.
     if (this.s < 1.7 || (this.waiting && this.s < 2.7)) return 'sit'
     if (this.s < 2.7) return 'paddle'
-    return this.curl > 0.55 ? 'crouch' : 'ride'
+    return this.lip > 0.55 ? 'crouch' : 'ride'
   }
 
   private surferX(): number {
@@ -661,7 +661,7 @@ export class Surf {
   private paintScene(): void {
     this.paintWorld()
     // The pitching lip pours down as a curtain from its tip to the water.
-    if (this.curl > 0.5) {
+    if (this.lip > 0.5) {
       const a = (this.phiEnd * Math.PI) / 180
       const tx = this.ex + this.rx * Math.cos(a)
       const ty = this.ey + this.ry * Math.sin(a)
@@ -699,8 +699,8 @@ export class Surf {
     const headScroll = this.scroll * 0.06 + this.seed
     const headMax = vertical ? 5 : Math.max(1.2, ph * 0.24)
     const foamAmt = clamp((s - 3.5) / 4)
-    const spill = clamp((s - 4.2) / 3) * (1 - this.curl) * 0.4
-    const curl = this.curl
+    const spill = clamp((s - 4.2) / 3) * (1 - this.lip) * 0.4
+    const lip = this.lip
     const cx = this.cx
     for (let x = 0; x < pw; x++) {
       const xc = x + 0.5
@@ -724,7 +724,7 @@ export class Surf {
         }
       }
       const isMain = waveH === this.H
-      const hood = curl > 0 && xc >= cx && xc <= this.ex ? this.crestY : 1e9
+      const hood = lip > 0 && xc >= cx && xc <= this.ex ? this.crestY : 1e9
       const headH = this.headland(x + headScroll, headMax)
       const wx = x + this.scroll
       for (let y = 0; y < ph; y++) {
@@ -768,7 +768,7 @@ export class Surf {
         let wet = clamp(y + 1 - surf)
         let inTube = false
         let lip = 0
-        if (curl > 0 && isMain && Math.abs(xc - this.ex) < this.rx + 1 && yc < seaY + 1) {
+        if (lip > 0 && isMain && Math.abs(xc - this.ex) < this.rx + 1 && yc < seaY + 1) {
           const dx = (xc - this.ex) / this.rx
           const dy = (yc - this.ey) / this.ry
           const r = Math.sqrt(dx * dx + dy * dy)
@@ -778,7 +778,7 @@ export class Surf {
             const ca = Math.cos((phi * Math.PI) / 180)
             const sa = Math.sin((phi * Math.PI) / 180)
             const R = Math.hypot(this.rx * ca, 2 * this.ry * sa)
-            const th = ((vertical ? 5 : 2.6) * (1 - 0.45 * prog) * (0.6 + 0.4 * curl)) / R
+            const th = ((vertical ? 5 : 2.6) * (1 - 0.45 * prog) * (0.6 + 0.4 * lip)) / R
             if (phi <= this.phiEnd && r > 1 - th && r < 1 && (yc < surf || phi > -140)) lip = 1
             else if (yc < surf && r < 1) inTube = true
           } else if (yc >= hood) wet = 1
@@ -793,7 +793,7 @@ export class Surf {
           const dx = (xc - this.ex) / this.rx
           const dy = (yc - this.ey) / this.ry
           // Light comes in through the open end: shadowed at the back of
-          // the curl, close to the face's own color toward the mouth.
+          // the lip, close to the face's own color toward the mouth.
           const lit = clamp((dx + dy) * 0.4 + 0.55)
           c = mix(mix(P.tube, P.seaTop, 0.4), mix(P.seaTop, P.faceLip, 0.5), lit * 0.8)
           if (bandNight > 0.01) c = mix(c, mix(BAND_SEA, P.seaDeep, 0.3), 0.7 * bandNight)
@@ -811,9 +811,9 @@ export class Surf {
               const fk = clamp((xc - cx) / (vertical ? Math.max(4, this.Wf * 0.45) : 5) + 0.35)
               wc = mix(backC, faceC, fk)
               // The barrel's shadow fades out ahead of it rather than stopping on a line.
-              if (curl > 0) {
+              if (lip > 0) {
                 const ahead = clamp((this.ex + this.rx - xc) / Math.max(2, this.rx * 0.8))
-                wc = mix(wc, P.tube, 0.28 * curl * ahead * fk)
+                wc = mix(wc, P.tube, 0.28 * lip * ahead * fk)
               }
             }
           } else {
@@ -848,8 +848,8 @@ export class Surf {
             if (fl < 0.6) wc = mix(wc, fl < 0.4 ? P.foam : P.foamShade, 0.9)
           }
           // White water boiling at the foot of a big face.
-          if (isMain && s > 6.5 && xc > cx + this.Wf * 0.7 && xc < cx + this.Wf * (1.15 + 0.15 * curl)) {
-            const top = seaY - (s - 6.2) * (vertical ? 1.4 : 0.35) * (1 + curl)
+          if (isMain && s > 6.5 && xc > cx + this.Wf * 0.7 && xc < cx + this.Wf * (1.15 + 0.15 * lip)) {
+            const top = seaY - (s - 6.2) * (vertical ? 1.4 : 0.35) * (1 + lip)
             if (yc > top && yc < seaY + (vertical ? 3 : 1)) {
               const fl = vnoise(x * 0.45 + t * 0.21, 53 + y) * 0.75 + hash(x * 17 + y * 113 + t * 31) * 0.25
               if (fl < 0.62) wc = mix(wc, fl < 0.4 ? P.foam : P.foamShade, 0.9)
@@ -1002,11 +1002,11 @@ export class Surf {
 
   /** The stretch of the big wave's face its riders share (u, 0 the crest .. 1 the foot): under a barrel, its open part. */
   private faceLo(): number {
-    return 0.1 + 0.1 * this.curl
+    return 0.1 + 0.1 * this.lip
   }
 
   private faceHi(): number {
-    return 0.9 - 0.12 * this.curl
+    return 0.9 - 0.12 * this.lip
   }
 
   private rideGap(): number {
@@ -1156,7 +1156,7 @@ export class Surf {
   private matePose(m: Mate): Pose {
     if (m.leaving || m.here < 1) return 'paddle'
     if (m.busy < 0.5) return m.waiting ? (beckon(m, this.t) ? 'waveOut' : 'waveUp') : 'sit'
-    if (this.onWave(m)) return this.curl > 0.55 ? 'crouch' : 'ride'
+    if (this.onWave(m)) return this.lip > 0.55 ? 'crouch' : 'ride'
     if (this.waiting && this.s < 2.7) return 'sit'
     return this.rides(m) ? 'ride' : 'paddle'
   }

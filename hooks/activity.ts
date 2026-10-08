@@ -1,4 +1,4 @@
-// REVISION: flow-v171-dry-adapter
+// REVISION: flow-v173-directory
 //
 // How busy the agent is: the work → scene mapping for `/flow auto`. Events
 // add "heat" (the metaphor from when the only scene was a fire), the heat
@@ -108,6 +108,11 @@ export class Activity {
   waitingOn(id: string, asked = true, tool?: string, agent?: string): void {
     this.waits.waitingOn(id, asked, tool, agent)
     if (agent !== undefined) this.roster.noted(agent)
+  }
+
+  /** A call of `tool` in loop `agent` (none: the main loop) starts: noted, so its progress pill can end a wait on it. */
+  called(id: string, tool: string, agent?: string): void {
+    this.waits.called(id, tool, agent)
   }
 
   /** A permission dialog shows for a call of `tool` in loop `agent` (none: the main loop). */

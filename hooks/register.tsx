@@ -1,4 +1,4 @@
-// REVISION: flow-v172-cleanup-followups
+// REVISION: flow-v173-directory
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -75,7 +75,6 @@ import {
   type Own,
   ownAfterSwitch,
   pinShown,
-  readOwn,
   readRecord,
   SESSION_PREFIX,
   type SessionRecord,
@@ -85,7 +84,7 @@ import {
   storedRecord,
   withOwn,
 } from './sessions'
-import { SCENES, styleNamed, type SceneName } from './styles'
+import { SCENES, type SceneName } from './styles'
 import { frameSvg } from './svg'
 import { type BedTake, bedFailed, bedStep, burst, chimePlay, chimeStep, gather, MAX_PLAYS, newChimeState, unit, eventPlay, master, type SoundEvent, type SoundMood, volumeGain } from './sound'
 import {
@@ -108,8 +107,8 @@ import {
 } from './picker'
 
 
-const FLOW_REVISION = 'flow-v172-cleanup-followups'
-const PLUGIN = 'flow'
+const FLOW_REVISION = 'flow-v173-directory'
+const PLUGIN = 'flow-scenes'
 const KEY = 'flow'
 /** The command. */
 const COMMAND = 'flow'
@@ -159,21 +158,19 @@ const PICK_BLIT_PAUSE = 10
 const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LSP', 'WebFetch', 'WebSearch'])
 /** Tools that are the person's to answer: Claude's question, a plan to approve. The turn's clock stops while one is open. */
 const PERSON_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode'])
-/** Store keys from before settings moved to userConfig (and v3's `drop`). */
-const LEGACY_KEYS = ['mode', 'strength', 'idle', 'style', 'drop'] as const
 
 /**
  * The balloon's altitude, kept in session state: a setting change reloads
  * the module and rebuilds the balloon, which should resume, not take off again.
  */
-const altitudeAtom = atom({ plugin: 'flow', key: 'altitude' } as const, 0)
+const altitudeAtom = atom({ plugin: 'flow-scenes', key: 'altitude' } as const, 0)
 
 async function keepAltitude($: EngineInterface, altitude: number): Promise<void> {
   await update($, altitudeAtom, () => altitude).catch(() => {})
 }
 
 async function savedAltitude($: EngineInterface): Promise<number> {
-  const { value } = await $.state.get({ plugin: 'flow', key: 'altitude' } as const)
+  const { value } = await $.state.get({ plugin: 'flow-scenes', key: 'altitude' } as const)
   return typeof value === 'number' ? value : 0
 }
 
@@ -182,7 +179,7 @@ async function savedAltitude($: EngineInterface): Promise<number> {
  * state so a reload (a /config change) doesn't silence it till the next key. Claude Code warms spare
  * sessions in the background, with a terminal no one sees: until someone's there, nothing is heard.
  */
-const presentAtom = atom({ plugin: 'flow', key: 'present' } as const, false)
+const presentAtom = atom({ plugin: 'flow-scenes', key: 'present' } as const, false)
 
 async function keepPresent($: EngineInterface): Promise<void> {
   await update($, presentAtom, () => true).catch(() => {})
@@ -196,19 +193,34 @@ function markPresent($: EngineInterface, sound: { present: boolean }): void {
 }
 
 async function wasPresent($: EngineInterface): Promise<boolean> {
-  const { value } = await $.state.get({ plugin: 'flow', key: 'present' } as const)
+  const { value } = await $.state.get({ plugin: 'flow-scenes', key: 'present' } as const)
   return value === true
 }
 
 /**
- * Before sessions kept their own settings, `/flow` kept its changes here,
- * shared by every session, and wrote them through to /config when a session
- * ended. Any still pending are written through once (see migrateOverrides).
+ * Write one setting to its /config row, as stored there (storedValue). Every
+ * settings call is written out with its row's key as fixed text: the plugin
+ * directory reads a settings call only so.
  */
-const OVERRIDES = 'overrides'
-
-async function pendingOverrides($: EngineInterface): Promise<Own> {
-  return readOwn(await $.store.get(OVERRIDES))
+async function writeRow($: EngineInterface, field: keyof FlowConfig, value: string | number): Promise<{ deny?: string }> {
+  switch (field) {
+    case 'mode':
+      return $.config.set({ key: 'flow-scenes.mode', value })
+    case 'style':
+      return $.config.set({ key: 'flow-scenes.style', value })
+    case 'idle':
+      return $.config.set({ key: 'flow-scenes.idle', value })
+    case 'level':
+      return $.config.set({ key: 'flow-scenes.level', value })
+    case 'layout':
+      return $.config.set({ key: 'flow-scenes.layout', value })
+    case 'time':
+      return $.config.set({ key: 'flow-scenes.time', value })
+    case 'sound':
+      return $.config.set({ key: 'flow-scenes.sound', value })
+    case 'volume':
+      return $.config.set({ key: 'flow-scenes.volume', value })
+  }
 }
 
 /** Write settings to their /config rows, answering the fields it could not write. */
@@ -216,7 +228,7 @@ async function saveConfig($: EngineInterface, changes: Partial<FlowConfig>): Pro
   const refused: (keyof FlowConfig)[] = []
   for (const [field, value] of Object.entries(changes) as [keyof FlowConfig, FlowConfig[keyof FlowConfig]][]) {
     try {
-      const r = await $.config.set({ key: `${PLUGIN}.${field}`, value: storedValue(field, value) })
+      const r = await writeRow($, field, storedValue(field, value))
       if (r.deny) refused.push(field)
     } catch {
       refused.push(field)
@@ -248,37 +260,12 @@ async function repairRows($: EngineInterface, stale: readonly StaleRow[]): Promi
     // (Said first: the write reloads the module, which may cut this short.)
     $.ui.log(`[flow] /config ${row.key} held "${row.from}", none of its options: writing it as ${row.to}`, { to: 'debug' })
     try {
-      const { deny } = await $.config.set({ key: row.key, value: row.to })
+      const { deny } = await writeRow($, row.field, row.to)
       if (deny) $.ui.log(`[flow] /config ${row.key} not written (${deny}): read as ${row.to} all the same`, { to: 'debug' })
     } catch {
       // No such row to write: read as meant all the same.
     }
   }
-}
-
-/**
- * The overrides still pending from before (a session on an older version may
- * still be writing them): written through to /config, as that session would
- * have when it ended, and forgotten once written; only those still holding
- * the value written, as another may have changed one meanwhile. Answers what
- * was pending: the defaults now (the /config rows' reload may not have come
- * yet), so nobody loses the scene they had.
- */
-export async function migrateOverrides($: EngineInterface): Promise<Own> {
-  const pending = await pendingOverrides($)
-  if (!Object.keys(pending).length) return pending
-  const refused = await saveConfig($, pending)
-  try {
-    const now = await pendingOverrides($)
-    for (const k of Object.keys(pending) as (keyof FlowConfig)[]) {
-      if (!refused.includes(k) && now[k] === pending[k]) delete now[k]
-    }
-    if (Object.keys(now).length) await $.store.set(OVERRIDES, storedOwn(now))
-    else await $.store.delete(OVERRIDES)
-  } catch {
-    // Still pending in the store: the next load writes them again.
-  }
-  return pending
 }
 
 /**
@@ -1018,34 +1005,10 @@ export const register: Register = (on, options) => {
     // /config rows holding a scene Flow no longer takes (renamed, dropped), written back as the one meant.
     await repairRows($, stale)
 
-    // One-time move of settings kept in $.store before they were userConfig.
-    const legacy: Partial<FlowConfig> = {}
-    try {
-      const old = Object.fromEntries(await Promise.all(LEGACY_KEYS.map(async k => [k, await $.store.get(k)] as const)))
-      if (old.mode === 'auto' || old.mode === 'manual') legacy.mode = old.mode
-      const oldStyle = typeof old.style === 'string' ? styleNamed(old.style) : undefined
-      if (oldStyle) legacy.style = oldStyle
-      if (old.idle === 0 || old.idle === 1) legacy.idle = old.idle
-      if (typeof old.strength === 'number' && Number.isInteger(old.strength) && old.strength >= 0 && old.strength <= 10) {
-        legacy.level = old.strength
-      }
-      if (LEGACY_KEYS.some(k => old[k] !== undefined)) {
-        for (const k of LEGACY_KEYS) await $.store.delete(k)
-        await saveConfig($, legacy)
-      }
-    } catch {
-      // Unread: moved at the next load.
-    }
-
-    // `/flow` changes from before sessions kept their own, still pending:
-    // written through to /config once, the defaults now (as are the legacy
-    // ones), ahead of the reload the write brings.
-    const pending = await migrateOverrides($).catch((): Own => ({}))
-
     // This session's own settings over the defaults: kept under its id, so a
     // reload (a /config change, an update) or a resume brings them back. A
     // new session has none, and starts on the defaults.
-    const fallback = { ...readConfig(options), ...legacy, ...pending }
+    const fallback = readConfig(options)
     try {
       await openSession($, sceneCtx, fallback)
     } catch {
@@ -1427,6 +1390,8 @@ export const register: Register = (on, options) => {
 
     activity.toolsInFlight++
     const id = e.tool_use_id
+    // Noted: a permission dialog for it (classic.PermissionRequest) waits on the person till it ends or runs.
+    if (id) activity.called(id, e.tool, agentId)
     // A subagent's tool: it's working for as long as the tool runs.
     if (agentId !== undefined) activity.roster.toolStarted(agentId)
     // Claude's question, a plan to approve: put to the person from the start (a subagent's too: its companion waits).
@@ -1438,29 +1403,20 @@ export const register: Register = (on, options) => {
     } finally {
       activity.toolsInFlight--
       if (agentId !== undefined) activity.roster.toolEnded(agentId)
-      // (Answered, or over: a permission ask from tool.check ends here too, allowed or refused, as the
+      // (Answered, or over: a permission dialog for it ends here too, allowed or refused, as the
       // permission prompt runs beneath this hook.)
       if (id) activity.answered(id, e.tool, agentId)
     }
   })
 
-  on('tool.check', async ($, e, next) => {
-    const verdict = await next(e)
-    // An ask goes to the mode's decider: the turn's clock waits until the call is over (or shows it's
-    // running). It's put to the person only if a dialog shows (classic.PermissionRequest, below): auto
-    // mode's classifier decides most alone, and that's no wait on you.
-    // A subagent's ask likewise: its companion waits on you only if a dialog shows, and the main turn's clock
-    // goes on meanwhile.
-    if (verdict.decision === 'ask' && e.tool_use_id) activity.waitingOn(e.tool_use_id, false, e.tool, e.agentId)
-    return verdict
-  })
-
-  on('classic.PermissionRequest', async ($, e, next) => {
-    const result = await next(e)
-    // No hook answered for them: the dialog shows, and the scene settles and breathes until it's answered.
-    // A subagent's: its companion waits on you too.
-    if (!result.decision && result.block === undefined) activity.prompted(e.tool_name, e.agent_id)
-    return result
+  // A permission dialog is about to show (auto mode's classifier settled the rest alone): the scene
+  // settles and breathes until the call is answered (tool.call's finally, or its progress pill). A
+  // subagent's: its companion waits on you too. Only watched: the check passes on unchanged, as the
+  // plugin directory asks of a permission hook, so a hook beneath that answers it still shows as a wait,
+  // until its call ends.
+  on('classic.PermissionRequest', ($, e, next) => {
+    activity.prompted(e.tool_name, e.agent_id)
+    return next(e)
   })
 
   on('ui.render', { component: 'ToolProgress' }, ($, e, next) => {

@@ -1,15 +1,16 @@
-// REVISION: flow-v150-review-fixes
+// REVISION: flow-v173-directory
 //
 // The calls waiting on the person, in every loop: the main one's and each
 // subagent's, one tracker for both (Activity owns it; the Roster asks it which
-// subagents wait). A call waits from a permission ask (`tool.check`'s `ask`),
-// which isn't put to the person yet: the mode may settle it alone (auto mode's
-// classifier), so it's only asked once a dialog shows (`prompted`); Claude's
-// question or a plan to approve is asked from the start. A wait ends when its
-// call ends (`tool.call`'s finally: the permission prompt runs beneath it, so a
-// refusal ends there too) or shows it's running (its progress pill). A dialog
-// seen with no ask before it waits under its tool's name and loop until a call
-// of that tool in that loop ends. Pure: no `$`, unit-tested directly.
+// subagents wait). A permission waits once its dialog shows (`prompted`, from
+// `classic.PermissionRequest`: auto mode's classifier settles most asks alone,
+// and that's no wait), matched to the loop's running call of that tool (each
+// call noted as it starts, `called`); Claude's question or a plan to approve
+// waits from the start. A wait ends when its call ends (`tool.call`'s finally:
+// the permission prompt runs beneath it, so a refusal ends there too) or shows
+// it's running (its progress pill, which carries only the call's id: the call
+// noted says which tool and loop). A dialog waits under its tool's name and
+// loop until a call of that tool in that loop ends. Pure: no `$`, unit-tested directly.
 
 /** A call waiting on the person: its tool and loop (none: the main loop), and whether it has been put to them yet. */
 type Wait = { tool?: string; agent?: string; asked: boolean }
@@ -20,8 +21,15 @@ const promptKey = (tool: string, agent: string | undefined) => `prompt:${tool}@$
 export class Waits {
   /** By tool_use_id (or prompt key), oldest first. */
   private waits = new Map<string, Wait>()
+  /** The calls running, by tool_use_id: their tool and loop, for a progress pill that names only the id. */
+  private calls = new Map<string, { tool: string; agent?: string }>()
   /** Bumped by every change, so what's worked out from the waits can be kept until they change. */
   changes = 0
+
+  /** A call of `tool` in loop `agent` (none: the main loop) starts: not a wait, only noted. */
+  called(id: string, tool: string, agent?: string): void {
+    this.calls.set(id, { tool, agent })
+  }
 
   /**
    * A call (in loop `agent`; none, the main loop) now waits. `asked`: it's put
@@ -55,7 +63,10 @@ export class Waits {
    * it's known (`agent`, or the one its wait was in), undefined for the main loop.
    */
   answered(id: string, tool?: string, agent?: string): string | undefined {
-    const loop = agent ?? this.waits.get(id)?.agent
+    const call = this.calls.get(id)
+    this.calls.delete(id)
+    tool ??= call?.tool
+    const loop = agent ?? this.waits.get(id)?.agent ?? call?.agent
     if (this.waits.delete(id)) this.changes++
     if (tool !== undefined && this.waits.delete(promptKey(tool, loop))) this.changes++
     return loop
@@ -63,6 +74,7 @@ export class Waits {
 
   /** Nothing in this loop (none: the main loop) waits any more: its turn, or its run, is over. */
   forget(agent?: string): void {
+    for (const [id, c] of this.calls) if (c.agent === agent) this.calls.delete(id)
     for (const [id, w] of this.waits) {
       if (w.agent === agent) {
         this.waits.delete(id)
@@ -75,6 +87,7 @@ export class Waits {
   clear(): void {
     if (this.waits.size) this.changes++
     this.waits.clear()
+    this.calls.clear()
   }
 
   /** Forget the subagents' waits whose loop is no longer about (`about`: whether it is). */
