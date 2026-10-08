@@ -1,4 +1,4 @@
-// REVISION: flow-v141-escorts
+// REVISION: flow-v152-escort-slivers
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -378,7 +378,9 @@ const ESCORT = { hull: 0xe6eaef, wing: 0x9aa3ad, trim: [0xff7a3d, 0x45c4f5, 0xb5
 const TRIM = -2
 /** An escort, nose up: a nose, a hull in its trim, swept wings (and in the spine a longer hull, an engine). */
 const ESCORT_PAL = { H: ESCORT.hull, W: ESCORT.wing, T: TRIM, E: 0x70757d }
-const ESCORT_BAND = sprite(['.H.', 'HTH', 'WTW'], ESCORT_PAL)
+/** The band's: one pixel tall, never turned (its rows are few); Falcon's a single pixel in its trim, Starship's a sliver. */
+const ESCORT_BAND_FALCON = sprite(['T'], ESCORT_PAL)
+const ESCORT_BAND_STARSHIP = sprite(['HTH'], ESCORT_PAL)
 const ESCORT_TALL = sprite(['.H.', 'HHH', 'HTH', 'WTW', 'WEW'], ESCORT_PAL)
 /** An escort's full plume (pixels): the rocket's, smaller (band, spine). */
 const ESCORT_PLUME = [3, 7] as const
@@ -517,6 +519,8 @@ abstract class LaunchSite extends SkyWorld {
   }
 
   protected abstract readonly specs: [band: Spec, tall: Spec]
+  /** Its escort in the band (one pixel tall). */
+  protected abstract readonly escortBand: Sprite
   protected abstract readonly look: Look
   /** Another site like this one, for the split screen. */
   protected abstract twin(): LaunchSite
@@ -1865,7 +1869,7 @@ abstract class LaunchSite extends SkyWorld {
     const hl = (r1 - r0) * sc
     const clearX = hl * Math.abs(Math.sin(pth)) + this.spec.bodyW / 2 + 3
     const clearY = (hl * Math.abs(Math.cos(pth))) / 2 + 2
-    const hU = (tall ? ESCORT_TALL : ESCORT_BAND).h
+    const hU = (tall ? ESCORT_TALL : this.escortBand).h
     const smoky = this.tint === 'smoke'
     const contrail = this.state === 'fly' && this.orbit < 0.3 && this.layer < 80
     const r = this.rng
@@ -1937,8 +1941,10 @@ abstract class LaunchSite extends SkyWorld {
       this.eX[s] = x
       this.eY[s] = y
       this.eTh[s] = th
-      // Its burn: lit while its agent works (lengthening with the rocket's thrust), as it arrives, as it leaves.
-      const goal = m.leaving || away > 0 ? 1 : m.busy * (0.55 + 0.45 * this.thr)
+      // Its burn: only while it accelerates: arriving, leaving, or working with the rocket under real thrust
+      // (coasting in orbit, a burn would be for nothing).
+      const pushing = this.thr > 0.25 && this.orbit < 0.5
+      const goal = m.leaving || away > 0 ? 1 : pushing ? m.busy * (0.55 + 0.45 * this.thr) : 0
       this.eThr[s]! += (goal - this.eThr[s]!) * (0.15 + 0.15 * frac(m.seed * 41))
       const failed = m.leaving && !m.ok
       let len = (tall ? ESCORT_PLUME[1] : ESCORT_PLUME[0]) * this.eThr[s]! * (0.85 + 0.3 * hash(t, k, 59))
@@ -1963,7 +1969,7 @@ abstract class LaunchSite extends SkyWorld {
   private drawEscorts(): void {
     this.crew.clearMarks()
     if (this.crew.mates.length === 0) return
-    const sp = this.tall ? ESCORT_TALL : ESCORT_BAND
+    const sp = this.tall ? ESCORT_TALL : this.escortBand
     const hU = sp.h
     const vx = this.viewX()
     const pw = this.pw
@@ -2003,6 +2009,17 @@ abstract class LaunchSite extends SkyWorld {
 
   /** An escort's craft, its middle at (x, y) (grid pixels, before the camera), turned to `th`, its hull in its trim. */
   private drawEscort(sp: Sprite, x: number, y: number, th: number, trim: number): void {
+    if (!this.tall) {
+      // The band's is never turned: a sliver stays one pixel tall at any attitude.
+      const py = Math.floor(y)
+      if (py < 0 || py >= this.ph) return
+      const x0 = Math.floor(x - sp.w / 2 + 0.5)
+      for (let col = 0; col < sp.w; col++) {
+        const c = sp.c[col]!
+        if (c !== -1) this.paintP(x0 + col, py, c === TRIM ? trim : c, 1)
+      }
+      return
+    }
     const cs = Math.cos(th)
     const sn = Math.sin(th)
     const rx = Math.ceil(Math.abs(cs) * sp.w / 2 + Math.abs(sn) * sp.h) + 1
@@ -2518,6 +2535,7 @@ abstract class LaunchSite extends SkyWorld {
 
 export class Falcon extends LaunchSite {
   protected readonly specs = FALCON_SPECS
+  protected readonly escortBand = ESCORT_BAND_FALCON
   protected readonly look: Look = {
     tower: 0x5a6069,
     arm: 0x2a2e34,
@@ -2534,6 +2552,7 @@ export class Falcon extends LaunchSite {
 
 export class Starship extends LaunchSite {
   protected readonly specs = STARSHIP_SPECS
+  protected readonly escortBand = ESCORT_BAND_STARSHIP
   protected readonly look: Look = {
     tower: 0x4e545d,
     arm: 0x24272c,
