@@ -1,4 +1,4 @@
-// REVISION: flow-v127-crew-room
+// REVISION: flow-v141-escorts
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -37,12 +37,19 @@
 // (vapour, steam, the plume's tail) blend into whatever sky is behind them.
 //
 // Each running subagent flies a small escort of its own, trimmed in its own
-// color (crew.ts), holding station beside whatever's flying (on the pad,
-// climbing, in orbit, coming home): it flies in from the side when its
-// agent starts, holds station on a flickering burn while the agent works,
-// cuts its engine and drops back low, a light blinking, while it's quiet (an
-// amber beacon flashing while it waits on you), and when the agent is done
-// peels off and climbs away out of sight (or, if it failed, falls away below
+// color (crew.ts), holding station on whatever's flying (on the pad,
+// climbing, in orbit, coming home) and flying its trajectory: as the rocket
+// pitches over toward orbit the escorts pitch with it, a beat behind, their
+// stations swinging round from beside it to abeam and astern along its
+// track. Each burns a smaller copy of the rocket's own plume (the same
+// colors, flicker and spread, lengthening with its thrust, a contrail behind
+// it low in the sky) along its own axis, and drifts about its station on
+// its own, at its own pace, so no two move in step. It flies in from its
+// own quarter when its agent starts, holds station on its burn while the
+// agent works, cuts its engine and drops back, a light blinking, while it's
+// quiet (an amber beacon flashing while it waits on you, a light that shines
+// through the waiting sepia), and when the agent is done peels off ahead and
+// climbs away out of sight (or, if it failed, tumbles down out of the frame
 // trailing smoke).
 //
 // Dials: running subagents add vapour and more tower lights; a failed
@@ -61,7 +68,7 @@ import { type Cells, DEFAULT_COLOR, Rng } from './cells'
 import { Crew, type AgentMark } from './crew'
 import { layered, snap } from './clouds/layered'
 import { STAR, STAR_DIM } from './night'
-import { fitQuad, g, hash, lowerBlock, mix, QUAD, type QuadFit } from './pixels'
+import { clamp, dist, fitQuad, g, hash, lowerBlock, mix, noise1, QUAD, type QuadFit } from './pixels'
 import { type SceneryCell, SkyWorld } from './sky'
 import { defineScene } from './scene-def'
 import { hear, type Ambience, type SoundEvent } from './sound'
@@ -367,6 +374,33 @@ const LIGHT = { red: 0xff3b30, amber: 0xffb020, green: 0x5cff7a, blue: 0x4aa8ff 
 /** Escorts for subagents, at most; each one's trim. */
 const ESCORTS = 3
 const ESCORT = { hull: 0xe6eaef, wing: 0x9aa3ad, trim: [0xff7a3d, 0x45c4f5, 0xb58cff] as const, strobe: 0xffffff }
+/** An escort's sprite stands for its trim here; the color is its own. */
+const TRIM = -2
+/** An escort, nose up: a nose, a hull in its trim, swept wings (and in the spine a longer hull, an engine). */
+const ESCORT_PAL = { H: ESCORT.hull, W: ESCORT.wing, T: TRIM, E: 0x70757d }
+const ESCORT_BAND = sprite(['.H.', 'HTH', 'WTW'], ESCORT_PAL)
+const ESCORT_TALL = sprite(['.H.', 'HHH', 'HTH', 'WTW', 'WEW'], ESCORT_PAL)
+/** An escort's full plume (pixels): the rocket's, smaller (band, spine). */
+const ESCORT_PLUME = [3, 7] as const
+/**
+ * Each escort's station off the middle of what's flying, in its frame: along
+ * its nose and across to its right, in units (a pixel across, half a pixel
+ * down), upright and then pitched flat over in orbit (blended between by the
+ * attitude). [along up, across up, along flat, across flat]. In the spine,
+ * across upright is a side (times the pane's reach); the band's are as is.
+ */
+const STATION_TALL = [
+  [16, 1, 14, 20],
+  [0, -1, 0, -20],
+  [-16, 1, -14, 20],
+] as const
+const STATION_BAND = [
+  [2, 16, -20, 6],
+  [-2, -16, -18, -6],
+  [2, 30, 20, 5],
+] as const
+const frac = (v: number) => v - Math.floor(v)
+const smoothstep = (p: number) => p * p * (3 - 2 * p)
 
 /** Frames from ignition to liftoff: the hold-down while the engines spool up. */
 const IGNITE = 20
@@ -439,6 +473,20 @@ abstract class LaunchSite extends SkyWorld {
   /** The subagents, one by one: each flies an escort. */
   agents: readonly AgentDial[] = []
   private crew = new Crew(ESCORTS)
+  /** Each escort's own (by slot): attitude, how far it has dropped back resting, its throttle (eased at its own pace). */
+  private eAtt = new Float32Array(ESCORTS)
+  private eRest = new Float32Array(ESCORTS)
+  private eThr = new Float32Array(ESCORTS)
+  /** Where it's drawn this frame (grid pixels), its attitude, its plume's length (units). */
+  private eX = new Float32Array(ESCORTS)
+  private eY = new Float32Array(ESCORTS)
+  private eTh = new Float32Array(ESCORTS)
+  private eLen = new Float32Array(ESCORTS)
+  /** Lights this frame (an escort's beacon): their cells and colors, and per cell the color kept through the sepia (-1 none). */
+  private lampCell = new Int32Array(ESCORTS)
+  private lampColor = new Int32Array(ESCORTS)
+  private nLamps = 0
+  private lamps = new Int32Array(0)
 
   /** What it's doing now: engines burning, fuel venting, air rushing past, the quiet of orbit. */
   ambience(): Ambience {
@@ -501,6 +549,7 @@ abstract class LaunchSite extends SkyWorld {
     this.strength = this.staged
     super.step()
     this.crew.update(this.agents, this.coverageBoost)
+    this.stepEscorts()
   }
 
   agentMarks(): readonly AgentMark[] {
@@ -513,8 +562,19 @@ abstract class LaunchSite extends SkyWorld {
   /** Drawn at the acted-out level too, even on a frame drawn without a step. */
   override grid(): Cells {
     if (this.staged >= 0 && this.strength > 0) this.strength = this.staged
+    this.nLamps = 0
     const out = this.drawFrame()
-    waitTone(out, this.kWait, this.t)
+    // An escort's beacon keeps its color through the sepia: whichever of its cell's two is it.
+    const lamps = this.lamps
+    for (let n = 0; n < this.nLamps; n++) {
+      const i = this.lampCell[n]!
+      const c = this.lampColor[n]!
+      const fg = out.foreground(i)
+      const bg = out.background(i)
+      lamps[i] = dist(fg, c) <= dist(bg, c) ? fg : bg
+    }
+    waitTone(out, this.kWait, this.t, undefined, this.nLamps ? lamps : undefined)
+    for (let n = 0; n < this.nLamps; n++) lamps[this.lampCell[n]!] = -1
     return out
   }
 
@@ -668,6 +728,9 @@ abstract class LaunchSite extends SkyWorld {
     this.touched = new Uint8Array(columns * rows)
     this.list = new Int32Array(columns * rows)
     this.nTouched = 0
+    this.lamps = new Int32Array(columns * rows).fill(-1)
+    // The escorts take their stations afresh in the new layout.
+    for (const m of this.crew.mates) m.x = m.y = Number.NaN
   }
 
   override seed(altitude: number): void {
@@ -1768,72 +1831,204 @@ abstract class LaunchSite extends SkyWorld {
   }
 
   /**
-   * The escorts, one for each subagent, holding station beside what's flying
-   * (grid pixels, where the camera has it): out to either side, and for a
-   * third further out, at its height while its agent works, dropped back low
-   * while it rests; in from that side's edge as it arrives, away as it leaves.
+   * The escorts, one for each subagent, flying with what's flying: each
+   * holds a station in its frame (beside it upright; pitched over toward
+   * orbit, the stations swing round with it, abeam and astern along its
+   * track), turned to its attitude a beat behind it, drifting about its
+   * station on its own. Resting, it drops back along the track, engine off;
+   * arriving, it comes in from its own quarter; done, it peels off ahead and
+   * away; failed, it tumbles down out of the frame trailing smoke. Its place
+   * (grid pixels, where the camera has it) eases toward the station at its
+   * own pace, so nothing jumps when the stage parts, and no two move in step.
    */
-  private drawEscorts(): void {
-    this.crew.clearMarks()
-    if (this.crew.mates.length === 0) return
+  private stepEscorts(): void {
+    const mates = this.crew.mates
+    if (mates.length === 0) return
+    this.geo()
+    this.base = 2 * (this.scroll + this.rows - 2) + 1
     const pw = this.pw
     const ph = this.ph
-    const [fc, fr] = this.focus()
-    // What's flying, kept on the grid (the camera may be sliding back to the pad, or it's split off).
+    const tall = this.tall
+    // (Clear of the split screen's other half.)
     const left = this.splitTall ? 0 : 2 * Math.round(this.splitW)
     const bottom = this.splitTall ? ph - 2 * Math.round(this.splitW) : ph
-    const cx = Math.max(left + 6, Math.min(pw - 6, fc * 2))
-    const cy = Math.max(3, Math.min(bottom - 3, fr * 2))
+    // What's flying: its middle and its attitude (the gravity turn, orbit; not the Ship's belly-flop, a fall).
+    const sp = this.spec.fly
+    const [pcx, pcy, pth, sc] = this.pose(sp, this.pos, false)
+    const [r0, r1] = this.partRows(this.part)
+    const off = sp.h / 2 - (r0 + r1) / 2
+    // (Kept on the grid: the camera may be sliding back to the pad.)
+    const cx = clamp(pcx + 2 * off * Math.sin(pth) * sc - this.viewX(), left + 6, pw - 6)
+    const cy = clamp(pcy - off * Math.cos(pth) * sc, 3, bottom - 3)
+    const reach = Math.max(8, Math.round(pw * 0.3))
+    // What's flying, as a box on the grid (half its length along its attitude, its width), for the escorts to keep clear of.
+    const hl = (r1 - r0) * sc
+    const clearX = hl * Math.abs(Math.sin(pth)) + this.spec.bodyW / 2 + 3
+    const clearY = (hl * Math.abs(Math.cos(pth))) / 2 + 2
+    const hU = (tall ? ESCORT_TALL : ESCORT_BAND).h
+    const smoky = this.tint === 'smoke'
+    const contrail = this.state === 'fly' && this.orbit < 0.3 && this.layer < 80
+    const r = this.rng
     const t = this.t
-    for (const m of this.crew.mates) {
-      const side = m.slot === 1 ? -1 : 1
-      const reach = this.tall ? Math.max(8, Math.round(pw * 0.3)) : 16 + (m.slot === 2 ? 14 : 0)
-      // (Clear of the split screen's other half.)
-      const hx = Math.max(left + 2, Math.min(pw - 3, cx + side * reach))
-      // (Its station kept on the grid: the rocket can stand at the very foot of a tall pane.)
-      const hy = Math.max(2, Math.min(bottom - 4, this.tall ? cy + (m.slot - 1) * 8 : cy - 1 + (m.slot & 1) * 2))
-      // Resting it drops back low, engine off.
-      const low = this.tall ? Math.min(bottom - 3, hy + 10) : bottom - 2
-      let x = hx
-      let y = hy + (low - hy) * (1 - m.busy) + Math.sin(t * 0.09 + m.seed * 6.283) * 0.6
+    for (const m of mates) {
+      const s = m.slot
+      const k = Math.floor(m.seed * 1e6)
+      const fresh = Number.isNaN(m.x)
+      // Its attitude follows the rocket's, its engine its agent, each at its own pace.
+      if (fresh) {
+        this.eAtt[s] = pth
+        this.eRest[s] = 1 - m.busy
+        this.eThr[s] = 0
+      }
+      this.eAtt[s]! += (pth - this.eAtt[s]!) * (0.05 + 0.07 * frac(m.seed * 7))
+      this.eRest[s]! += (1 - m.busy - this.eRest[s]!) * (0.04 + 0.06 * frac(m.seed * 13))
+      const rest = smoothstep(this.eRest[s]!)
+      const att = this.eAtt[s]!
+      const sn = Math.sin(att)
+      const cs = Math.cos(att)
+      const flat = Math.abs(sn)
+      // Its station in the rocket's frame (units: a pixel across, half one down), swinging
+      // from beside it upright to abeam and astern as it pitches over; resting, dropped back.
+      const st = (tall ? STATION_TALL : STATION_BAND)[s % ESCORTS]!
+      const along = st[0] + (st[2] - st[0]) * flat - (tall ? 20 : 8) * rest
+      const across = (tall ? st[1] * reach : st[1]) * (1 - flat) + st[3] * flat
+      let gx = cx + along * sn + across * cs
+      const gy = clamp(cy + (-along * cs + across * sn) / 2 + rest * flat * (tall ? 2 : 1), 2, bottom - 4)
+      // Never across what's flying (the band's few rows squeeze its stations): out to its own side of it.
+      if (Math.abs(gy - cy) < clearY && Math.abs(gx - cx) < clearX) gx = cx + (gx > cx ? 1 : gx < cx ? -1 : Math.sign(across)) * clearX
+      gx = clamp(gx, left + 2, pw - 3)
+      if (fresh) {
+        m.x = gx
+        m.y = gy
+      } else {
+        const ease = 0.05 + 0.07 * frac(m.seed * 29)
+        m.x += (gx - m.x) * ease
+        m.y += (gy - m.y) * ease
+      }
+      // Its own drift about the station: slow, smooth, never in step with another's.
+      let x = m.x + (noise1(t * (0.018 + 0.02 * frac(m.seed * 3)), k) - 0.5) * (tall ? 3 : 2.4)
+      let y = m.y + (noise1(t * (0.015 + 0.02 * frac(m.seed * 5)), k + 77) - 0.5) * (tall ? 1.8 : 1.2)
+      let th = att + (noise1(t * 0.03, k + 151) - 0.5) * 0.12
+      const side = across >= 0 ? 1 : -1
       const away = 1 - m.here
-      if (m.leaving) {
-        // Done: peels off and climbs away; failed, it falls away below.
-        x += side * away * (pw * 0.6)
-        y += m.ok ? -away * (y + 8) : away * (bottom + 8 - y)
+      if (m.leaving && m.ok) {
+        // Done: peels off ahead and out to its side, faster and faster, banking away.
+        const ux = sn * 0.8 + cs * side * 0.6
+        const uy = (-cs * 0.8 + sn * side * 0.6) / 2
+        const far = (pw + ph) * away * away * 1.5
+        x += ux * far
+        y += uy * far
+        th += side * away * 0.5
+      } else if (m.leaving) {
+        // Failed: tumbles down out of the frame, falling back along the track.
+        x -= sn * away * 14
+        y += away * (bottom + 10 - y)
+        th += side * away * 3
       } else if (away > 0) {
-        x += side * away * (side > 0 ? pw + 8 - x : x + 8)
+        // Arriving, in from its own quarter: its side upright; pitched over, from astern (or ahead).
+        let dx = cs * side * (1 - flat) + sn * Math.sign(st[2]) * flat
+        let dy = (sn * side * (1 - flat) - cs * Math.sign(st[2]) * flat) / 2
+        const n = Math.hypot(dx, dy) || 1
+        dx /= n
+        dy /= n
+        x += dx * (pw + ph) * away
+        y += dy * (pw + ph) * away
       }
-      x = Math.round(x)
-      y = Math.round(y)
-      if (x < -3 || x > pw + 3 || y < -3 || y > ph + 3) continue
-      const trim = ESCORT.trim[m.slot % ESCORT.trim.length]!
-      // Its burn: lit while its agent works, as it arrives and as it leaves (grey smoke, failed).
-      const burning = m.leaving || away > 0 ? 1 : m.busy
-      if (burning > 0.3) {
-        const ramp = m.leaving && !m.ok ? RAMPS.smoke : this.ramp
-        const n = hash(x, t, 61)
-        const len = m.leaving || away > 0 ? 3 : 2
-        for (let d = 0; d < len; d++) this.escortPx(x, y + 2 + d, rampColor(ramp, 0.95 - d * 0.3 - n * 0.2), burning * (1 - d * 0.28))
+      this.eX[s] = x
+      this.eY[s] = y
+      this.eTh[s] = th
+      // Its burn: lit while its agent works (lengthening with the rocket's thrust), as it arrives, as it leaves.
+      const goal = m.leaving || away > 0 ? 1 : m.busy * (0.55 + 0.45 * this.thr)
+      this.eThr[s]! += (goal - this.eThr[s]!) * (0.15 + 0.15 * frac(m.seed * 41))
+      const failed = m.leaving && !m.ok
+      let len = (tall ? ESCORT_PLUME[1] : ESCORT_PLUME[0]) * this.eThr[s]! * (0.85 + 0.3 * hash(t, k, 59))
+      if ((smoky || failed) && hash(t >> 1, k, 43) < 0.35) len *= 0.25
+      this.eLen[s] = this.eThr[s]! < 0.15 ? 0 : 2 * len
+      // Where its plume ends (grid pixels): a contrail left hanging there, as the rocket's;
+      // failed, smoke trailing from it.
+      const ts = Math.sin(th)
+      const tc = Math.cos(th)
+      const tip = hU + this.eLen[s]!
+      const wx = x - ts * tip + this.viewX()
+      const wy = this.base - (y + (tc * tip) / 2)
+      if (failed && r.f() < 0.7) {
+        this.spawn(x - ts * hU + this.viewX(), this.base - (y + (tc * hU) / 2), (r.f() - 0.5) * 0.3, 0.05, 20 + r.f() * 16, 0.6, this.spec.puff[1] * 0.6, 0x55555a, 0.8)
+      } else if (contrail && this.eLen[s]! > 2 && r.f() < 0.45) {
+        this.spawn(wx, wy, (r.f() - 0.5) * 0.1, 0, 22 + r.f() * 20, this.spec.puff[0] * 0.6, this.spec.puff[1] * 0.35, smoky ? 0x5a5a5a : 0xd9dee5, smoky ? 0.5 : 0.45)
       }
-      // The craft: a nose, a hull in its trim, swept wings.
-      this.escortPx(x, y - 1, ESCORT.hull, 1)
-      this.escortPx(x, y, trim, 1)
-      this.escortPx(x - 1, y + 1, ESCORT.wing, 1)
-      this.escortPx(x, y + 1, trim, 1)
-      this.escortPx(x + 1, y + 1, ESCORT.wing, 1)
-      // Resting, a light blinks on its nose: a slow white strobe, or an amber beacon while it waits on you.
-      if (m.busy < 0.5 && !m.leaving) {
-        const on = m.waiting ? ((t + m.slot * 3) >> 2) % 2 === 0 : (t + m.slot * 7) % 21 < 3
-        if (on) this.escortPx(x, y - 2, m.waiting ? LIGHT.amber : ESCORT.strobe, 1)
-      }
-      this.crew.mark(m, (x - 2) / 2, (y - 2) / 2, 3, 3, this.columns, this.rows)
     }
   }
 
-  /** One of an escort's pixels, where the camera has it (grid pixels). */
-  private escortPx(x: number, y: number, color: number, a: number): void {
-    this.paintP(x + this.viewX(), y, color, a)
+  /** The escorts where stepEscorts has them: each one's plume, its craft, its light; and where each is, for its hover card. */
+  private drawEscorts(): void {
+    this.crew.clearMarks()
+    if (this.crew.mates.length === 0) return
+    const sp = this.tall ? ESCORT_TALL : ESCORT_BAND
+    const hU = sp.h
+    const vx = this.viewX()
+    const pw = this.pw
+    const ph = this.ph
+    const thin = this.orbit > 0.02
+    const spread = this.plumeSpread()
+    const t = this.t
+    for (const m of this.crew.mates) {
+      const s = m.slot
+      if (Number.isNaN(m.x)) continue
+      const x = this.eX[s]!
+      const y = this.eY[s]!
+      if (x < -8 || x > pw + 8 || y < -8 || y > ph + 8) continue
+      const th = this.eTh[s]!
+      const sn = Math.sin(th)
+      const cs = Math.cos(th)
+      // Its plume: the rocket's own, smaller, from its tail back along its attitude.
+      const L = this.eLen[s]!
+      if (L > 0)
+        this.flame(x + vx - sn * hU, 2 * y + cs * hU, th, L, 0.5, spread, m.leaving && !m.ok ? RAMPS.smoke : this.ramp, thin ? 1.6 : 2.4, thin ? this.thinBurn() : 1, false, 101 * (s + 1), this.base)
+      this.drawEscort(sp, x + vx, y, th, ESCORT.trim[s % ESCORT.trim.length]!)
+      // Resting, a light blinks on its nose: a slow white strobe, or an amber beacon while it waits on you
+      // (a light: it shines through the waiting look's sepia).
+      if (m.busy < 0.5 && !m.leaving) {
+        const ph0 = Math.floor(m.seed * 21)
+        const on = m.waiting ? ((t + ph0) >> 2) % 2 === 0 : (t + ph0) % 21 < 3
+        if (on) {
+          const lx = Math.floor(x + vx + sn * (hU + 1))
+          const ly = Math.floor(y - (cs * (hU + 1)) / 2)
+          if (m.waiting) this.lampP(lx, ly, LIGHT.amber)
+          else this.paintP(lx, ly, ESCORT.strobe, 1)
+        }
+      }
+      this.crew.mark(m, (x - 2) / 2, (y - hU / 2 - 1) / 2, 3, Math.ceil(hU / 2) + 1, this.columns, this.rows)
+    }
+  }
+
+  /** An escort's craft, its middle at (x, y) (grid pixels, before the camera), turned to `th`, its hull in its trim. */
+  private drawEscort(sp: Sprite, x: number, y: number, th: number, trim: number): void {
+    const cs = Math.cos(th)
+    const sn = Math.sin(th)
+    const rx = Math.ceil(Math.abs(cs) * sp.w / 2 + Math.abs(sn) * sp.h) + 1
+    const ry = Math.ceil(Math.abs(sn) * sp.w / 4 + Math.abs(cs) * sp.h / 2) + 1
+    for (let py = Math.floor(y - ry); py <= Math.ceil(y + ry); py++) {
+      if (py < 0 || py >= this.ph) continue
+      const uy = (py + 0.5 - y) * 2
+      for (let px = Math.floor(x - rx); px <= Math.ceil(x + rx); px++) {
+        const ux = px + 0.5 - x
+        const col = Math.floor(ux * cs + uy * sn + sp.w / 2)
+        const row = Math.floor((-ux * sn + uy * cs) / 2 + sp.h / 2)
+        if (col < 0 || col >= sp.w || row < 0 || row >= sp.h) continue
+        const c = sp.c[row * sp.w + col]!
+        if (c === -1) continue
+        this.paintP(px, py, c === TRIM ? trim : c, 1)
+      }
+    }
+  }
+
+  /** A light (grid pixels, before the camera): painted, and kept in its own color through the waiting look's sepia. */
+  private lampP(x: number, py: number, color: number): void {
+    this.paintP(x, py, color, 1)
+    const gx = x - this.viewX()
+    if (gx < 0 || gx >= this.pw || py < 0 || py >= this.ph || this.nLamps >= ESCORTS) return
+    this.lampCell[this.nLamps] = (py >> 1) * this.columns + (gx >> 1)
+    this.lampColor[this.nLamps++] = color
   }
 
   private drawTower(): void {
@@ -1924,27 +2119,58 @@ abstract class LaunchSite extends SkyWorld {
     const s = this.spec
     const ramp = this.ramp
     const [A, cx, wk] = this.nozzle()
-    // Thin air lets the plume balloon out.
-    const spread = 0.08 + Math.min(0.45, this.alt / 180)
-    const t = this.t
-    for (let d = 0; d < len; d++) {
-      const y = A - 1 - d
-      const half = (s.bodyW / 2) * wk + d * spread
-      if (y < 0) {
-        this.deflect(cx, half, len - d, ramp)
-        break
-      }
-      const k = d / len
-      // Shock diamonds in the core.
-      const diamond = this.tall && d % 5 === 2 && k < 0.6 ? 0.15 : 0
-      const xa = Math.ceil(cx - half)
-      const xb = Math.floor(cx + half)
-      for (let x = xa; x <= xb; x++) {
-        const edge = Math.abs(x - cx) / (half + 0.5)
-        const n = hash(x, d + t * 7, 47) - 0.5
+    const spread = this.plumeSpread()
+    const half = (s.bodyW / 2) * wk
+    // Straight down from the nozzle, stopping at the ground, where it splashes sideways.
+    this.flame(cx + 0.5, 2 * (this.base - A + 1), 0, 2 * len, half, spread, ramp, 2.4, 1, this.tall, 0, this.base)
+    if (len > A) this.deflect(cx, half + A * spread * 2, len - A, ramp)
+  }
+
+  /** How fast the plume widens along its length (a unit: see flame): thin air lets it balloon out. */
+  private plumeSpread(): number {
+    return this.orbit > 0.02 ? 0.12 : (0.08 + Math.min(0.45, this.alt / 180)) / 2
+  }
+
+  /**
+   * One plume, the rocket's or an escort's: from its nozzle at (tx, ty) back
+   * along attitude `th` (radians from upright, as pose's), `L` long. In units:
+   * a grid pixel is one across and two down (ty is twice the pixel row), so
+   * it turns true. Half `half0` wide at the nozzle, widening `spread` a unit,
+   * white-hot in the core and cooling along `ramp` to its tip and edges,
+   * flickering pixel by pixel (`salt` keeps two plumes out of step); `body`
+   * how far along it stays solid, `alpha` its strength, shock diamonds if
+   * asked, and nothing below pixel row `floor` (the ground). Each grid pixel
+   * it covers is painted once, at any attitude.
+   */
+  private flame(tx: number, ty: number, th: number, L: number, half0: number, spread: number, ramp: Ramp, body: number, alpha: number, diamonds: boolean, salt: number, floor: number): void {
+    if (L < 1) return
+    const sn = Math.sin(th)
+    const cs = Math.cos(th)
+    const hm = half0 + L * spread + 1
+    // The box round the nozzle and the tip, as wide as the plume gets.
+    const ex = tx - sn * L
+    const ey = ty + cs * L
+    const x0 = Math.floor(Math.min(tx, ex) - hm)
+    const x1 = Math.ceil(Math.max(tx, ex) + hm)
+    const y0 = Math.max(0, Math.floor((Math.min(ty, ey) - hm) / 2))
+    const y1 = Math.min(this.ph - 1, floor, Math.ceil((Math.max(ty, ey) + hm) / 2))
+    const t7 = this.t * 7 + salt
+    for (let py = y0; py <= y1; py++) {
+      const uy = (py + 0.5) * 2 - ty
+      for (let px = x0; px <= x1; px++) {
+        const ux = px + 0.5 - tx
+        const d = -ux * sn + uy * cs
+        if (d < 0 || d >= L) continue
+        const e = Math.abs(ux * cs + uy * sn)
+        const half = half0 + d * spread
+        if (e > half) continue
+        const k = d / L
+        const edge = e / (half + 0.5)
+        const n = hash(px, py + t7, 47) - 0.5
+        // Shock diamonds in the core.
+        const diamond = diamonds && ((d / 2) | 0) % 5 === 2 && k < 0.6 ? 0.15 : 0
         const heat = 1 - 0.85 * k - 0.45 * edge * edge + diamond + n * 0.15
-        const a = Math.min(1, (1 - k) * 2.4 - edge * 0.35 + n * 0.4)
-        this.paint(x, y, rampColor(ramp, heat), a)
+        this.paintP(px, py, rampColor(ramp, heat), Math.min(1, (1 - k) * body - edge * 0.35 + n * 0.4) * alpha)
       }
     }
   }
@@ -2170,20 +2396,13 @@ abstract class LaunchSite extends SkyWorld {
     const aft = 2 * this.partRows(this.part)[1] - sp.h
     const tx = cx - aft * sn * sc
     const ty = cy * 2 + aft * cs * sc
-    const L = len * 2 * sc
     const wk = this.nozzle()[2]
-    for (let d = 0.5; d < L; d += 1) {
-      const k = d / L
-      const half = (s.bodyW / 2) * wk * sc + d * 0.12
-      for (let e = -half; e <= half; e += 0.75) {
-        const x = Math.floor(tx - sn * d + cs * e)
-        const y = Math.floor((ty + cs * d + sn * e) / 2)
-        const edge = Math.abs(e) / (half + 0.5)
-        const n = hash(x, y + this.t * 7, 47) - 0.5
-        const heat = 1 - 0.85 * k - 0.45 * edge * edge + n * 0.15
-        this.paintP(x, y, rampColor(ramp, heat), Math.min(1, (1 - k) * 1.6 - edge * 0.4 + n * 0.3) * (this.tint === 'normal' ? 0.55 : 0.85))
-      }
-    }
+    this.flame(tx, ty, th, len * 2 * sc, (s.bodyW / 2) * wk * sc, this.plumeSpread(), ramp, 1.6, this.thinBurn(), false, 0, Infinity)
+  }
+
+  /** How strongly a burn shows in orbit: thin and faint, stronger under a tint (which it's there to show). */
+  private thinBurn(): number {
+    return this.tint === 'normal' ? 0.55 : 0.85
   }
 
   /**
@@ -2284,9 +2503,12 @@ abstract class LaunchSite extends SkyWorld {
         q[p] = a === 0 ? behind : a >= 1 ? this.pc[k]! : mix(behind, this.pc[k]!, a)
         this.pa[k] = 0
       }
-      // The two colors that best fit them, each the plain average of its pixels.
+      // The two colors that best fit them, each the plain average of its pixels (a light's pixel keeping its own).
+      let keep = -1
+      for (let l = 0; l < this.nLamps; l++)
+        if (this.lampCell[l] === cell) for (let p = 0; p < 4; p++) if (q[p] === this.lampColor[l]) keep = p
       const f = this.fit
-      fitQuad(q, f, Infinity)
+      fitQuad(q, f, Infinity, keep)
       if (f.spread === 0) out.set(cell, 0x20, DEFAULT_COLOR, q[0]!)
       else out.set(cell, QUAD[f.mask]!, f.fg, f.bg)
     }

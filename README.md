@@ -103,7 +103,7 @@ In surf, ski, balloon, falcon, starship, engine and train, each running subagent
 | `surf` | paddles in from the edge | paddles hard, or rides a following wave | sits up on its board, bobbing | sits up waving an arm | paddles off out of sight |
 | `ski` | skis in from behind | carves S-turns, throwing spray | pulls over to the side, standing on its poles | waves a pole overhead | tucks and skis off ahead (failed: drops back) |
 | `balloon` | rises into view from below | flies high, burner flickering | burner out, sinks low | its envelope blinks | climbs away off the top (failed: sinks away below) |
-| `falcon`, `starship` | an escort flies in from the side | holds station beside the rocket on a flickering burn | engine off, drops back low, a light blinking | an amber beacon flashes | peels off and climbs away (failed: falls away trailing smoke) |
+| `falcon`, `starship` | an escort flies in from the side | holds station beside the rocket on a small plume like the rocket's own, pitching over with it into orbit | engine off, drops back, a light blinking | an amber beacon flashes | peels off and climbs away (failed: tumbles away trailing smoke) |
 | `engine` | its lamps on the bed plate warm up | a light runs along its lamps | its lamps glow low | its lamps flash together | its lamps fade out (failed: fading red) |
 | `train` | a short train of its own draws up alongside from out of sight | keeps pace on the next track, gaining and losing a little, headlamp lit | drops back a little, headlamp out | its cab flashes amber | falls back out of sight |
 
