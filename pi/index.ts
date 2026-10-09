@@ -1,4 +1,4 @@
-// REVISION: flow-v174-taller-scenes
+// REVISION: flow-v175-plain-names
 //
 // Flow for pi (badlogic/pi-mono), by Rob Macrae: the same ambient
 // scenes as the Claude Code mod, in a widget above pi's editor. pi's events
@@ -187,7 +187,7 @@ export default function flow(pi: PiApi) {
     const state = kept.get(key)
     if (state) return state !== 'reading'
     kept.set(key, 'reading')
-    void readFile(join(CACHE, `${key}.f32`))
+    void readFile(join(CACHE, key + '.f32'))
       .then(buf => {
         const data = new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength))
         kept.set(key, f.restorePicture?.(w, h, data) ? 'restored' : 'absent')
@@ -201,9 +201,9 @@ export default function flow(pi: PiApi) {
     const made = f.pictureCache?.()
     if (!made || kept.get(made.key) !== 'absent') return
     kept.set(made.key, 'written')
-    const file = join(CACHE, `${made.key}.f32`)
+    const file = join(CACHE, made.key + '.f32')
     const bytes = new Uint8Array(made.data.buffer, made.data.byteOffset, made.data.byteLength).slice()
-    const tmp = `${file}.${process.pid}.tmp`
+    const tmp = file + '.' + process.pid + '.tmp'
     void mkdir(CACHE, { recursive: true })
       .then(() => writeFile(tmp, bytes))
       .then(() => rename(tmp, file))
@@ -230,7 +230,7 @@ export default function flow(pi: PiApi) {
 
   /** Make a new size's picture a slice at a time, off the frame loop, until it's made (or the size or scene moves on). */
   const makeBetweenFrames = (f: Scene, w: number, h: number) => {
-    const key = `${w}x${h}`
+    const key = w + 'x' + h
     if (making === key) return
     making = key
     const slice = () => {

@@ -1,4 +1,4 @@
-// REVISION: flow-v3-earthrise-halftone
+// REVISION: flow-v4-earthrise-plain-names
 //
 // Earthrise (the `earthrise` scene): the Earth coming up over a cratered
 // lunar horizon in long, low sunlight, after "earthrise" by @bas3line on
@@ -106,6 +106,8 @@ const PIC_SKY = 0.55
 const PIC_STEPS = 255
 /** Bump when the ground changes: a picture's ground kept from before (`pictureCache`) is then made afresh. */
 const GROUND_VERSION = 2
+/** What a picture's ground `pw` × `ph` dots is kept under (the same key pi's cache has always used). */
+const groundKey = (pw: number, ph: number) => 'earthrise-ground-v' + GROUND_VERSION + '-' + pw + 'x' + ph
 /**
  * A picture's halftone: about DOT_ROWS dots down it, each DOT_MIN to
  * DOT_MAX of its pixels apart, sized (by radius, of that pitch) as the
@@ -1174,12 +1176,12 @@ export class Earthrise extends PixelScene {
 
   pictureKey(w: number, h: number): string {
     const p = dotPitch(h)
-    return `earthrise-ground-v${GROUND_VERSION}-${Math.floor(w / p)}x${Math.floor(h / p)}`
+    return groundKey(Math.floor(w / p), Math.floor(h / p))
   }
 
   pictureCache(): { key: string; data: Float32Array } | undefined {
     const L = this.pic
-    return L && L.done >= L.pw ? { key: `earthrise-ground-v${GROUND_VERSION}-${L.pw}x${L.ph}`, data: L.ground } : undefined
+    return L && L.done >= L.pw ? { key: groundKey(L.pw, L.ph), data: L.ground } : undefined
   }
 
   restorePicture(w: number, h: number, data: Float32Array): boolean {
