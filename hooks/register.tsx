@@ -1,4 +1,4 @@
-// REVISION: flow-v173-directory
+// REVISION: flow-v176-directory-lints
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -67,7 +67,6 @@ import {
   noteTips,
   readTips,
   staleRows,
-  type StaleRow,
   type StoredRow,
 } from './settings'
 import {
@@ -197,74 +196,12 @@ async function wasPresent($: EngineInterface): Promise<boolean> {
   return value === true
 }
 
-/**
- * Write one setting to its /config row, as stored there (storedValue). Every
- * settings call is written out with its row's key as fixed text: the plugin
- * directory reads a settings call only so.
- */
-async function writeRow($: EngineInterface, field: keyof FlowConfig, value: string | number): Promise<{ deny?: string }> {
-  switch (field) {
-    case 'mode':
-      return $.config.set({ key: 'flow-scenes.mode', value })
-    case 'style':
-      return $.config.set({ key: 'flow-scenes.style', value })
-    case 'idle':
-      return $.config.set({ key: 'flow-scenes.idle', value })
-    case 'level':
-      return $.config.set({ key: 'flow-scenes.level', value })
-    case 'layout':
-      return $.config.set({ key: 'flow-scenes.layout', value })
-    case 'time':
-      return $.config.set({ key: 'flow-scenes.time', value })
-    case 'sound':
-      return $.config.set({ key: 'flow-scenes.sound', value })
-    case 'volume':
-      return $.config.set({ key: 'flow-scenes.volume', value })
-  }
-}
-
-/** Write settings to their /config rows, answering the fields it could not write. */
-async function saveConfig($: EngineInterface, changes: Partial<FlowConfig>): Promise<(keyof FlowConfig)[]> {
-  const refused: (keyof FlowConfig)[] = []
-  for (const [field, value] of Object.entries(changes) as [keyof FlowConfig, FlowConfig[keyof FlowConfig]][]) {
-    try {
-      const r = await writeRow($, field, storedValue(field, value))
-      if (r.deny) refused.push(field)
-    } catch {
-      refused.push(field)
-    }
-  }
-  return refused
-}
-
 /** The /config rows, each with its value as stored (none where the host can't list them). */
 async function storedRows($: EngineInterface): Promise<readonly StoredRow[]> {
   try {
     return await $.config.list()
   } catch {
     return []
-  }
-}
-
-/**
- * Write rows left holding a value Flow no longer takes (see staleRows) back
- * as the one they stand for. This load already reads them so (readDefaults:
- * readConfig), but Claude Code reads such a row as its default before Flow
- * runs and says so at every load: in the debug log, or the transcript while
- * a plugin folder hot-reloads. Nothing here can stop that once; written back,
- * it stops. Noted in the debug log alone. A refused write (a row the
- * organization or `--settings` owns) changes nothing here.
- */
-async function repairRows($: EngineInterface, stale: readonly StaleRow[]): Promise<void> {
-  for (const row of stale) {
-    // (Said first: the write reloads the module, which may cut this short.)
-    $.ui.log(`[flow] /config ${row.key} held "${row.from}", none of its options: writing it as ${row.to}`, { to: 'debug' })
-    try {
-      const { deny } = await writeRow($, row.field, row.to)
-      if (deny) $.ui.log(`[flow] /config ${row.key} not written (${deny}): read as ${row.to} all the same`, { to: 'debug' })
-    } catch {
-      // No such row to write: read as meant all the same.
-    }
   }
 }
 
@@ -564,17 +501,33 @@ async function moveSession($: EngineInterface, ctx: SceneCtx): Promise<boolean> 
   return true
 }
 
+/** `/flow save`'s rows to write: the settings the session shows that its defaults (as they are now) don't, each as stored. */
+type SavePlan = { before: FlowConfig; changes: Partial<FlowConfig>; rows: [keyof FlowConfig, string | number][] }
+
 /**
- * `/flow save`: the session's settings become the /config rows, the default
- * new sessions start with. Written first and forgotten from the session's own
- * after: a reload the write may cause finds them in one or the other.
+ * `/flow save`, before its writes: the session it is now, on the defaults as
+ * they are now (another session may have saved since), and what differs.
  */
-async function saveDefault($: EngineInterface, ctx: SceneCtx): Promise<string> {
+export async function planSave($: EngineInterface, ctx: SceneCtx): Promise<SavePlan> {
+  await followSession($, ctx)
+  await refreshDefaults($, ctx)
+  const s = ctx.session
+  const changes = differences(ctx.driver.cfg, s.defaults)
+  const rows = (Object.entries(changes) as [keyof FlowConfig, FlowConfig[keyof FlowConfig]][]).map(
+    ([field, value]) => [field, storedValue(field, value)] as [keyof FlowConfig, string | number],
+  )
+  return { before: { ...s.defaults }, changes, rows }
+}
+
+/**
+ * `/flow save`, once its rows are written (`refused`: those /config would not
+ * take): they're the default now, and forgotten from the session's own (written
+ * first: a reload the write may cause finds them in one or the other).
+ */
+export async function finishSave($: EngineInterface, ctx: SceneCtx, plan: SavePlan, refused: (keyof FlowConfig)[]): Promise<string> {
   const s = ctx.session
   const cfg = ctx.driver.cfg
-  const before = { ...s.defaults }
-  const changes = differences(cfg, s.defaults)
-  const refused = Object.keys(changes).length ? await saveConfig($, changes) : []
+  const { before, changes } = plan
   for (const k of Object.keys(changes) as (keyof FlowConfig)[]) {
     if (!refused.includes(k)) (s.defaults as Record<string, unknown>)[k] = cfg[k]
   }
@@ -645,8 +598,11 @@ async function takeTip($: EngineInterface, cfg: FlowConfig, noteOnly = false): P
 
 /** `/flow`: show, help, or apply a change, keep it, and answer. */
 export async function runScene($: EngineInterface, e: CommandRunInput, ctx: SceneCtx): Promise<CommandRunResult> {
-  const reply = await sceneReply($, e, ctx)
-  // A one-time tip goes under the reply (the other scenes, or the sound).
+  return withTip($, ctx, await sceneReply($, e, ctx))
+}
+
+/** A one-time tip goes under a `/flow` reply (the other scenes, or the sound). */
+async function withTip($: EngineInterface, ctx: SceneCtx, reply: CommandRunResult): Promise<CommandRunResult> {
   const tip = await takeTip($, ctx.driver.cfg)
   return tip ? { ...reply, text: `${reply.text ?? ''}\n\n${tip}` } : reply
 }
@@ -679,7 +635,8 @@ async function flowReply($: EngineInterface, ctx: SceneCtx, cmd: FlowCommand): P
     },
     level: () => driver.level(),
     tint: () => driver.tint(),
-    save: async () => ({ text: await saveDefault($, ctx) }),
+    // (`/flow save` is answered in its hook, where its /config writes are: never here.)
+    save: async () => ({ text: '' }),
     reset: () => resetSession($, ctx),
     change: changes => changeSession($, ctx, changes),
   })
@@ -1001,9 +958,6 @@ export const register: Register = (on, options) => {
     const altitude = await savedAltitude($).catch(() => 0)
     sound.present = sound.present || (await wasPresent($).catch(() => false))
     await seedTips($, stale.length > 0 || altitude > 0, readConfig(options))
-
-    // /config rows holding a scene Flow no longer takes (renamed, dropped), written back as the one meant.
-    await repairRows($, stale)
 
     // This session's own settings over the defaults: kept under its id, so a
     // reload (a /config change, an update) or a resume brings them back. A
@@ -1414,9 +1368,11 @@ export const register: Register = (on, options) => {
   // subagent's: its companion waits on you too. Only watched: the check passes on unchanged, as the
   // plugin directory asks of a permission hook, so a hook beneath that answers it still shows as a wait,
   // until its call ends.
-  on('classic.PermissionRequest', ($, e, next) => {
-    activity.prompted(e.tool_name, e.agent_id, e.tool_input)
-    return next(e)
+  // (Its parameters' names are its own, used nowhere else in the file: so the plugin directory can see
+  // the event it passes on is the one it was given.)
+  on('classic.PermissionRequest', (permissionEngine, permissionAsk, passPermission) => {
+    activity.prompted(permissionAsk.tool_name, permissionAsk.agent_id, permissionAsk.tool_input)
+    return passPermission(permissionAsk)
   })
 
   on('ui.render', { component: 'ToolProgress' }, ($, e, next) => {
@@ -1439,9 +1395,49 @@ export const register: Register = (on, options) => {
   })
 
 
-  on('command.run', { command: COMMAND }, ($, e) => {
-    markPresent($, sound)
-    return runScene($, e, sceneCtx)
+  // \`/flow\`. Its parameters' names are its own, used nowhere else in the file, and \`/flow save\`'s
+  // /config writes are made here on its engine, each with its row's key as fixed text: as the plugin
+  // directory reads a settings call (it can't tell what a call made elsewhere might write).
+  on('command.run', { command: COMMAND }, async (flowEngine, flowRun) => {
+    markPresent(flowEngine, sound)
+    if (parseFlowArgs(flowRun.args).kind !== 'save') return runScene(flowEngine, flowRun, sceneCtx)
+    const plan = await planSave(flowEngine, sceneCtx)
+    const refused: (keyof FlowConfig)[] = []
+    for (const [field, stored] of plan.rows) {
+      let written: { deny?: string } = { deny: 'not written' }
+      try {
+        switch (field) {
+          case 'mode':
+            written = await flowEngine.config.set({ key: 'flow-scenes.mode', value: stored })
+            break
+          case 'style':
+            written = await flowEngine.config.set({ key: 'flow-scenes.style', value: stored })
+            break
+          case 'idle':
+            written = await flowEngine.config.set({ key: 'flow-scenes.idle', value: stored })
+            break
+          case 'level':
+            written = await flowEngine.config.set({ key: 'flow-scenes.level', value: stored })
+            break
+          case 'layout':
+            written = await flowEngine.config.set({ key: 'flow-scenes.layout', value: stored })
+            break
+          case 'time':
+            written = await flowEngine.config.set({ key: 'flow-scenes.time', value: stored })
+            break
+          case 'sound':
+            written = await flowEngine.config.set({ key: 'flow-scenes.sound', value: stored })
+            break
+          case 'volume':
+            written = await flowEngine.config.set({ key: 'flow-scenes.volume', value: stored })
+            break
+        }
+      } catch {
+        // No such row: not written.
+      }
+      if (written.deny !== undefined) refused.push(field)
+    }
+    return withTip(flowEngine, sceneCtx, { text: await finishSave(flowEngine, sceneCtx, plan, refused) })
   })
 
   // Someone at the session (a key in the prompt, a turn, a /flow): the soundscape may play from the next frame.

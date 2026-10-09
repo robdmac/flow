@@ -17,7 +17,7 @@ import { Falcon } from '../hooks/rocket'
 import { Colony } from '../hooks/colony'
 import { Train } from '../hooks/train'
 import { makeScene, nextStyle, SCENES, STYLES, styleNamed, type SceneName } from '../hooks/styles'
-import { openSession, runScene, type SceneCtx } from '../hooks/register'
+import { finishSave, openSession, planSave, runScene, type SceneCtx } from '../hooks/register'
 import { coverage, frameSvg, gridPixels, SVG_LIMIT } from '../hooks/svg'
 import { Cells, isTall } from '../hooks/cells'
 import { SceneDriver } from '../hooks/scene'
@@ -1266,7 +1266,7 @@ test('config values are validated, falling back to defaults', async () => {
   expect(readConfig({ level: 42 }).level).toBe(8)
 })
 
-test('/config rows left on a scene since renamed or dropped read as the one meant, to be written back', () => {
+test('/config rows left on a scene since renamed or dropped read as the one meant', () => {
   const style = { key: 'flow-scenes.style', options: STYLES }
   expect(staleRows([{ ...style, value: 'colony' }], 'flow-scenes')).toEqual([{ key: 'flow-scenes.style', field: 'style', from: 'colony', to: 'avalon' }])
   expect(staleRows([{ ...style, value: 'ocean' }], 'flow-scenes')[0]?.to).toBe('surf')
@@ -1287,7 +1287,7 @@ test('/config rows left on a scene since renamed or dropped read as the one mean
   expect(staleRows(rows, 'flow-scenes')).toEqual([])
 })
 
-test('a /config row left on an old scene (colony) is written back as avalon at the start, said in the debug log alone', { options: { style: 'colony' } }, async ($, on) => {
+test('a /config row left on an old scene (colony) reads as avalon, and nothing but /flow save writes /config', { options: { style: 'colony' } }, async ($, on) => {
   mock.clock(on)
   mock.store(on)
   const seen = engine(on)
@@ -1295,11 +1295,8 @@ test('a /config row left on an old scene (colony) is written back as avalon at t
   const row = { key: 'flow-scenes.style', label: 'Scene', kind: 'choice', value: 'colony', options: [...STYLES], provider: { plugin: 'flow-scenes', tier: 'user' }, isLocked: false }
   on('config.list', () => ({ value: [row] as never }))
   await start($)
-  expect(seen.config).toEqual([['flow-scenes.style', 'avalon']])
   expect((await flow($)).split('\n')[0]).toContain('avalon')
-  const said = (seen.logs ?? []).filter(l => l.text.includes('colony'))
-  expect(said).toHaveLength(1)
-  expect(said[0]!.to).toBe('debug')
+  expect(seen.config).toEqual([])
   expect((seen.toasts ?? []).some(t => t.includes('colony'))).toBe(false)
 })
 
@@ -2218,8 +2215,13 @@ function sceneSession(shared: Shared, id: string) {
   return {
     cfg: driver.cfg,
     open: () => openSession($, ctx, readConfig(undefined)),
-    /** `/flow <args>`, its reply without a tip under it. */
-    flow: async (args: string) => ((await runScene($, { args } as never, ctx)).text ?? '').split('\n\n')[0]!,
+    /** `/flow <args>`, its reply without a tip under it (`/flow save` writing its rows as its hook does). */
+    flow: async (args: string) => {
+      if (args !== 'save') return ((await runScene($, { args } as never, ctx)).text ?? '').split('\n\n')[0]!
+      const plan = await planSave($, ctx)
+      for (const [field, value] of plan.rows) shared.rows[`flow-scenes.${field}`] = value
+      return finishSave($, ctx, plan, [])
+    },
   }
 }
 

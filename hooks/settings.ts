@@ -1,4 +1,4 @@
-// REVISION: flow-v171-dry-adapter
+// REVISION: flow-v176-directory-lints
 //
 // Flow's settings and the `/flow` command's grammar, shared by every harness adapter (Claude Code's
 // register.tsx, pi's pi/index.ts). Pure: no engine imports. Replies carry no
@@ -84,7 +84,7 @@ export function storedValue(field: keyof FlowConfig, value: FlowConfig[keyof Flo
 
 /** A /config row as `$.config.list()` reads it: its key, the value as stored, the values it takes. */
 export type StoredRow = { key: string; value: unknown; options?: readonly string[] }
-/** A row to write back: the value stored, and the one it stands for now. */
+/** A row left on a value Flow no longer takes: the value stored, and the one it stands for now. */
 export type StaleRow = { key: string; field: keyof FlowConfig; from: string; to: string | number }
 
 /**
@@ -92,7 +92,8 @@ export type StaleRow = { key: string; field: keyof FlowConfig; from: string; to:
  * a scene since renamed (`colony`, now `avalon`) or dropped (`river`, `lava`),
  * an alias, idle's old `pilot`. Claude Code reads such a value as the row's
  * default before Flow loads, and says so at every load; each comes back with
- * what it stands for now (the default, for a scene that's gone), to write back.
+ * what it stands for now (the default, for a scene that's gone). Flow reads
+ * them so (readConfig); that one's there at all says Flow was here before.
  */
 export function staleRows(rows: readonly StoredRow[], plugin: string): StaleRow[] {
   const fields = Object.keys(readConfig(undefined)) as (keyof FlowConfig)[]
