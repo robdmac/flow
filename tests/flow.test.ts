@@ -1641,6 +1641,41 @@ test('rockets: a new size while the split screen is open closes it cleanly (no g
   }
 })
 
+test('rockets: the tall split\'s top half sliding down moves a beacon\'s light with its cell, and drops one slid out of view', () => {
+  type Split = {
+    splitW: number
+    splitOff: number
+    rows: number
+    columns: number
+    nLamps: number
+    lampCell: Int32Array
+    lampColor: Int32Array
+    shiftSplitView(out: unknown): void
+  }
+  const f = makeScene('starship', 1)
+  const s = f as unknown as Split
+  f.ensure(22, 60)
+  // Sent home early: the booster parts low, and the top half slides down to keep the Ship centred.
+  let slid = false
+  for (let i = 0; i < 1200 && !slid; i++) {
+    f.strength = i < 30 ? 1 : i < 120 ? 4 : 1
+    f.step()
+    f.grid()
+    slid = Math.round(s.splitW) > 2 && Math.round(s.splitOff) > 2
+  }
+  expect(slid).toBe(true)
+  const off = Math.round(s.splitOff)
+  const W = s.columns
+  const out = f.grid()
+  s.nLamps = 2
+  s.lampCell[0] = (off + 3) * W + 5 // three rows into the top half once it's slid
+  s.lampCell[1] = (off - 1) * W + 5 // slid out of the top
+  s.lampColor[0] = s.lampColor[1] = 0xffb030
+  s.shiftSplitView(out)
+  expect(s.nLamps).toBe(1)
+  expect(s.lampCell[0]).toBe(3 * W + 5)
+})
+
 test("a session's own settings read a scene's old name (colony) as its new one (avalon)", () => {
   expect(readOwn({ style: 'colony', idle: 'dark', level: 42, junk: 1 })).toEqual({ style: 'avalon', idle: 0 })
 })

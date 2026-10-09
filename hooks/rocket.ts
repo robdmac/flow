@@ -1,4 +1,4 @@
-// REVISION: flow-v176-booster-home
+// REVISION: flow-v177-split-lamps
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -1802,6 +1802,15 @@ abstract class LaunchSite extends SkyWorld {
         const j = (r + off) * W + x
         out.set(r * W + x, out.codePoint(j), out.foreground(j), out.background(j))
       }
+    // A beacon's light moves with its cell, and goes with it when that's slid out of the top half (or under the divider).
+    let kept = 0
+    for (let l = 0; l < this.nLamps; l++) {
+      const r = Math.floor(this.lampCell[l]! / W) - off
+      if (r < 0 || r >= shown - 1) continue
+      this.lampCell[kept] = r * W + (this.lampCell[l]! % W)
+      this.lampColor[kept++] = this.lampColor[l]!
+    }
+    this.nLamps = kept
     const marks = this.crew.marks
     for (let i = marks.length - 1; i >= 0; i--) {
       const m = marks[i]!
