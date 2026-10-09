@@ -1,4 +1,4 @@
-// REVISION: flow-v170-dry-scenes
+// REVISION: flow-v175-split-centre
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -742,6 +742,8 @@ abstract class LaunchSite extends SkyWorld {
    */
   private twinSite: LaunchSite | null = null
   private splitW = 0
+  /** Rows the tall split's top half has slid down to keep what's flying centred in it (eased; see stepSplitView). */
+  private splitOff = 0
   private twinW = 0
   /** The twin's frames since its booster came to rest on the mount (then the panel slides away). */
   private twinDone = 0
@@ -846,6 +848,7 @@ abstract class LaunchSite extends SkyWorld {
       this.twinSite = null
       this.twinDue = false
       this.splitW = 0
+      this.splitOff = 0
       this.boosterHome = true
     }
     this.pw = columns * 2
@@ -1124,6 +1127,7 @@ abstract class LaunchSite extends SkyWorld {
     }
     this.drawMoon(out)
     this.drawVehicle(out, 0)
+    this.shiftSplitView(out)
     this.drawSplit(out)
     return out
   }
@@ -1616,10 +1620,15 @@ abstract class LaunchSite extends SkyWorld {
     this.orbitSpeed += ((orbitGoal ? ORBIT_SPEED[oi]! : 0) - this.orbitSpeed) * 0.04
     // A tall pane keeps the rocket mid-screen in flight (the ground back in view for the catch).
     const visible = this.rows - (this.splitTall ? this.splitW : 0)
+    const [r0, r1] = this.partRows(this.part)
     // Headroom above the nose, but never so much the rest of it drops out of the bottom.
-    const headroom = Math.min(Math.round(HEADROOM * visible * 2), Math.max(0, 2 * visible - (s.fly.h - this.partRows(this.part)[0]) - 6))
-    const camGoal = this.tall && flying && (!homeward || this.alt - goal > 25) ? headroom : 0
+    const headroom = Math.min(Math.round(HEADROOM * visible * 2), Math.max(0, 2 * visible - (s.fly.h - r0) - 6))
+    // With the split screen open below it, what's flying (and its parachutes) sits mid-way down its half.
+    const split = this.splitTall && this.splitW > 0
+    const centred = Math.max(0, Math.round(visible - (r1 - r0 + this.chuteRoom()) / 2))
+    const camGoal = this.tall && flying ? (split ? centred : !homeward || this.alt - goal > 25 ? headroom : 0) : 0
     this.camP += Math.max(-0.6, Math.min(0.6, camGoal - this.camP))
+    this.stepSplitView()
     // Fold away a tile once the real world below the layer is off the grid (a mini rocket is folded with its host's world).
     if (flying && !homeward && !this.host) {
       const a = this.layer - TILE / 2
@@ -1757,6 +1766,53 @@ abstract class LaunchSite extends SkyWorld {
     const base = 2 * (this.scroll + this.rows - 2) + 1
     const row = (base - this.apx() - (s.fly.h - (r0 + r1) / 2)) / 2
     return [col, row]
+  }
+
+  /**
+   * The tall split screen's top half, low down: the world can't scroll below
+   * the ground, so what's flying (sent home before it staged, or near the
+   * ground) would sit in the bottom half under the booster's view. The top
+   * half's view slides down the grid to centre it, as far as the grid goes,
+   * eased; the panel closing brings it back.
+   */
+  private stepSplitView(): void {
+    if (this.host || this.boosterOnly) return
+    const n = Math.round(this.splitW)
+    let goal = 0
+    if (this.splitTall && n > 0) {
+      // Rows above the divider; the middle of what's flying, its parachutes with it.
+      const shown = this.rows - n - 1
+      const mid = this.focus()[1] - this.chuteRoom() / 4
+      goal = Math.max(0, Math.min(n, Math.round(mid - shown / 2)))
+    }
+    // Eased, but quick enough to keep up with the Ship dropping to the sea.
+    this.splitOff += Math.max(-1.5, Math.min(1.5, (goal - this.splitOff) * 0.35))
+    if (this.splitOff > n) this.splitOff = n
+  }
+
+  /** Slide the top half's picture (and its companions' marks) up the rows the split view has moved down. */
+  private shiftSplitView(out: Cells): void {
+    const off = Math.round(this.splitOff)
+    const n = Math.round(this.splitW)
+    if (off <= 0 || !this.splitTall || n <= 0) return
+    const W = this.columns
+    const shown = this.rows - n
+    for (let r = 0; r < shown; r++)
+      for (let x = 0; x < W; x++) {
+        const j = (r + off) * W + x
+        out.set(r * W + x, out.codePoint(j), out.foreground(j), out.background(j))
+      }
+    const marks = this.crew.marks
+    for (let i = marks.length - 1; i >= 0; i--) {
+      const m = marks[i]!
+      const r0 = Math.max(0, m.row - off)
+      const r1 = Math.min(shown - 1, m.row + m.h - off)
+      if (r1 - r0 < 1) marks.splice(i, 1)
+      else {
+        m.row = r0
+        m.h = r1 - r0
+      }
+    }
   }
 
   /** Open the split screen on the booster falling back, high in the sky. */
