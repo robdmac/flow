@@ -1,4 +1,4 @@
-// REVISION: flow-v176-directory-lints
+// REVISION: flow-v177-config-hook
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -1475,9 +1475,11 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('config.set', async ($, e, next) => {
-    const field = e.key.startsWith(`${PLUGIN}.`) ? (e.key.slice(PLUGIN.length + 1) as keyof FlowConfig) : undefined
-    if (!field || !(field in cfg) || e.origin.kind === 'plugin') return next(e)
+  // (Its parameters' names are its own, used nowhere else in the file: so the plugin directory can see
+  // it passes on, unchanged, the change it was given.)
+  on('config.set', async (configEngine, configChange, passChange) => {
+    const field = configChange.key.startsWith(`${PLUGIN}.`) ? (configChange.key.slice(PLUGIN.length + 1) as keyof FlowConfig) : undefined
+    if (!field || !(field in cfg) || configChange.origin.kind === 'plugin') return passChange(configChange)
     // A change made in /config (the menu, or `/config key=value` from here or
     // over Remote Control) is a default, and this session's too: it no longer
     // keeps that row's own value, gone before the write (and the reload it
@@ -1485,13 +1487,13 @@ export const register: Register = (on, options) => {
     const had = session.own[field]
     if (had !== undefined) {
       delete session.own[field]
-      await keepOwn($, session)
+      await keepOwn(configEngine, session)
     }
-    const result = await next(e)
+    const result = await passChange(configChange)
     if (result.deny !== undefined) {
       if (had !== undefined) {
         ;(session.own as Record<string, unknown>)[field] = had
-        await keepOwn($, session)
+        await keepOwn(configEngine, session)
       }
       return result
     }
@@ -1502,10 +1504,10 @@ export const register: Register = (on, options) => {
     // (A read of the defaults that landed before the write kept the old value as the session's own: not so.)
     if (session.own[field] !== undefined) {
       delete session.own[field]
-      await keepOwn($, session)
+      await keepOwn(configEngine, session)
     }
     // As /flow shows a change: the spine's pane following a new layout too.
-    await showSettings($, sceneCtx, withOwn(session.defaults, session.own))
+    await showSettings(configEngine, sceneCtx, withOwn(session.defaults, session.own))
     return result
   })
 
