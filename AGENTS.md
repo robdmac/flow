@@ -89,8 +89,8 @@ A scene implements `Scene` (`hooks/styles.ts`). Its file exports a `SceneDef` (`
 
 The engine validates the module before it runs (`claude plugin validate .`):
 
-- `$` may only be passed to top-level functions. A hook handler must be a top-level function or written inline in its `on(...)` call. Closures inside `register` that need `$` take what they need as data instead.
-- Names are literal strings: `$.env.get('NAME')`, atom refs, command filters.
+- Only top-level functions may take the engine (`$`) as an argument. A hook handler must be a top-level function or written inline in its `on(...)` call. Closures inside `register` that need the engine take what they need as data instead.
+- Names are literal strings: atom refs, command filters, the keys of `$.state` and `$.store`.
 - No binding may shadow `next`.
 - The plugin directory's lints, stricter still: every `$.config.set` is called on a hook's own first parameter, in that hook (not a helper it calls), with its row's key as fixed text (`/flow save`'s writes, in the `command.run` hook, a case for each field: `planSave` before, `finishSave` after); a permission hook only watches and passes on the event it was given, never reading the verdict (`classic.PermissionRequest`; there's no `tool.check` hook for that reason). The directory reads a hook only when its parameters' names are used nowhere else in the file: every other hook's `($, e, next)` counts, so the permission hook and the `/flow` hook have names of their own.
 - No `console`, `process` or `Date.now()` in `hooks/`: they don't exist in the mod sandbox. Read time with `$.clock.now()`. A scene's `Rng` takes a seed; made without one (`makeScene(style)`), it gets `freshSeed()`, a counter.
@@ -122,7 +122,7 @@ The engine validates the module before it runs (`claude plugin validate .`):
 claude --plugin-dir .        # load it, with hot reload of the source
 claude plugin validate .     # the module's rules, the manifests, the hooks
 claude plugin test .         # the tests, including those that need the engine
-npm install                  # once, for the scripts below (tsx)
+npm install                  # once, for the scripts below (tsx); no lockfile is kept (see below)
 npm run preview -- <scene>   # print it here: levels 1/5/10, band and spine, day/night, each tint
 npm run check                # plugin.json in step, level 0 blank, colour pairs, timing (with companions, waiting, and
                              # over each of avalon's suns and nebulae); exits 1 on a problem
@@ -130,6 +130,7 @@ npm run cvd -- [scene]       # how far apart the tints look to colour-blind eyes
 npm run sounds               # rebuild the soundscapes' clips (needs sox and ffmpeg)
 ```
 
+- No `package-lock.json` is committed (it's gitignored): Claude Code runs `npm ci` in a plugin's folder when it finds a lockfile beside `package.json`, and Flow needs none of its dev tools to run. `package.json` pins them to exact versions instead; bump them there.
 - Hot reload doesn't follow symlinks. To use a dev-mods folder, copy the plugin in (rsync) rather than linking it.
 - Every file starts with a `// REVISION: flow-vNN-<what>` line; bump it when you change the file. On load the mod logs `[flow] REVISION: …`, the local time and the UTC offset to the debug log (`claude --debug`), so you can tell which version is running.
 - After visual changes, run `npm run preview -- <scene>` (levels 1, 5 and 10 in both layouts, by day and night, with each tint and waiting on the person; `--waiting` for just that) and look at it.

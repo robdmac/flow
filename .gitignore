@@ -1,8 +1,10 @@
 # Written by the Claude Code engine on each load
 .claude-plugin/types/
 
-# npm install (the scene scripts)
+# npm install (the scene scripts). No lockfile is kept: with one beside package.json, installing the
+# plugin runs npm ci, fetching tools the plugin never uses. package.json pins them exactly instead.
 node_modules/
+package-lock.json
 
 # scripts/make-sounds.ts: the WAVs the clips are encoded from
 .sound-cache/
