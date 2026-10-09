@@ -9,6 +9,10 @@
   "license": "MIT",
   "repository": "https://github.com/robdmac/flow",
   "homepage": "https://github.com/robdmac/flow",
+  "documentationUrl": "https://github.com/robdmac/flow#readme",
+  "supportUrl": "https://github.com/robdmac/flow/issues",
+  "privacyPolicyUrl": "https://github.com/robdmac/flow#what-flow-does-on-your-machine",
+  "termsOfServiceUrl": "https://github.com/robdmac/flow/blob/main/LICENSE",
   "keywords": [
     "fun",
     "ui",
