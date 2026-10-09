@@ -175,6 +175,8 @@ As in Claude Code, each session keeps its own settings, kept in the session itse
 
 ## What Flow does on your machine
 
+**Privacy:** Flow collects nothing. It has no servers, sends no data anywhere, and keeps what little it stores (below) on your machine, in Claude Code's own storage for the plugin.
+
 **Network:** none. Flow sends nothing anywhere and contacts no hosts. Everything it draws and plays is computed locally from the plugin's own files. The one call that takes anything out of the plugin is `$.audio.play`, which hands one of the plugin's own clips from `sounds/` (and a volume) to the local audio player, `afplay`: nothing Flow reads (settings, the conversation, your files) goes into it, and it reaches no address.
 
 **Your settings:** Flow writes its own `/config` rows (the `flow-scenes` plugin's options: scene, mode, sound and the rest) only when you run `/flow save`, which writes the settings your session shows as the defaults for new sessions. It reads them (`$.config.list()`) to start each session on your defaults.
