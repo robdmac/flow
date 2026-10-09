@@ -1,9 +1,10 @@
-// REVISION: flow-v171-dry-adapter
+// REVISION: flow-v174-taller-scenes
 //
 // What every scene must hold to (AGENTS.md), measured: plugin.json lists
 // the scenes in SCENES, hooks/sound-files.ts lists the clips in sounds/,
 // level 0 draws nothing, a frame has at most 1024 colour pairs, and
 // step() + grid() takes under ~2 ms at the band's and the spine's sizes
+// (a scene with a taller view of its own, doom3d's, at its taller band too)
 // (with subagents' companions too, working and waiting on the person: the
 // slower is shown). Each over every backdrop a scene passes through (avalon's
 // suns and nebulae). Exits 1 on any failure. Not part of the mod (Node).
@@ -15,6 +16,7 @@
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { SOUND_FILES } from '../hooks/sound-files'
+import { makeScene } from '../hooks/styles'
 import { syncManifest } from './sync-manifest'
 import { backdropsOf, build, LOOKS, nightsOf, pairs, scenesFrom } from './scene-lab'
 
@@ -31,6 +33,11 @@ const SIZES = [
 const TIMED = [
   [250, 5],
   [22, 60],
+] as const
+/** A taller scene's band (`Scene.taller`: as many rows as pi's flow.json gives it, 14 unless it says), timed in place of the 5-row one. */
+const TALLER = [
+  [250, 14],
+  [80, 14],
 ] as const
 
 let failed = 0
@@ -58,7 +65,8 @@ for (const scene of scenesFrom(process.argv.slice(2))) {
   let most = 0
   let where = ''
   const backdrops = backdropsOf(scene)
-  for (const [columns, rows] of SIZES) {
+  const taller = makeScene(scene, 1).taller === true
+  for (const [columns, rows] of taller ? [...SIZES, ...TALLER] : SIZES) {
     for (const backdrop of backdrops) {
       for (const level of [1, 5, 10]) {
         for (const night of nightsOf(scene)) {
@@ -89,7 +97,8 @@ for (const scene of scenesFrom(process.argv.slice(2))) {
     }
   }
   // (Working at 10, and waiting on the person, its sepia over every cell, over each backdrop: the slowest.)
-  const ms = TIMED.map(([columns, rows]) => {
+  const timed = taller ? [TALLER[0], TIMED[1]] : TIMED
+  const ms = timed.map(([columns, rows]) => {
     let worst = 0
     for (const backdrop of backdrops) {
       for (const waiting of [false, true]) {
@@ -105,10 +114,10 @@ for (const scene of scenesFrom(process.argv.slice(2))) {
     }
     return worst
   })
-  console.log(`${scene.padEnd(10)} ${String(most).padStart(10)}   ${ms.map(m => m.toFixed(2).padStart(11)).join('   ')}`)
+  console.log(`${scene.padEnd(10)} ${String(most).padStart(10)}   ${ms.map(m => m.toFixed(2).padStart(11)).join('   ')}${taller ? `   (its band at ${TALLER[0].join('×')})` : ''}`)
   if (most > MAX_PAIRS) bad(`${scene}: ${most} colour pairs (at ${where}); Raster paints ${MAX_PAIRS}, quantize the gradients`)
   ms.forEach((m, i) => {
-    if (m > MAX_MS) bad(`${scene}: ${m.toFixed(2)} ms a frame at ${TIMED[i]!.join('×')} (budget ${MAX_MS} ms)`)
+    if (m > MAX_MS) bad(`${scene}: ${m.toFixed(2)} ms a frame at ${timed[i]!.join('×')} (budget ${MAX_MS} ms)`)
   })
 }
 console.log(failed ? `\n${failed} problem${failed > 1 ? 's' : ''}` : '\nall good')

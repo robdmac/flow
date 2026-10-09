@@ -1,4 +1,4 @@
-// REVISION: flow-v173-halftone-pictures
+// REVISION: flow-v174-taller-scenes
 //
 // Flow for pi (badlogic/pi-mono), by Rob Macrae: the same ambient
 // scenes as the Claude Code mod, in a widget above pi's editor. pi's events
@@ -33,7 +33,8 @@
 // `"rows"` sets how tall (14 unless it says; never more than half the
 // terminal), `"pictures": false` keeps the cells. A new size's picture is made
 // a little each frame, the cells showing meanwhile, and what took long is
-// kept in ~/.cache/flow for the next time.
+// kept in ~/.cache/flow for the next time. A scene with a taller view of its
+// own (doom3d, through the marine's eyes) gets as many rows in cells.
 
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -60,7 +61,7 @@ const SETTINGS = join(homedir(), '.pi', 'agent', 'flow.json')
 const PI: Host = { panes: false, sound: false }
 /** Where the settings lived before, newest first: as vista, then as ascii-fire. */
 const OLD_SETTINGS = [join(homedir(), '.pi', 'agent', 'vista.json'), join(homedir(), '.pi', 'agent', 'ascii-fire.json')]
-/** A picture's rows unless flow.json says (`rows`), and at most this share of the terminal's. */
+/** A picture's rows (and a taller scene's, `Scene.taller`) unless flow.json says (`rows`), and at most this share of the terminal's. */
 const PICTURE_ROWS = 14
 const PICTURE_SHARE = 0.5
 /**
@@ -170,8 +171,8 @@ export default function flow(pi: PiApi) {
   let making: string | undefined
   /** What a picture of each size took long to make, kept in CACHE: being read back, read back, not there, or written. */
   const kept = new Map<string, 'reading' | 'restored' | 'absent' | 'written'>()
-  /** The rows a picture takes now. */
-  const pictureRows = () => {
+  /** The rows a picture, or a taller scene's view, takes now. */
+  const tallRows = () => {
     const terminal = process.stdout.rows || 40
     return Math.max(3, Math.min(prefs.rows, Math.floor(terminal * PICTURE_SHARE)))
   }
@@ -215,7 +216,7 @@ export default function flow(pi: PiApi) {
   /** This frame as a picture's lines, or undefined while it's still being made (draw the cells). */
   const drawPicture = (f: Scene): string[] | undefined => {
     if (!f.picture || width <= 0) return undefined
-    const rows = pictureRows()
+    const rows = tallRows()
     const { w, h } = pictureSize(width, rows, cell, PICTURE_PIXELS)
     if (!readKept(f, w, h)) return undefined
     const rgba = f.picture(w, h, 0)
@@ -276,7 +277,7 @@ export default function flow(pi: PiApi) {
   /** Point the current scene at this frame's dials and size. */
   const dial = () => {
     const f = driver.dial()
-    if (width > 0) f.ensure(width, ROWS)
+    if (width > 0) f.ensure(width, f.taller ? tallRows() : ROWS)
     return f
   }
 
