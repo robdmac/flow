@@ -1,4 +1,4 @@
-// REVISION: flow-v175-split-centre
+// REVISION: flow-v176-booster-home
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -1882,6 +1882,10 @@ abstract class LaunchSite extends SkyWorld {
     t.sounds.length = 0
     // Down: on the mount in the arms, or on its legs at the landing zone.
     if (t.state === 'rest' || t.state === 'landed') this.twinDone++
+    // Set down on the mount, it's home on this side too (the Ship may already be on its way back to the pad).
+    const onMount = (b: LaunchSite | null) => b?.state === 'release' || b?.state === 'rest'
+    if (onMount(t)) this.boosterHome = true
+    for (const r of this.minis) if (onMount(r.twinSite)) r.boosterHome = true
     // In over a second; once the booster's been down a moment, out again.
     const open = this.twinDone < 20
     const full = this.splitTall ? this.twinH : this.twinW

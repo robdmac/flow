@@ -36,10 +36,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: npm
 
+      # (No lockfile, so nothing installs with the plugin: package.json pins the tools exactly.)
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Install Claude Code
         run: |

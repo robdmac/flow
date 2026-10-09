@@ -175,12 +175,9 @@ As in Claude Code, each session keeps its own settings, kept in the session itse
 
 ## What Flow does on your machine
 
-**Network:** none. Flow sends nothing anywhere and contacts no hosts. Everything it draws and plays is computed locally from the plugin's own files.
+**Network:** none. Flow sends nothing anywhere and contacts no hosts. Everything it draws and plays is computed locally from the plugin's own files. The one call that takes anything out of the plugin is `$.audio.play`, which hands one of the plugin's own clips from `sounds/` (and a volume) to the local audio player, `afplay`: nothing Flow reads (settings, the conversation, your files) goes into it, and it reaches no address.
 
-**Your settings:** Flow writes its own `/config` rows (the `flow-scenes` plugin's options: scene, mode, sound and the rest) only:
-
-- when you run `/flow save`, which writes the settings your session shows as the defaults for new sessions;
-- at session start, to fix a row still holding a scene's old name (a renamed scene becomes its new name; a scene that's gone becomes the default).
+**Your settings:** Flow writes its own `/config` rows (the `flow-scenes` plugin's options: scene, mode, sound and the rest) only when you run `/flow save`, which writes the settings your session shows as the defaults for new sessions. It reads them (`$.config.list()`) to start each session on your defaults.
 
 It writes no other settings, no files and no environment variables. (`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`, under *Not loading?*, is a variable you set yourself, if you need it.)
 
@@ -192,13 +189,13 @@ It writes no other settings, no files and no environment variables. (`CLAUDE_COD
 
 | Hook | What Flow reads | Why |
 |---|---|---|
-| `tool.call` | the tool's name, the number of lines an edit or write adds (not their text), whether a `Bash` command failed | how busy the scene is; a failed command shows as smoke |
-| `classic.PermissionRequest` | that a permission dialog is about to show (its tool's name, which subagent) | the scene settles and breathes while Claude waits on you |
+| `tool.call` | the tool's name, the number of lines an edit or write adds (not their text), whether a `Bash` command failed; its arguments, held only while it runs (see below) | how busy the scene is; a failed command shows as smoke |
+| `classic.PermissionRequest` | that a permission dialog is about to show: its tool's name and input, which subagent. The input is only compared with the arguments of the calls running, to tell which call the dialog is for, and kept nowhere | the scene settles and breathes while Claude waits on you, until that call is answered |
 | `turn.start`, `turn.complete`, `turn.step` | when a turn or a subagent's run starts and ends; how much text is streamed (its length only) | the level, and each subagent's companion |
 | `session.compact`, `session.measure` | that a compaction happened; how full the context is | smoke; blue when it's nearly full |
 | `config.set` | a change to one of Flow's own `/config` rows | applies it to the session at once |
 | `prompt.edit` | that a key was pressed in the prompt (not what) | someone is there, so sound may play |
-| `command.run` | `/flow` and its arguments | the command |
+| `command.run` | `/flow` and its arguments (only its own command: it answers `/flow`, and sees no other) | the command |
 | `session.start`, `session.end`, `ui.*` | the session's id; the panes it draws | its settings; the band, the spine and `/flow pick` |
 
 It also lists the session's running subagents (`$.agent.list()`: their state, task and type) to give each one a companion and a hover card.
