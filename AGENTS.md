@@ -65,7 +65,7 @@ A scene implements `Scene` (`hooks/styles.ts`). Its file exports a `SceneDef` (`
 - **Sound** (`hooks/sound.ts`, see *Soundscapes* below): a scene's bed is layers of clips (`LAYERS`) at gains from the level and its `ambience()`, mixed ahead for each of its moods (`MOODS`); its events (`sounds`, an array the scene pushes `{ kind, v }` onto as things happen on screen, through `hear`, which caps it, so an adapter that never takes them stays bounded; pi takes and drops them each frame) play a clip (`EVENTS`) or, small and dense ones, a synthesized burst (`VOICES`). A scene without layers is silent.
 - **Sizes**: the band is 5 rows × 80–250 columns, above the prompt. The spine is a pane about 13–22 columns × 30–60 rows. Every scene must look right in both.
 - **Drawing**:
-  - Most scenes paint a pixel layer at 2 × 2 pixels per cell, then fold it into quadrant glyphs with `fitQuad`. A cell holds only two colors; pass `fitQuad`'s `keep` for a sprite's pixels so a small figure never drops out of its own cell.
+  - Most scenes paint a pixel layer at 2 × 2 pixels per cell, then fold it into quadrant glyphs with `fitQuad`. A cell holds only two colors; give `fitQuad` a sprite's pixels as its `keep` so a small figure never drops out of its own cell.
   - Braille (`BRAILLE`, 2 × 4 dots a cell) is for fine specks: spray, stars, bubbles.
   - `DEFAULT_COLOR` (0x01000000) is the terminal's own color, i.e. transparent.
 - **Limits**:
@@ -132,7 +132,7 @@ npm run sounds               # rebuild the soundscapes' clips (needs sox and ffm
 ```
 
 - No `package-lock.json` is committed (it's gitignored): Claude Code runs `npm ci` in a plugin's folder when it finds a lockfile beside `package.json`, and Flow needs none of its dev tools to run. `package.json` pins them to exact versions instead; bump them there.
-- Hot reload doesn't follow symlinks. To use a dev-mods folder, copy the plugin in (rsync) rather than linking it.
+- Hot reload doesn't follow symlinks. To use a dev-mods folder, copy the plugin's files in rather than linking it.
 - Every file starts with a `// REVISION: flow-vNN-<what>` line; bump it when you change the file. On load the mod logs `[flow] REVISION: …`, the local time and the UTC offset to the debug log (`claude --debug`), so you can tell which version is running.
 - After visual changes, run `npm run preview -- <scene>` (levels 1, 5 and 10 in both layouts, by day and night, with each tint and waiting on the person; `--waiting` for just that) and look at it.
 - Run `npm run check`: the color-pair count and the timing for each scene.
