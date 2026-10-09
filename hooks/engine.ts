@@ -1,4 +1,4 @@
-// REVISION: flow-v170-dry-scenes
+// REVISION: flow-v171-plain-names
 //
 // Engine (the `engine` style): a Victorian steam engine room on the same dials
 // as the fire; the level is how hard it is being driven. At 1 it stands cold,
@@ -438,13 +438,13 @@ export class Engine {
     // Then pack idler gears into whatever room is left, each meshing with
     // exactly one gear already placed (and clear of all the others).
     const colors = [C.brass, C.copper, C.ironLt, C.brassHi]
-    for (let pass = 0; pass < 4; pass++) {
+    for (let round = 0; round < 4; round++) {
       const count = this.gears.length
       let added = 0
       for (let i = 0; i < count; i++) {
         const o = this.gears[i]!
         for (let k = 0; k < 16; k++) {
-          const ang = (k / 16) * TAU + pass * 0.2
+          const ang = (k / 16) * TAU + round * 0.2
           for (let n = 10; n >= 6; n--) {
             const r = n * PITCH
             const dist = o.r + r + 0.5

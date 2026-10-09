@@ -1,4 +1,4 @@
-// REVISION: flow-v170-dry-scenes
+// REVISION: flow-v171-plain-names
 //
 // A scene's companions: one for each running subagent (the `agents` dial,
 // agents.ts), so a glance tells you which are busy, which have gone quiet or
@@ -200,7 +200,7 @@ export class Crew {
   private anonymous(coverageBoost: number): AgentDial[] {
     const n = Math.max(0, Math.round(coverageBoost / PER_AGENT))
     const anon = this.anon
-    while (anon.length < n) anon.push({ id: `${ANON}${anon.length}`, state: 'working', ok: true, task: '', type: '', ms: 0 })
+    while (anon.length < n) anon.push({ id: ANON + anon.length, state: 'working', ok: true, task: '', type: '', ms: 0 })
     anon.length = n
     return anon
   }
