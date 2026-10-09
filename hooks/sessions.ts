@@ -1,4 +1,4 @@
-// REVISION: flow-v121-fresh-defaults
+// REVISION: flow-v122-plain-names
 //
 // Each session's own settings: what `/flow` set in it, kept under the
 // session's id over the defaults every session starts from (/config in
@@ -24,7 +24,7 @@ export type SessionRecord = { own: Own; at: number }
 
 /** A session's record lives in the store under `session:<id>`: one key each, so two sessions never write the same one. */
 export const SESSION_PREFIX = 'session:'
-export const sessionKey = (id: string) => `${SESSION_PREFIX}${id}`
+export const sessionKey = (id: string) => SESSION_PREFIX + id
 
 /** The records kept: the most recently used this many... */
 export const SESSIONS_KEPT = 100
