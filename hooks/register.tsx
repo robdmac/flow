@@ -1,4 +1,4 @@
-// REVISION: flow-v177-config-hook
+// REVISION: flow-v178-taller-scenes
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -125,6 +125,8 @@ const DEFAULTS_POLL_MS = 30_000
 /** A blit unanswered for this many ticks is presumed lost, not in flight. */
 const BLIT_STALE_TICKS = 15
 const MAX_ROWS = 5
+/** ...and for a scene with a taller view of its own (`Scene.taller`: doom3d), as many as the prompt leaves up to this. */
+const TALL_ROWS = 14
 /** A desktop site redraws at most 10 times a second (`$.ui.invalidate`'s limit there). */
 const DESKTOP_MS = 100
 /**
@@ -1544,7 +1546,8 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => {
-    const rows = Math.min(MAX_ROWS, e.props.maxRows - 1)
+    const most = cfg.layout !== 'spine' && driver.isShown() && driver.dial().taller ? TALL_ROWS : MAX_ROWS
+    const rows = Math.min(most, e.props.maxRows - 1)
     const hidden = cfg.layout === 'spine' || e.props.hasSurvey || !driver.isShown() || rows < 2
     if (e.surface === 'desktop') {
       // No Raster here: the frame is one Svg, redrawn by the frame loop.

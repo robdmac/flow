@@ -4,7 +4,7 @@
 
 <img width="1200" height="384" alt="Flow's fire above the prompt: pilot lights at idle, climbing with each of Claude's tool calls, an inferno with three subagents, then back down when Claude is done" src="https://github.com/user-attachments/assets/0f0120cc-af23-44ec-9398-309cccd42764" />
 
-Ambient scenes in your terminal that move with the work your coding agent is doing: a fire, fizzing bubbles, the surf, a ski run, two rockets, a hot-air balloon, a steam engine, a train through the countryside, and a colony ship behind its shield. They run above the prompt of Claude Code (in the terminal or the Claude desktop app) or [pi](https://github.com/badlogic/pi-mono), or in a tall pane beside Claude Code's transcript.
+Ambient scenes in your terminal that move with the work your coding agent is doing: a fire, fizzing bubbles, the surf, a ski run, two rockets, a hot-air balloon, a steam engine, a train through the countryside, a colony ship behind its shield, the Earth rising over the moon, and a space marine fighting through a 1993 techbase. They run above the prompt of Claude Code (in the terminal or the Claude desktop app) or [pi](https://github.com/badlogic/pi-mono), or in a tall pane beside Claude Code's transcript.
 
 Each scene is drawn in 24-bit color from Unicode block, quadrant and braille characters, so several pixels share each terminal cell. In the Claude desktop app, which has no character grid to draw into, the same frames are drawn as images.
 
@@ -69,6 +69,21 @@ Every scene has a level from 0 (off) to 10 (as busy as it gets).
 | `ski` | an easy run | a steep mogul run at speed |
 | `bubbles` | a couple of lazy strings of bubbles | a rolling, fizzing boil |
 | `train` | waiting at a red signal or a platform, its diesel idling (when the work starts the signal clears, the horn sounds and it pulls away; when it winds down the train pulls up again) | flat out past fields, villages, woods, rivers and stations, the poles and the line beside it a blur |
+| `earthrise` | the Earth half risen over a cratered lunar horizon in long, low sunlight, turning once in about two minutes, under a still sky of a few breathing stars (after [earthrise](https://ascii.rest/earthrise/) by @bas3line on ascii.rest) | the Earth risen clear of the horizon, spinning once every four seconds, its clouds running ahead; more stars, drifting past in layers, shooting stars, and now and then a comet trailing its tails |
+| `doom` | a space marine in green armor plodding down a techbase corridor, pistol lowered, raising it now and then at a lone zombieman far down the hall | running and gunning with a plasma rifle, imps hurling fireballs, pinky demons charging, cacodemons floating in and barrels going up among them; the busier the work, the faster he moves, the faster he shoots and the heavier his gun (pistol, then shotgun from 3, chaingun from 6, plasma rifle from 9). In the tall pane it's his own view: down the corridor, doors rising as he nears them, his gun bobbing and the status bar with his ammo, health and face |
+| `doom3d` | the same fight through his own eyes, everywhere: above the prompt too, in a taller band (14 rows where there's room) that sweeps wide down the corridor, his ammo in one corner, his face and health in the other | as `doom` |
+
+**`earthrise`**: the Earth rising over the moon and turning faster as the work picks up, drawn here in pi as a halftone picture.
+
+https://github.com/user-attachments/assets/afe7e272-0a48-4668-b106-f2ae4732e977
+
+**`doom`**: the marine side-on above the prompt, moving faster and changing to heavier guns as the work grows, imps, pinky demons and cacodemons coming down the hall at him.
+
+https://github.com/user-attachments/assets/2e9e4247-8f1f-42b6-b0d1-60598e6e4957
+
+**`doom3d`**: the same fight through his own eyes, in pi's taller 14-row band, his ammo in one corner and his face and health in the other.
+
+https://github.com/user-attachments/assets/20196ad3-8dae-4e6e-99db-83fcd560b20e
 
 `/flow pick` shows them all at once, each one live, to choose from with the arrow keys and Enter (in pi, a list).
 
@@ -88,9 +103,9 @@ Balloon, falcon, starship, surf, ski and train also have a **night** version: st
 | running commands | sparks; a slow command keeps it ticking over |
 | reading or searching, or using any other tool (an MCP server's too) | a small spark each |
 | running subagents | busier with each one (with diminishing returns), and each one gets a companion of its own (see below); the rest add company: more stars, more lit windows, more streams of bubbles, more lights on the launch tower |
-| hitting a failed command, or compacting | smoke for a moment: smoky flame tips, sooty steam, a grey sky, a wipeout, a rocket's plume sputtering grey, black smoke pouring from the train's diesel |
-| near a full context (≥85%) | blue: a blue-white flame, a storm, dusk on the slopes, a blue gas flame, rain driving past the train |
-| waiting on you: a permission to grant, its question, a plan to approve | settles to a calm 2 and holds, the whole scene turned a warm sepia that breathes slowly, about every 4 s: the fire banks to a bed of glowing coals, the stars stop, the colony ship comes to rest, the balloon hovers with its pilot light glowing, the engine runs down and lets off steam, a rocket holds its stage with amber lights up the tower, the surfer sits up waiting for a wave, the skier stops, the bubbles slow, the train draws up at a red signal or a platform, its headlight and the signal glowing with each breath. With sound on, a soft chime as the wait begins |
+| hitting a failed command, or compacting | smoke for a moment: smoky flame tips, sooty steam, a grey sky, a wipeout, a rocket's plume sputtering grey, black smoke pouring from the train's diesel, a pall of moondust over the lunar horizon, the techbase's lights going out under drifting smoke (and the marine's face bloodied) |
+| near a full context (≥85%) | blue: a blue-white flame, a storm, dusk on the slopes, a blue gas flame, rain driving past the train, cold blue light over the moon, the techbase flooded with cold blue light |
+| waiting on you: a permission to grant, its question, a plan to approve | settles to a calm 2 and holds, the whole scene turned a warm sepia that breathes slowly, about every 4 s: the fire banks to a bed of glowing coals, the stars stop, the colony ship comes to rest, the balloon hovers with its pilot light glowing, the engine runs down and lets off steam, a rocket holds its stage with amber lights up the tower, the surfer sits up waiting for a wave, the skier stops, the bubbles slow, the train draws up at a red signal or a platform, its headlight and the signal glowing with each breath, the Earth stops turning, the marine stops and lowers his gun as the monsters slink back into the dark, the computer panels glowing with each breath. With sound on, a soft chime as the wait begins |
 
 A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes several subagents editing in parallel, or a long turn: it climbs a level every 30 s it keeps going.
 
@@ -98,7 +113,7 @@ Waiting on you shows only while a dialog is actually up for you: a permission as
 
 ### Subagents, one by one
 
-In fire, surf, ski, balloon, falcon, starship, engine, train and avalon, each running subagent has a companion of its own, in its own colors or its own place, so you can tell at a glance which are busy, which have gone quiet or are waiting on you, and when each finishes:
+In fire, surf, ski, balloon, falcon, starship, engine, train, avalon, doom and doom3d, each running subagent has a companion of its own, in its own colors or its own place, so you can tell at a glance which are busy, which have gone quiet or are waiting on you, and when each finishes:
 
 | Scene | Arrives | Working | Quiet (nothing for 20 s) | Waiting on you (a permission dialog, its question) | Done |
 |---|---|---|---|---|---|
@@ -109,9 +124,10 @@ In fire, surf, ski, balloon, falcon, starship, engine, train and avalon, each ru
 | `falcon`, `starship` | a mini rocket (the same rocket, smaller) on a little launch site of its own beside the big one | flies the mission with the big one, a beat behind: lifts off, stages (its booster coming home beside the big one's: falcon's on its legs, starship's into its own tower's arms), keeps formation into orbit and comes home with it (Dragon under its own chutes; the Ship belly-first, carried home and stacked) | coasts, dropped back, a light blinking on its nose; on the ground it doesn't launch | an amber beacon flashes | fades as it pulls away ahead (failed: tumbles away in smoke) |
 | `engine` | its lamps on the bed plate warm up | a light runs along its lamps | its lamps glow low | its lamps flash together | its lamps fade out (failed: fading red) |
 | `train` | a short train of its own draws up alongside from out of sight | keeps pace on the next track, gaining and losing a little, headlamp lit | drops back a little, headlamp out | its cab flashes amber | falls back out of sight |
+| `doom`, `doom3d` | another marine in co-op colors (indigo, brown, red, grey) runs in from behind (through his eyes, past him) and falls in with the squad | fires with him at whatever comes | drops back a little, gun lowered | a lamp blinks amber over its head | teleports out in a shimmer of green fog (failed: falls where it stood, and the squad walks on) |
 | `avalon` | a probe launches from a bay on the ship's hull (the hatch glowing in its color) and flies up beside it | holds station by the ship on its own flickering drive | drive off, falls back along the ship, a running light blinking | an amber beacon flashes | turns about and burns away aft, off toward home (failed: drive dead, tumbles away dark) |
 
-A scene has room for a few (the fire 4 to 6 small fires across the band, 1 or 2 in the spine, surf 5, ski 4, balloon 4, the rockets 3 mini rockets (one of them behind the big launch site in the spine; 1 in a spine narrower than 19 columns), the engine 6 lamp groups, the train up to 4 trains, avalon 4 probes; fewer in the narrow spine or a narrow band: only as many as it shows whole); more wait for a place to come free. Warp and bubbles keep the plain company above: they're a stream of stars, a glass of anonymous bubbles, with nothing that stays put long enough to be someone. In the Claude desktop app, put the pointer over a companion to see its subagent's task, what it's doing and for how long.
+A scene has room for a few (the fire 4 to 6 small fires across the band, 1 or 2 in the spine, surf 5, ski 4, balloon 4, the rockets 3 mini rockets (one of them behind the big launch site in the spine; 1 in a spine narrower than 19 columns), the engine 6 lamp groups, the train up to 4 trains, avalon 4 probes, doom 4 marines (2 in a spine narrower than 14 columns); fewer in the narrow spine or a narrow band: only as many as it shows whole); more wait for a place to come free. Warp and bubbles keep the plain company above: they're a stream of stars, a glass of anonymous bubbles, with nothing that stays put long enough to be someone. In the Claude desktop app, put the pointer over a companion to see its subagent's task, what it's doing and for how long.
 
 ## The command
 
@@ -168,6 +184,10 @@ The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's edito
 | `tool_result` with `isError` | a failed command shows as smoke |
 | `session_compact` | so does a compaction |
 | `ctx.getContextUsage()` | a nearly-full context shows as blue |
+
+In a terminal that draws images (Ghostty, kitty, WezTerm, Warp; not under tmux), `earthrise` shows in pi as a picture at the terminal's own pixels rather than in characters, drawn as the original is: a halftone of dots sized by brightness in the original's 38 colours, 14 rows tall (never more than half the terminal). Set `"rows"` in `~/.pi/agent/flow.json` for another height, or `"pictures": false` to keep the characters. The first time pi opens at a new width the characters show for a moment while the picture's ground is made. Flow keeps the ground of the last few sizes in `~/.cache/flow`, so the picture shows at once the next time. The other scenes stay in characters.
+
+`doom3d` takes the same height in characters (`"rows"` sets it too), for the view through the marine's eyes. In Claude Code its band is as tall as the prompt leaves room for, up to 14 rows.
 
 pi tells an extension nothing of a wait on you, so there the scenes never show one. Nor has it a player, so the scenes are silent there: `/flow sound` says so.
 
