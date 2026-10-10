@@ -1,4 +1,4 @@
-// REVISION: flow-v171-dry-adapter
+// REVISION: flow-v175-doom3d
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -16,6 +16,7 @@ import { Balloon, skyColor } from '../hooks/balloon'
 import { Falcon } from '../hooks/rocket'
 import { Colony } from '../hooks/colony'
 import { Train } from '../hooks/train'
+import { Doom } from '../hooks/doom'
 import { makeScene, nextStyle, SCENES, STYLES, styleNamed, type SceneName } from '../hooks/styles'
 import { finishSave, openSession, planSave, runScene, type SceneCtx } from '../hooks/register'
 import { coverage, frameSvg, gridPixels, SVG_LIMIT } from '../hooks/svg'
@@ -1377,6 +1378,23 @@ test('the band draws its 5 rows on the terminal', async ($, on) => {
   expect(raster?.props.columns).toBe(60)
   expect(raster?.props.rows).toBe(5)
   await ui.unmount()
+})
+
+test('a scene with a taller view of its own (doom3d) gets a taller band, as far as the prompt leaves; back to 5 for the rest', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  engine(on)
+  await start($)
+  await flow($, 'doom3d')
+  const rowsWith = async (maxRows: number) => {
+    const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND, props: { ...BAND.props, maxRows } })
+    const rows = (await ui.find({ type: 'Raster', key: 'flow' }))?.props.rows
+    await ui.unmount()
+    return rows
+  }
+  expect([await rowsWith(40), await rowsWith(12)]).toEqual([14, 11])
+  await flow($, 'doom')
+  expect(await rowsWith(40)).toBe(5)
 })
 
 test('the band yields to other surfaces, surveys, and a one-row squeeze', async ($, on) => {
@@ -2929,6 +2947,69 @@ test("sessions: a wait is its own session's: the chime follows that session's so
   await ui.unmount()
 })
 
+test('doom: the level is how hard he goes at it: a pistol at a plod at 1, faster and with heavier guns up to a plasma rifle at a run at 10', () => {
+  for (const [columns, rows] of [[120, 5], [22, 40]] as const) {
+    const run = (level: number) => {
+      const d = makeScene('doom', 3) as Doom
+      d.strength = level
+      d.ensure(columns, rows)
+      for (let i = 0; i < 900; i++) d.step()
+      return d
+    }
+    const [calm, mid, busy] = [run(1), run(5), run(10)]
+    const at = `${columns}×${rows}`
+    expect([at, calm.weapon, mid.weapon, busy.weapon]).toEqual([at, 0, 1, 3])
+    expect([at, calm.distance < mid.distance && mid.distance < busy.distance]).toEqual([at, true])
+    expect([at, calm.shots > 0 && calm.shots < mid.shots && mid.shots < busy.shots]).toEqual([at, true])
+    // The level easing up, he changes guns on the way.
+    const d = run(1)
+    const guns = new Set<number>()
+    d.strength = 10
+    for (let i = 0; i < 400; i++) {
+      d.step()
+      guns.add(d.weapon)
+    }
+    expect([at, [...guns].sort()]).toEqual([at, [0, 1, 2, 3]])
+  }
+})
+
+test('doom: waiting on the person, he stops and holds his fire and the monsters slink away; answered, the fight goes on', () => {
+  for (const [columns, rows] of [[120, 5], [22, 40]] as const) {
+    const d = makeScene('doom', 4) as Doom
+    d.strength = 8
+    d.ensure(columns, rows)
+    for (let i = 0; i < 300; i++) d.step()
+    d.waiting = true
+    d.strength = WAIT_LEVEL
+    for (let i = 0; i < 120; i++) d.step()
+    const shots = d.shots
+    const where = d.distance
+    for (let i = 0; i < 200; i++) d.step()
+    const at = `${columns}×${rows}`
+    expect([at, d.speed, d.coming, d.shots - shots, d.distance - where]).toEqual([at, 0, 0, 0, 0])
+    d.waiting = false
+    d.strength = 6
+    for (let i = 0; i < 600; i++) d.step()
+    expect([at, d.shots > shots, d.distance > where]).toEqual([at, true, true])
+  }
+})
+
+test('doom3d: the same fight through his own eyes, in a band of any height, and it asks for a taller one', () => {
+  expect([(makeScene('doom3d', 1) as Doom).taller, (makeScene('doom', 1) as Doom).taller]).toEqual([true, false])
+  for (const [columns, rows] of [[160, 14], [120, 5], [22, 40]] as const) {
+    const run = (level: number) => {
+      const d = makeScene('doom3d', 3) as Doom
+      d.strength = level
+      d.ensure(columns, rows)
+      for (let i = 0; i < 900; i++) d.step()
+      return d
+    }
+    const [calm, busy] = [run(1), run(10)]
+    const at = `${columns}×${rows}`
+    expect([at, calm.weapon, busy.weapon, calm.distance < busy.distance, calm.shots < busy.shots]).toEqual([at, 0, 3, true, true])
+  }
+})
+
 test('train: waiting on the person, it draws up at a red signal or a platform and stands, its lamps shining through the sepia; answered, the horn and away', () => {
   for (const [columns, rows] of [[120, 5], [22, 60]] as const)
     for (const seed of [3, 8]) {
@@ -3503,7 +3584,7 @@ test('crew: only places the layout can show are given; less room sends the rest 
 })
 
 /** The scenes that give each subagent a companion of its own. */
-const CREW_SCENES = ['fire', 'surf', 'ski', 'balloon', 'falcon', 'starship', 'engine', 'train', 'avalon'] as const
+const CREW_SCENES = ['fire', 'surf', 'ski', 'balloon', 'falcon', 'starship', 'engine', 'train', 'avalon', 'doom', 'doom3d'] as const
 
 test('companion scenes: each agent gets one that arrives, is marked where it is, and leaves when done, in the band and the spine', () => {
   for (const style of CREW_SCENES) {
