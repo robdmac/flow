@@ -1,8 +1,9 @@
-// REVISION: flow-v4-earthrise-plain-names
+// REVISION: flow-v5-earthrise-notice
 //
 // Earthrise (the `earthrise` scene): the Earth coming up over a cratered
-// lunar horizon in long, low sunlight, after "earthrise" by @bas3line on
-// ascii.rest (https://ascii.rest/earthrise/, MIT). The level is how high the
+// lunar horizon in long, low sunlight, after "earthrise" by Shubham on
+// ascii.rest (https://ascii.rest/earthrise/; Copyright (c) 2026 bas3line, MIT,
+// its notice in THIRD-PARTY-NOTICES). The level is how high the
 // Earth stands and how fast it turns: at 1 it is half behind the horizon,
 // turning once in about two minutes; at 10 it stands clear of the horizon,
 // turning every few seconds, its clouds running a little ahead. It climbs

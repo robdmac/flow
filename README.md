@@ -69,7 +69,7 @@ Every scene has a level from 0 (off) to 10 (as busy as it gets).
 | `ski` | an easy run | a steep mogul run at speed |
 | `bubbles` | a couple of lazy strings of bubbles | a rolling, fizzing boil |
 | `train` | waiting at a red signal or a platform, its diesel idling (when the work starts the signal clears, the horn sounds and it pulls away; when it winds down the train pulls up again) | flat out past fields, villages, woods, rivers and stations, the poles and the line beside it a blur |
-| `earthrise` | the Earth half risen over a cratered lunar horizon in long, low sunlight, turning once in about two minutes, under a still sky of a few breathing stars (after [earthrise](https://ascii.rest/earthrise/) by @bas3line on ascii.rest) | the Earth risen clear of the horizon, spinning once every four seconds, its clouds running ahead; more stars, drifting past in layers, shooting stars, and now and then a comet trailing its tails |
+| `earthrise` | the Earth half risen over a cratered lunar horizon in long, low sunlight, turning once in about two minutes, under a still sky of a few breathing stars (after [earthrise](https://ascii.rest/earthrise/) by Shubham on [ascii.rest](https://github.com/bas3line/ascii), MIT: its notice is in `THIRD-PARTY-NOTICES`) | the Earth risen clear of the horizon, spinning once every four seconds, its clouds running ahead; more stars, drifting past in layers, shooting stars, and now and then a comet trailing its tails |
 | `doom` | a space marine in green armor plodding down a techbase corridor, pistol lowered, raising it now and then at a lone zombieman far down the hall | running and gunning with a plasma rifle, imps hurling fireballs, pinky demons charging, cacodemons floating in and barrels going up among them; the busier the work, the faster he moves, the faster he shoots and the heavier his gun (pistol, then shotgun from 3, chaingun from 6, plasma rifle from 9). In the tall pane it's his own view: down the corridor, doors rising as he nears them, his gun bobbing and the status bar with his ammo, health and face |
 | `doom3d` | the same fight through his own eyes, everywhere: above the prompt too, in a taller band (14 rows where there's room) that sweeps wide down the corridor, his ammo in one corner, his face and health in the other | as `doom` |
 
@@ -195,7 +195,7 @@ As in Claude Code, each session keeps its own settings, kept in the session itse
 
 ## What Flow does on your machine
 
-**Privacy:** Flow collects nothing. It has no servers, sends no data anywhere, and keeps what little it stores (below) on your machine, in Claude Code's own storage for the plugin.
+**Privacy:** Flow collects nothing. It has no servers, sends no data anywhere, and keeps what little it stores (below) on your machine: in Claude Code's own storage for the plugin, or in pi under `~/.pi/agent/flow.json` and `~/.cache/flow`.
 
 **Network:** none. Flow sends nothing anywhere and contacts no hosts. Everything it draws and plays is computed locally from the plugin's own files. The one call that takes anything out of the plugin is `$.audio.play`, which hands one of the plugin's own clips from `sounds/` (and a volume) to the local audio player, `afplay`: nothing Flow reads (settings, the conversation, your files) goes into it, and it reaches no address.
 
