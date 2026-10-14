@@ -1,4 +1,4 @@
-// REVISION: flow-v177-config-hook
+// REVISION: flow-v179-doom-volleys
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -125,6 +125,8 @@ const DEFAULTS_POLL_MS = 30_000
 /** A blit unanswered for this many ticks is presumed lost, not in flight. */
 const BLIT_STALE_TICKS = 15
 const MAX_ROWS = 5
+/** ...and for a scene with a taller view of its own (`Scene.taller`: doom3d), as many as the prompt leaves up to this. */
+const TALL_ROWS = 14
 /** A desktop site redraws at most 10 times a second (`$.ui.invalidate`'s limit there). */
 const DESKTOP_MS = 100
 /**
@@ -751,6 +753,8 @@ export const register: Register = (on, options) => {
     chime: newChimeState(),
     /** The event clips playing, oldest first (the first to give way when the player is full). */
     events: [] as AbortController[],
+    /** The last volley's clip (a fast gun's run of shots), stopped early when its gun falls silent (`cease`). */
+    volley: undefined as AbortController | undefined,
     seed: 1,
     scene: '',
     /**
@@ -776,6 +780,7 @@ export const register: Register = (on, options) => {
     sound.playing.clear()
     sound.takes.clear()
     sound.events.length = 0
+    sound.volley = undefined
     sound.bed = []
     sound.queue.length = 0
     sound.seen = 0
@@ -988,11 +993,12 @@ export const register: Register = (on, options) => {
     // (`take` undefined) first (a tail cut beats a strike unheard, or the bed dropping out); a refused
     // one tries again a moment on (a bed's take stopping an event clip each time: busy events never
     // keep the bed out).
-    const play = (clip: { asset: string } | { base64: string; mime: string }, gain = 1, take?: number, tries = 0): void => {
+    const play = (clip: { asset: string } | { base64: string; mime: string }, gain = 1, take?: number, tries = 0, volley = false): void => {
       const event = take === undefined
       if ((tries === 0 || !event) && sound.playing.size >= MAX_PLAYS) sound.events.shift()?.abort()
       const stop = new AbortController()
       sound.playing.add(stop)
+      if (volley) sound.volley = stop
       if (event) sound.events.push(stop)
       else sound.takes.set(take, stop)
       // No player (a Linux or Windows terminal), or refused for good: just silence. Refused because the
@@ -1013,7 +1019,7 @@ export const register: Register = (on, options) => {
           retrying = true
           $.clock.after(50, () => {
             if (!current(gen) || (take !== undefined && sound.takes.get(take) !== stop)) return
-            play(clip, gain, take, tries + 1)
+            play(clip, gain, take, tries + 1, volley)
           })
         })
         .finally(() => {
@@ -1059,6 +1065,12 @@ export const register: Register = (on, options) => {
         }
         // Events with a clip of their own play now; the rest gather into a burst.
         for (const e of events) {
+          // A gun fallen silent: the rest of its volley's clip, shots never fired, isn't heard.
+          if (e.kind === 'cease') {
+            sound.volley?.abort()
+            sound.volley = undefined
+            continue
+          }
           const p = eventPlay(e, sound.seed++, cfg.style, shownScene.strength)
           if (!p) {
             // (Somewhere since the last frame, at random: a frame's pops all at once would buzz at the frame rate.)
@@ -1071,10 +1083,10 @@ export const register: Register = (on, options) => {
           const at = Math.max(sound.clock, sound.nextOf.get(e.kind) ?? 0)
           if (at - sound.clock > 4 * SOUND_STAGGER_MS) continue
           sound.nextOf.set(e.kind, at + SOUND_STAGGER_MS)
-          if (at === sound.clock) play({ asset: p.asset }, p.gain)
+          if (at === sound.clock) play({ asset: p.asset }, p.gain, undefined, 0, p.volley)
           else {
             const gen = sound.gen
-            $.clock.after(at - sound.clock, () => current(gen) && play({ asset: p.asset }, p.gain))
+            $.clock.after(at - sound.clock, () => current(gen) && play({ asset: p.asset }, p.gain, undefined, 0, p.volley))
           }
         }
         mood.scene = cfg.style
@@ -1544,7 +1556,8 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => {
-    const rows = Math.min(MAX_ROWS, e.props.maxRows - 1)
+    const most = cfg.layout !== 'spine' && driver.isShown() && driver.dial().taller ? TALL_ROWS : MAX_ROWS
+    const rows = Math.min(most, e.props.maxRows - 1)
     const hidden = cfg.layout === 'spine' || e.props.hasSurvey || !driver.isShown() || rows < 2
     if (e.surface === 'desktop') {
       // No Raster here: the frame is one Svg, redrawn by the frame loop.

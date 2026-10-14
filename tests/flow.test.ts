@@ -1,4 +1,4 @@
-// REVISION: flow-v171-dry-adapter
+// REVISION: flow-v179-doom-volleys
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -16,13 +16,14 @@ import { Balloon, skyColor } from '../hooks/balloon'
 import { Falcon } from '../hooks/rocket'
 import { Colony } from '../hooks/colony'
 import { Train } from '../hooks/train'
+import { Doom } from '../hooks/doom'
 import { makeScene, nextStyle, SCENES, STYLES, styleNamed, type SceneName } from '../hooks/styles'
 import { finishSave, openSession, planSave, runScene, type SceneCtx } from '../hooks/register'
 import { coverage, frameSvg, gridPixels, SVG_LIMIT } from '../hooks/svg'
 import { Cells, isTall } from '../hooks/cells'
 import { SceneDriver } from '../hooks/scene'
 import { BED_EVERY_MS, BED_FADE_MS, BED_MIN_MS, BED_MS, BURST_MAX, CHIME_DELAY_MS, CHIME_QUIET_MS, MAX_PLAYS, MOODS, PLAYER_DRAIN_MS, PLAYER_LEAD_MS, type BedTake, bedGap, bedPlay, bedStep, burst, chimePlay, chimeStep, EVENTS, eventPlay, gather, LAYERS, newChimeState } from '../hooks/sound'
-import { DEFAULT_VOLUME, MAX_GAIN, master, VOLUME_DB, volumeGain } from '../hooks/sound'
+import { DEFAULT_VOLUME, leadFrames, MAX_GAIN, master, soundsAs, VOLUME_DB, volumeGain } from '../hooks/sound'
 import { BREATH_FRAMES, breath, easeWait, waitTone } from '../hooks/waiting'
 import { SOUND_FILES } from '../hooks/sound-files'
 import { PixelScene, type Dials, type Painter } from '../hooks/pixel-scene'
@@ -985,12 +986,12 @@ test('soundscapes: every scene has a bed for every mood, every clip it and the e
   const files = new Set(SOUND_FILES)
   const ambs = [{}, { roar: 1, vent: 1, wind: 1, space: 0, burner: 1, swell: 1, lip: 1 }, { roar: 1, space: 1 }, { wind: 0.5 }, { sea: 1 }]
   for (const scene of STYLES) {
-    // A scene without layers is silent (a new one, till it's given a soundscape): no moods either.
-    if (!LAYERS[scene]) {
-      expect(MOODS[scene]).toBeUndefined()
+    // A scene without layers is silent (a new one, till it's given a soundscape): no moods either. (doom3d sounds as doom.)
+    if (!LAYERS[soundsAs(scene)]) {
+      expect(MOODS[soundsAs(scene)]).toBeUndefined()
       continue
     }
-    expect(MOODS[scene]).toBeDefined()
+    expect(MOODS[soundsAs(scene)]).toBeDefined()
     let heard = 0
     for (let level = 0; level <= 10; level++)
       for (const amb of ambs)
@@ -1377,6 +1378,23 @@ test('the band draws its 5 rows on the terminal', async ($, on) => {
   expect(raster?.props.columns).toBe(60)
   expect(raster?.props.rows).toBe(5)
   await ui.unmount()
+})
+
+test('a scene with a taller view of its own (doom3d) gets a taller band, as far as the prompt leaves; back to 5 for the rest', async ($, on) => {
+  mock.clock(on)
+  mock.store(on)
+  engine(on)
+  await start($)
+  await flow($, 'doom3d')
+  const rowsWith = async (maxRows: number) => {
+    const ui = await $.ui.mount({ plugin: 'flow-scenes', surface: 'terminal', ...BAND, props: { ...BAND.props, maxRows } })
+    const rows = (await ui.find({ type: 'Raster', key: 'flow' }))?.props.rows
+    await ui.unmount()
+    return rows
+  }
+  expect([await rowsWith(40), await rowsWith(12)]).toEqual([14, 11])
+  await flow($, 'doom')
+  expect(await rowsWith(40)).toBe(5)
 })
 
 test('the band yields to other surfaces, surveys, and a one-row squeeze', async ($, on) => {
@@ -2929,6 +2947,168 @@ test("sessions: a wait is its own session's: the chime follows that session's so
   await ui.unmount()
 })
 
+test('doom: the level is how hard he goes at it: a pistol at a plod at 1, faster and with heavier guns up to a plasma rifle at a run at 10', () => {
+  for (const [columns, rows] of [[120, 5], [22, 40]] as const) {
+    const run = (level: number) => {
+      const d = makeScene('doom', 3) as Doom
+      d.strength = level
+      d.ensure(columns, rows)
+      for (let i = 0; i < 900; i++) d.step()
+      return d
+    }
+    const [calm, mid, busy] = [run(1), run(5), run(10)]
+    const at = `${columns}×${rows}`
+    expect([at, calm.weapon, mid.weapon, busy.weapon]).toEqual([at, 0, 1, 3])
+    expect([at, calm.distance < mid.distance && mid.distance < busy.distance]).toEqual([at, true])
+    expect([at, calm.shots > 0 && calm.shots < mid.shots && mid.shots < busy.shots]).toEqual([at, true])
+    // The level easing up, he changes guns on the way.
+    const d = run(1)
+    const guns = new Set<number>()
+    d.strength = 10
+    for (let i = 0; i < 400; i++) {
+      d.step()
+      guns.add(d.weapon)
+    }
+    expect([at, [...guns].sort()]).toEqual([at, [0, 1, 2, 3]])
+  }
+})
+
+test('doom: waiting on the person, he stops and holds his fire and the monsters slink away; answered, the fight goes on', () => {
+  for (const [columns, rows] of [[120, 5], [22, 40]] as const) {
+    const d = makeScene('doom', 4) as Doom
+    d.strength = 8
+    d.ensure(columns, rows)
+    for (let i = 0; i < 300; i++) d.step()
+    d.waiting = true
+    d.strength = WAIT_LEVEL
+    for (let i = 0; i < 120; i++) d.step()
+    const shots = d.shots
+    const where = d.distance
+    for (let i = 0; i < 200; i++) d.step()
+    const at = `${columns}×${rows}`
+    expect([at, d.speed, d.coming, d.shots - shots, d.distance - where]).toEqual([at, 0, 0, 0, 0])
+    d.waiting = false
+    d.strength = 6
+    for (let i = 0; i < 600; i++) d.step()
+    expect([at, d.shots > shots, d.distance > where]).toEqual([at, true, true])
+  }
+})
+
+/** His single shots' sounds, and each volley's (a fast gun's run of shots) with the frames between its shots. */
+const SHOTS = ['pistol', 'shotgun', 'chaingun', 'plasma']
+const VOLLEY_RATE: Record<string, number> = { rattle3: 3, rattle4: 4, rattle5: 5, bolts2: 2, bolts3: 3 }
+
+test('doom: heard as it happens: each gun its own shot (his sent ahead of its flash, so it lands with it; a fast gun a volley at a time, stopped when it falls silent), the fallen, his footsteps; none while he holds for the person', () => {
+  for (const [scene, columns, rows] of [['doom', 120, 5], ['doom', 22, 40], ['doom3d', 160, 14]] as const) {
+    const heard = (level: number) => {
+      const d = makeScene(scene, 3) as Doom
+      d.strength = level
+      d.ensure(columns, rows)
+      const kinds = new Set<string>()
+      // Each of his shots: the frames between its sound going out and its flash.
+      const early: number[] = []
+      let sent = -1
+      let last = -99
+      // The frames his shots are heard at (each volley's, as its clip plays them, to a cease), and fired at.
+      const heardAt: number[] = []
+      const firedAt: number[] = []
+      let ceases = 0
+      for (let i = 0; i < 900; i++) {
+        const shots = d.shots
+        d.step()
+        for (const e of d.sounds) {
+          kinds.add(e.kind)
+          if (e.v === 1 && (SHOTS.includes(e.kind) || VOLLEY_RATE[e.kind])) sent = i
+          const r = VOLLEY_RATE[e.kind]
+          const lead = leadFrames(d.strength, 'normal')
+          if (r) for (let k = 0; k < Math.round(1400 / (r * 70)); k++) heardAt.push(i + lead + k * r)
+          if (e.kind === 'cease') {
+            ceases++
+            while (heardAt.length && heardAt[heardAt.length - 1]! > i) heardAt.pop()
+          }
+        }
+        d.sounds.length = 0
+        if (d.shots > shots) {
+          // (The first shot of a run: a volley going on was sent as the last ran out, a run's length ahead.)
+          if (sent >= 0 && i - last > 6) early.push(i - sent)
+          sent = -1
+          last = i
+          firedAt.push(i)
+        }
+      }
+      return { kinds, early, heardAt, firedAt, ceases, d }
+    }
+    const at = `${scene} ${columns}×${rows}`
+    const [calm, mid, fast, busy] = [heard(1), heard(5), heard(7), heard(10)]
+    expect([at, calm.kinds.has('pistol'), mid.kinds.has('shotgun'), [...fast.kinds].some(k => k.startsWith('rattle')), [...busy.kinds].some(k => k.startsWith('bolts'))]).toEqual([at, true, true, true, true])
+    // (Footsteps while it's calm; in a busy fight the guns have the player's places.)
+    expect([at, calm.kinds.has('step'), busy.kinds.has('step'), busy.kinds.has('splat')]).toEqual([at, true, false, true])
+    // A pistol's or a shotgun's shot is heard the player's start-up time ahead (to the frame), the first of a fight
+    // too (he takes aim that long); a faster gun's as soon as the last has fired.
+    for (const { early, d } of [calm, mid]) {
+      const lead = Math.ceil(leadFrames(d.strength, 'normal') - 1e-9)
+      expect([at, early.length > 0, early.every(f => Math.abs(f - lead) <= 1)]).toEqual([at, true, true])
+    }
+    // A fast gun's volley lands with the first shot of a run too (nearly always: a run broken off and taken up
+    // again within a frame or two may not). Its shots are heard with his, to the frame: nearly every shot fired
+    // is heard, and a shot heard that he never fired is the one a cease stops (just begun) or very rare.
+    for (const { early, heardAt, firedAt, ceases, d } of [fast, busy]) {
+      const lead = Math.ceil(leadFrames(d.strength, 'normal') - 1e-9)
+      expect([at, early.length > 0, early.filter(f => Math.abs(f - lead) <= 1).length >= 0.8 * early.length]).toEqual([at, true, true])
+      const near = (xs: number[], f: number) => xs.some(x => Math.abs(x - f) <= 1)
+      const heard = firedAt.filter(f => f < 880 && near(heardAt, f)).length / firedAt.filter(f => f < 880).length
+      const phantoms = heardAt.filter(f => f < 880 && !near(firedAt, f)).length
+      expect([at, heard >= 0.9, phantoms <= ceases + 0.05 * heardAt.length]).toEqual([at, true, true])
+    }
+    // Holding for the person: nothing fired, so nothing of his heard.
+    const d = busy.d
+    d.waiting = true
+    d.strength = WAIT_LEVEL
+    for (let i = 0; i < 120; i++) d.step()
+    d.sounds.length = 0
+    for (let i = 0; i < 200; i++) d.step()
+    expect([at, d.sounds.filter(e => e.v === 1 && (SHOTS.includes(e.kind) || VOLLEY_RATE[e.kind])).length]).toEqual([at, 0])
+  }
+})
+
+test('earthrise: heard as it happens: a streak for each shooting star (more with the work), a swell for a comet; none while it holds', () => {
+  for (const [columns, rows] of [[120, 5], [22, 40]] as const) {
+    const count = (level: number, waiting = false) => {
+      const e = makeScene('earthrise', 5)
+      e.strength = level
+      e.waiting = waiting
+      e.ensure(columns, rows)
+      const kinds: Record<string, number> = {}
+      for (let i = 0; i < 1500; i++) {
+        e.step()
+        for (const s of e.sounds!) kinds[s.kind] = (kinds[s.kind] ?? 0) + 1
+        e.sounds!.length = 0
+      }
+      return kinds
+    }
+    const at = `${columns}×${rows}`
+    const [calm, busy, held] = [count(1), count(10), count(10, true)]
+    expect([at, (calm.streak ?? 0) < (busy.streak ?? 0), (busy.comet ?? 0) > 0]).toEqual([at, true, true])
+    expect([at, (held.streak ?? 0) + (held.comet ?? 0) <= 2]).toEqual([at, true])
+  }
+})
+
+test('doom3d: the same fight through his own eyes, in a band of any height, and it asks for a taller one', () => {
+  expect([(makeScene('doom3d', 1) as Doom).taller, (makeScene('doom', 1) as Doom).taller]).toEqual([true, false])
+  for (const [columns, rows] of [[160, 14], [120, 5], [22, 40]] as const) {
+    const run = (level: number) => {
+      const d = makeScene('doom3d', 3) as Doom
+      d.strength = level
+      d.ensure(columns, rows)
+      for (let i = 0; i < 900; i++) d.step()
+      return d
+    }
+    const [calm, busy] = [run(1), run(10)]
+    const at = `${columns}×${rows}`
+    expect([at, calm.weapon, busy.weapon, calm.distance < busy.distance, calm.shots < busy.shots]).toEqual([at, 0, 3, true, true])
+  }
+})
+
 test('train: waiting on the person, it draws up at a red signal or a platform and stands, its lamps shining through the sepia; answered, the horn and away', () => {
   for (const [columns, rows] of [[120, 5], [22, 60]] as const)
     for (const seed of [3, 8]) {
@@ -3503,7 +3683,7 @@ test('crew: only places the layout can show are given; less room sends the rest 
 })
 
 /** The scenes that give each subagent a companion of its own. */
-const CREW_SCENES = ['fire', 'surf', 'ski', 'balloon', 'falcon', 'starship', 'engine', 'train', 'avalon'] as const
+const CREW_SCENES = ['fire', 'surf', 'ski', 'balloon', 'falcon', 'starship', 'engine', 'train', 'avalon', 'doom', 'doom3d'] as const
 
 test('companion scenes: each agent gets one that arrives, is marked where it is, and leaves when done, in the band and the spine', () => {
   for (const style of CREW_SCENES) {
