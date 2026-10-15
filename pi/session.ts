@@ -6,6 +6,8 @@
 // entries (through `entries`). An older pi without session entries shares
 // one set in flow.json, as before. flow.json is read afresh before anything
 // compares with it (`refresh`): another pi session may have saved since.
+// opencode keeps its settings the same way (opencode/tui.ts): its storage
+// stands in for flow.json, and each session's record there for its entries.
 // Pure (no Node imports).
 
 import { differences, type Own, pinShown, storedOwn, withOwn } from '../hooks/sessions'

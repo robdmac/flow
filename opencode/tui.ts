@@ -25,11 +25,11 @@
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { Activity, FRAME_MS } from '../hooks/activity'
+import { Activity } from '../hooks/activity'
 import { agentLine } from '../hooks/agents'
-import { staleSessions } from '../hooks/sessions'
-import { firstTips, type FlowConfig, type Host, hostReplyText, NO_PLAYER, parseFlowArgs, readConfig, replyTo, storedValue, tipChance, type Tips, untitled, versionNote } from '../hooks/settings'
-import { SceneDriver } from '../hooks/scene'
+import { staleSessions, storedOwn } from '../hooks/sessions'
+import { clockAt, firstTips, type FlowConfig, type Host, hostReplyText, NO_PLAYER, parseFlowArgs, readConfig, replyTo, tipChance, type Tips, untitled, versionNote } from '../hooks/settings'
+import { FRAME_MS, SceneDriver } from '../hooks/scene'
 import { Soundscape } from '../hooks/soundscape'
 import { type Scene, SCENES } from '../hooks/styles'
 import type { Cells } from '../hooks/cells'
@@ -83,7 +83,7 @@ function setup(ctx: OcContext): () => void {
     load: async () => readConfig({ ...ctx.options, ...kept.defaults }),
     save: changes =>
       keep(d => {
-        for (const [k, v] of Object.entries(changes) as [keyof FlowConfig, FlowConfig[keyof FlowConfig]][]) d.defaults[k] = storedValue(k, v)
+        Object.assign(d.defaults, storedOwn(changes))
       }),
   })
   /** A session's own settings, kept in the store under its id (as pi keeps them in the session itself). */
@@ -249,8 +249,7 @@ function setup(ctx: OcContext): () => void {
     sinceClock += elapsed
     if (sinceClock >= CLOCK_EVERY_MS) {
       sinceClock = 0
-      const d = new Date()
-      driver.clock = { hour: d.getHours(), minute: d.getMinutes() }
+      driver.clock = clockAt(Date.now())
     }
     sinceDefaults += elapsed
     if (sinceDefaults >= DEFAULTS_EVERY_MS && opened) {

@@ -48,7 +48,8 @@ import { fileURLToPath } from 'node:url'
 import { Activity } from '../hooks/activity'
 import { FRAME_MS, SceneDriver } from '../hooks/scene'
 import { pickBlurb } from '../hooks/picker'
-import { firstTips, type Host, hostReplyText, NO_PLAYER, parseFlowArgs, readConfig, replyTo, storedValue, tipChance, type FlowConfig, untitled, versionNote } from '../hooks/settings'
+import { storedOwn } from '../hooks/sessions'
+import { clockAt, firstTips, type Host, hostReplyText, NO_PLAYER, parseFlowArgs, readConfig, replyTo, tipChance, type FlowConfig, untitled, versionNote } from '../hooks/settings'
 import { Soundscape } from '../hooks/soundscape'
 import { SCENES, type Scene } from '../hooks/styles'
 import { afplayPlayer } from '../node/player'
@@ -137,9 +138,7 @@ async function keepStored(changes: Record<string, unknown>): Promise<void> {
 
 /** Write just these settings into flow.json, as they're stored (keepStored). */
 async function saveSettings(changes: Partial<FlowConfig>): Promise<void> {
-  const stored: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(changes) as [keyof FlowConfig, FlowConfig[keyof FlowConfig]][]) stored[k] = storedValue(k, v)
-  await keepStored(stored)
+  await keepStored(storedOwn(changes))
 }
 
 /**
@@ -337,8 +336,7 @@ export default function flow(pi: PiApi) {
 
   /** Read the local clock (pi runs on this machine, so its time is the person's). */
   const readClock = () => {
-    const d = new Date()
-    driver.clock = { hour: d.getHours(), minute: d.getMinutes() }
+    driver.clock = clockAt(Date.now())
   }
 
   /** Point the current scene at this frame's dials and size. */

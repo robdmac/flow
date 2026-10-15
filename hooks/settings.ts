@@ -45,6 +45,12 @@ export type FlowConfig = {
 /** The local time of day, as the adapter last read it. */
 export type Clock = { hour: number; minute: number }
 
+/** The local time of day at `ms` (the host runs on the person's machine, so its time is theirs). */
+export function clockAt(ms: number): Clock {
+  const d = new Date(ms)
+  return { hour: d.getHours(), minute: d.getMinutes() }
+}
+
 const DEFAULT_LEVEL = 8
 /** By the clock, night runs from this hour... */
 const NIGHT_FROM = 19
