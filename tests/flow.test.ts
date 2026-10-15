@@ -1,4 +1,4 @@
-// REVISION: flow-v181-tip-chance
+// REVISION: flow-v182-slow-tests
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -36,6 +36,9 @@ import { rampAt, rampStops, retain } from '../hooks/pixels'
 import { freshSeed } from '../hooks/cells'
 import { type Player, Soundscape } from '../hooks/soundscape'
 import { effortOf as ocEffortOf, linesWritten as ocLinesWritten, OpenCodeWork } from '../opencode/mapping'
+
+/** A test that walks every scene (each at several sizes or levels): a shared CI runner can take several times a laptop's 5 s default. */
+const SLOW_MS = 30_000
 
 const BAND = {
   component: 'AbovePrompt',
@@ -951,7 +954,7 @@ test('soundscapes: a bed take the player refuses for good is replaced at once, n
   await ui.unmount()
 })
 
-test('soundscapes: a scene holds only a few events for the adapter, so one that never takes them (pi) stays bounded', () => {
+test('soundscapes: a scene holds only a few events for the adapter, so one that never takes them (pi) stays bounded', { timeoutMs: SLOW_MS }, () => {
   for (const style of STYLES) {
     const f = makeScene(style, 2)
     f.ensure(100, 5)
@@ -1467,7 +1470,7 @@ test('on desktop the band is one Svg sized to its cells', async ($, on) => {
   await ui.unmount()
 })
 
-test('desktop: every scene, in every size, fits the Svg limit and decodes to its grid', async () => {
+test('desktop: every scene, in every size, fits the Svg limit and decodes to its grid', { timeoutMs: SLOW_MS }, async () => {
   for (const style of STYLES) {
     for (const [columns, rows] of [[250, 5], [41, 45], [40, 120]] as const) {
       const s = makeScene(style, 7)
@@ -2689,7 +2692,7 @@ function tone(g: Cells): { warm: number; light: number } {
   return { warm: n ? warm / n : 0, light: n ? light / n : 0 }
 }
 
-test('every scene shows waiting on the person, by day and night, in the band and the spine: warm and breathing, unlike smoke or blue', () => {
+test('every scene shows waiting on the person, by day and night, in the band and the spine: warm and breathing, unlike smoke or blue', { timeoutMs: SLOW_MS }, () => {
   for (const def of SCENES)
     for (const [columns, rows] of [
       [90, 5],
@@ -3073,7 +3076,7 @@ test('doom: heard as it happens: each gun its own shot (his sent ahead of its fl
   }
 })
 
-test('earthrise: heard as it happens: a streak for each shooting star (more with the work), a swell for a comet; none while it holds', () => {
+test('earthrise: heard as it happens: a streak for each shooting star (more with the work), a swell for a comet; none while it holds', { timeoutMs: SLOW_MS }, () => {
   for (const [columns, rows] of [[120, 5], [22, 40]] as const) {
     const count = (level: number, waiting = false) => {
       const e = makeScene('earthrise', 5)
