@@ -1,4 +1,4 @@
-// REVISION: flow-v188-dry
+// REVISION: flow-v190-same-frame
 //
 // Flow for pi (badlogic/pi-mono), by Rob Macrae: the same ambient
 // scenes as the Claude Code mod, in a widget above pi's editor. pi's events
@@ -403,7 +403,8 @@ export default function flow(pi: PiApi) {
     if (shown && tui) {
       sincePicture += elapsed
       const next = nextLines(f)
-      if (next) {
+      // (A frame like the last, as a calm balloon's often is, asks pi for no render of its own.)
+      if (next && (next.length !== lines.length || next.some((l, i) => l !== lines[i]))) {
         lines = next
         tui.requestRender()
       }
