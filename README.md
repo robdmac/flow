@@ -171,7 +171,7 @@ The background is long takes that blend one into the next at random moments, so 
 
 When Claude starts waiting on you (a permission, its question, a plan to approve), a soft chime: two struck tubes rising a fourth, about as loud as a scene at 6. Once a wait, and not for one right behind another (within 20 s): you're there already. It's part of the soundscape, so it follows the session's sound setting: `/flow sound` turns it on and off with the rest. For an alert without the ambience, there's Claude Code's own notification setting in `/config`.
 
-It plays only while the scene is on screen, and stops with the session. Claude Code plays the clips with `afplay`, and in opencode Flow runs `afplay` itself, so it's macOS only; elsewhere the setting does nothing. It's set per session like everything else, so you can have it on in one session and not another, or quieter in one; several sessions with it on each play their own.
+It plays only while the scene is on screen, and stops with the session. Claude Code plays the clips with `afplay`, and in opencode and pi Flow runs `afplay` itself, so it's macOS only; elsewhere the setting does nothing. It's set per session like everything else, so you can have it on in one session and not another, or quieter in one; several sessions with it on each play their own.
 
 ## Turning it off
 
@@ -179,7 +179,7 @@ Run `/flow off`, or `/flow idle dark` to stay in auto mode but show nothing whil
 
 ## pi
 
-The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's editor, drawn as 24-bit ANSI lines. It shares the scenes, the activity model and the `/flow` command with the Claude Code version. pi has no side panes, so there is no spine there, and no built-in subagents (so no companions). pi's events drive it:
+The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's editor, drawn as 24-bit ANSI lines. It shares the scenes, the activity model, the soundscapes and the `/flow` command with the Claude Code version. pi has no side panes, so there is no spine there, and no built-in subagents (so no companions). pi's events drive it:
 
 | pi event | The scene |
 |---|---|
@@ -195,7 +195,7 @@ In a terminal that draws images (Ghostty, kitty, WezTerm, Warp; not under tmux),
 
 `doom3d` takes the same height in characters (`"rows"` sets it too), for the view through the marine's eyes. In Claude Code its band is as tall as the prompt leaves room for, up to 14 rows.
 
-pi tells an extension nothing of a wait on you, so there the scenes never show one. Nor has it a player, so the scenes are silent there: `/flow sound` says so.
+pi tells an extension nothing of a wait on you, so there the scenes never show one (nor chime). It has no player for an extension's sounds either, so for the soundscape Flow runs `afplay` (macOS) in the background itself, as in opencode, once a turn has run or `/flow` has been used: `/flow sound` turns it on. The one-time tips are the same as in Claude Code and opencode, kept in `flow.json`.
 
 As in Claude Code, each session keeps its own settings, kept in the session itself (an entry the model never sees), so resuming or forking it brings them back. `~/.pi/agent/flow.json` holds the defaults new sessions start with; `/flow save` writes it. To try it without installing: `pi --extension ./pi/index.ts`.
 
@@ -220,7 +220,7 @@ Each session keeps its own settings, kept in Flow's own opencode storage under t
 
 **Privacy:** Flow collects nothing. It has no servers, sends no data anywhere, and keeps what little it stores (below) on your machine: in Claude Code's or opencode's own storage for the plugin, or in pi under `~/.pi/agent/flow.json` and `~/.cache/flow`.
 
-**Network:** none. Flow sends nothing anywhere and contacts no hosts. Everything it draws and plays is computed locally from the plugin's own files. The one call that takes anything out of the plugin is `$.audio.play`, which hands one of the plugin's own clips from `sounds/` (and a volume) to the local audio player, `afplay`: nothing Flow reads (settings, the conversation, your files) goes into it, and it reaches no address. In opencode, which has no such call, Flow starts `/usr/bin/afplay` itself for each clip (macOS only, and only with the sound on): its arguments are a volume and the path of one of the plugin's own clips, or of a short sound it made (written to a file of its own in the system's temporary folder, and deleted once played). It runs nothing else.
+**Network:** none. Flow sends nothing anywhere and contacts no hosts. Everything it draws and plays is computed locally from the plugin's own files. The one call that takes anything out of the plugin is `$.audio.play`, which hands one of the plugin's own clips from `sounds/` (and a volume) to the local audio player, `afplay`: nothing Flow reads (settings, the conversation, your files) goes into it, and it reaches no address. In opencode and pi, which have no such call, Flow starts `/usr/bin/afplay` itself for each clip (macOS only, and only with the sound on): its arguments are a volume and the path of one of the plugin's own clips, or of a short sound it made (written to a file of its own in the system's temporary folder, and deleted once played). It runs nothing else.
 
 **Your settings:** Flow writes its own `/config` rows (the `flow-scenes` plugin's options: scene, mode, sound and the rest) only when you run `/flow save`, which writes the settings your session shows as the defaults for new sessions. It reads them (`$.config.list()`) to start each session on your defaults.
 
@@ -228,7 +228,7 @@ It writes no other settings, no files and no environment variables. (`CLAUDE_COD
 
 **What it keeps:** in Claude Code's per-plugin store, each session's own `/flow` settings (the 100 most recently used sessions, none unused for 60 days) and which one-time tips you've seen. In the session's own plugin state, the balloon's altitude and whether someone has been at the session. In opencode, each session's own `/flow` settings (the 100 most recently used), the defaults `/flow save` keeps and which one-time tips you've seen, in opencode's storage for the plugin. In pi, a session's settings go in the session as an entry the model never sees, and `/flow save` writes `~/.pi/agent/flow.json`.
 
-**Sound:** off unless you turn it on. Claude Code plays the plugin's own clips (`sounds/`) through `afplay`, only after someone has typed or run a turn in the session; in opencode, Flow plays them through `afplay` itself, once a turn has run or `/flow` has been used in the session on screen.
+**Sound:** off unless you turn it on. Claude Code plays the plugin's own clips (`sounds/`) through `afplay`, only after someone has typed or run a turn in the session; in opencode and pi, Flow plays them through `afplay` itself, once a turn has run or `/flow` has been used (in opencode, in the session on screen).
 
 **What its hooks see, and what they decide:** nothing. Every hook passes the event on unchanged (the one Flow answers is its own `/flow` command); Flow never blocks, allows, rewrites or answers a tool call, a permission, a prompt or a setting. It only watches, to set how busy the scene looks:
 

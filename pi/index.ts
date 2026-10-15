@@ -1,4 +1,4 @@
-// REVISION: flow-v176-built-against
+// REVISION: flow-v177-pi-sound
 //
 // Flow for pi (badlogic/pi-mono), by Rob Macrae: the same ambient
 // scenes as the Claude Code mod, in a widget above pi's editor. pi's events
@@ -25,7 +25,11 @@
 // file, as before (session.ts). pi has no built-in subagents, so they never add to the scene here,
 // and no side panes, so there is no spine, and `/flow pick` is a plain list (pi's own select)
 // rather than thumbnails, its choice going the way `/flow <scene>` goes. Nor has it a player, so
-// there is no soundscape: `/flow sound` says so, and the help and the status leave it out.
+// the soundscape (hooks/soundscape.ts, as in Claude Code and opencode) plays through afplay run in
+// the background (node/player.ts, macOS; elsewhere `/flow sound` says there's none), once a turn has
+// run or `/flow` has been used. pi tells an extension nothing of a wait on the person, so no chime.
+// The one-time tips are Claude Code's and opencode's (the other scenes, then the sound), as a session
+// starts or under a `/flow` reply, kept in flow.json (`tips`).
 //
 // In a terminal that draws kitty images (Ghostty, kitty, WezTerm, Warp), a
 // scene that can draw itself at real pixels (earthrise) shows as a picture
@@ -39,12 +43,15 @@
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { Activity } from '../hooks/activity'
 import { FRAME_MS, SceneDriver } from '../hooks/scene'
 import { pickBlurb } from '../hooks/picker'
-import { type Host, parseFlowArgs, readConfig, replyTo, storedValue, type FlowConfig, versionNote } from '../hooks/settings'
+import { firstTips, type Host, parseFlowArgs, readConfig, replyTo, storedValue, tipChance, type FlowConfig, versionNote } from '../hooks/settings'
+import { Soundscape } from '../hooks/soundscape'
 import { SCENES, type Scene } from '../hooks/styles'
+import { afplayPlayer } from '../node/player'
 import { gridToAnsi } from './ansi'
 import { cellPixels, kittyImages, kittyLines, pictureId, pictureSize } from './picture'
 import { COMMAND_TOOLS, effortOf, FLOW_ENTRY, piLinesWritten, READ_TOOLS } from './mapping'
@@ -57,8 +64,8 @@ const CONTEXT_EVERY_MS = 5000
 /** How often flow.json is read afresh while the scene runs: another session's save shows here as this one's own. */
 const DEFAULTS_EVERY_MS = 30_000
 const SETTINGS = join(homedir(), '.pi', 'agent', 'flow.json')
-/** What pi has of what `/flow` speaks of: no side panes, no player. */
-const PI: Host = { panes: false, sound: false }
+/** The plugin's folder: its sounds/ are played from there. */
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 /** Where the settings lived before, newest first: as vista, then as ascii-fire. */
 const OLD_SETTINGS = [join(homedir(), '.pi', 'agent', 'vista.json'), join(homedir(), '.pi', 'agent', 'ascii-fire.json')]
 /** A picture's rows (and a taller scene's, `Scene.taller`) unless flow.json says (`rows`), and at most this share of the terminal's. */
@@ -98,38 +105,63 @@ async function loadPicturePrefs(): Promise<{ pictures: boolean; rows: number }> 
   return { pictures: raw.pictures !== false, rows: Math.max(3, Math.min(60, rows)) }
 }
 
+/** The defaults new sessions start with: as kept (readStored), else Flow's own. */
 async function loadSettings(): Promise<FlowConfig> {
-  for (const file of [SETTINGS, ...OLD_SETTINGS]) {
-    try {
-      return readConfig(JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>)
-    } catch {
-      // Not there (or unreadable): try the next, then the defaults.
-    }
-  }
-  return readConfig(undefined)
+  return readConfig(await readStored())
 }
 
 /**
- * Write just these changes into the settings file, over what is there now:
- * another pi session's changes to other settings survive.
+ * What's kept: flow.json, or before the first write since a rename, an old file (vista.json,
+ * ascii-fire.json), so a write never drops what that held. None kept yet (or unreadable): none.
  */
-async function saveSettings(changes: Partial<FlowConfig>): Promise<void> {
-  // The settings so far: flow.json, or before the first save since a
-  // rename, an old file (else its settings would be dropped).
-  let stored: Record<string, unknown> = {}
+async function readStored(): Promise<Record<string, unknown> | undefined> {
   for (const file of [SETTINGS, ...OLD_SETTINGS]) {
     try {
-      stored = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>
-      break
+      return JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>
     } catch {
-      // Not there (or unreadable): try the next, else start afresh.
+      // Not there (or unreadable): try the next.
     }
   }
-  for (const [k, v] of Object.entries(changes) as [keyof FlowConfig, FlowConfig[keyof FlowConfig]][]) {
-    stored[k] = storedValue(k, v)
-  }
+  return undefined
+}
+
+/**
+ * Write these keys into flow.json, over what is kept now (readStored): another pi session's changes to
+ * other keys survive, and an old file's settings carry over into flow.json with the first write.
+ */
+async function keepStored(changes: Record<string, unknown>): Promise<void> {
+  const stored = { ...(await readStored()), ...changes }
   await mkdir(dirname(SETTINGS), { recursive: true })
   await writeFile(SETTINGS, JSON.stringify(stored, null, 2) + '\n')
+}
+
+/** Write just these settings into flow.json, as they're stored (keepStored). */
+async function saveSettings(changes: Partial<FlowConfig>): Promise<void> {
+  const stored: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(changes) as [keyof FlowConfig, FlowConfig[keyof FlowConfig]][]) stored[k] = storedValue(k, v)
+  await keepStored(stored)
+}
+
+/**
+ * The one-time tips (settings.ts), the person's, kept in flow.json (`tips`, beside its own keys). Begun
+ * where none are kept yet, before the session's `/flow` can keep anything: someone who had Flow in pi before
+ * (settings kept already) is taken as told, someone new as told nothing (firstTips).
+ */
+async function beginTips(defaults: FlowConfig): Promise<void> {
+  const stored = await readStored()
+  if (stored?.tips !== undefined) return
+  await keepStored({ tips: firstTips(stored !== undefined, defaults) })
+}
+
+/** A chance for a tip (tipChance): the tip, if one's due, without its `flow: ` (pi's notice says whose). None on any failure. */
+async function takeTip(cfg: FlowConfig): Promise<string | undefined> {
+  try {
+    const { tip, tips, changed } = tipChance((await readStored())?.tips, cfg)
+    if (changed) await keepStored({ tips })
+    return tip?.replace(/^flow: /, '')
+  } catch {
+    return undefined
+  }
 }
 
 /** pi's version, from its own package (named one way since 1.1, another before): none if it can't be read. */
@@ -153,16 +185,9 @@ async function versionWarning(): Promise<string | undefined> {
   const version = await piVersion()
   const note = versionNote('pi', version)
   if (!note) return undefined
-  let stored: Record<string, unknown> = {}
+  if ((await readStored())?.warned === version) return undefined
   try {
-    stored = JSON.parse(await readFile(SETTINGS, 'utf8')) as Record<string, unknown>
-  } catch {
-    // None yet: one starts with the note.
-  }
-  if (stored.warned === version) return undefined
-  try {
-    await mkdir(dirname(SETTINGS), { recursive: true })
-    await writeFile(SETTINGS, JSON.stringify({ ...stored, warned: version }, null, 2) + '\n')
+    await keepStored({ warned: version })
   } catch {
     // Unkept: said again next time.
   }
@@ -173,6 +198,11 @@ export default function flow(pi: PiApi) {
   const activity = new Activity()
   const driver = new SceneDriver(readConfig(undefined), activity)
   const cfg = driver.cfg
+  /** The soundscape, played by afplay (macOS); none elsewhere. */
+  const player = afplayPlayer(ROOT)
+  const sound = new Soundscape(cfg, player)
+  /** What pi has of what `/flow` speaks of: no side panes; a player where afplay is. */
+  const PI: Host = { panes: false, sound: player !== undefined }
   /** The defaults (flow.json) and this session's own settings over them. */
   const settings = new PiSettings(cfg, { load: loadSettings, save: saveSettings })
 
@@ -368,10 +398,11 @@ export default function flow(pi: PiApi) {
       sync(ctx)
     }
     const f = dial()
-    if (isMounted && width > 0 && tui) {
-      f.step()
-      // pi has no player: a scene's events (for Claude Code's soundscape) are taken and dropped each frame.
-      if (f.sounds) f.sounds.length = 0
+    const shown = isMounted && width > 0 && tui !== undefined
+    if (shown) f.step()
+    // The soundscape: heard while the scene's on screen (its events taken each frame, heard or not).
+    sound.step(elapsed, { heard: shown, shown: shown ? f : undefined, scenes: [f], waiting: false, tint: driver.tint(), night: driver.isNight() })
+    if (shown && tui) {
       sincePicture += elapsed
       const next = nextLines(f)
       if (next) {
@@ -404,6 +435,10 @@ export default function flow(pi: PiApi) {
     isMounted = false
     sync(ctx)
     frame(FRAME_MS)
+    // A session starting is a chance for a one-time tip (the other scenes, then the sound).
+    await beginTips(settings.defaults).catch(() => {})
+    const tip = await takeTip(cfg)
+    if (tip) ctx.ui.notify(say(tip), 'info')
     // On a pi older than Flow is built against: said once for that version (it runs all the same).
     const warning = await versionWarning()
     if (warning) ctx.ui.notify(warning, 'warning')
@@ -420,12 +455,17 @@ export default function flow(pi: PiApi) {
 
   pi.on('session_shutdown', (_e, ctx) => {
     stop()
+    sound.stop()
     if (isMounted && ctx.hasUI) ctx.ui.setWidget(KEY, undefined)
     isMounted = false
     ctxRef = undefined
   })
 
-  pi.on('agent_start', () => activity.turnStarted())
+  pi.on('agent_start', () => {
+    activity.turnStarted()
+    // A turn: someone's there, so the soundscape may play.
+    sound.present = true
+  })
   pi.on('agent_end', () => activity.turnEnded())
   pi.on('turn_start', (_e, ctx) => activity.modelStep(effortOf(ctx.thinkingLevel)))
 
@@ -461,7 +501,10 @@ export default function flow(pi: PiApi) {
   }
 
   const handler = async (args: string, ctx: PiContext) => {
+    sound.present = true
     let cmd = parseFlowArgs(args)
+    // (The tips begun before this `/flow` keeps anything: a first `/flow save` isn't someone who had Flow before.)
+    await beginTips(settings.defaults).catch(() => {})
     readClock()
     const entries = entriesOf(ctx)
     // flow.json as it is now: what follows compares with it.
@@ -490,8 +533,8 @@ export default function flow(pi: PiApi) {
       ctx.ui.notify('flow: pi has no side panes, so the scene stays in the band above the editor', 'warning')
       return
     }
-    if (cmd.kind === 'sound') {
-      ctx.ui.notify('flow: pi has no player for the soundscape, so the scenes are silent here', 'warning')
+    if (cmd.kind === 'sound' && !player) {
+      ctx.ui.notify('flow: the soundscapes play through afplay, which only macOS has', 'warning')
       return
     }
     const reply = await replyTo(cmd, {
@@ -522,9 +565,14 @@ export default function flow(pi: PiApi) {
         return note
       },
     })
+    // A one-time tip goes under the reply, as in Claude Code and opencode.
+    const tip = await takeTip(cfg)
     // (pi shows a reply as it is: no `!` before what was wrong.)
-    ctx.ui.notify(say(cmd.kind === 'error' ? reply.text.replace(/^! /, '') : reply.text), reply.level)
+    ctx.ui.notify(say((cmd.kind === 'error' ? reply.text.replace(/^! /, '') : reply.text) + (tip ? `\n\n${tip}` : '')), reply.level)
   }
+  // pi quitting: the clips playing stop with it (else each would play out, up to a bed's 14 s).
+  process.once('exit', () => sound.stop())
+
   pi.registerCommand('flow', {
     description:
       'Ambient scenes above the editor: /flow [<scene> | pick | next | day | night | clock | auto | 1-10 | off | save | reset | help]',
