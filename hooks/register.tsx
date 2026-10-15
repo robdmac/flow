@@ -1,4 +1,4 @@
-// REVISION: flow-v179-doom-volleys
+// REVISION: flow-v182-built-against
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -63,9 +63,8 @@ import {
   type FlowCommand,
   type FlowConfig,
   type FlowLayout,
-  nextTip,
-  noteTips,
-  readTips,
+  tipChance,
+  versionNote,
   staleRows,
   type StoredRow,
 } from './settings'
@@ -85,7 +84,8 @@ import {
 } from './sessions'
 import { SCENES, type SceneName } from './styles'
 import { frameSvg } from './svg'
-import { type BedTake, bedFailed, bedStep, burst, chimePlay, chimeStep, gather, MAX_PLAYS, newChimeState, unit, eventPlay, master, type SoundEvent, type SoundMood, volumeGain } from './sound'
+import { MAX_PLAYS } from './sound'
+import { Soundscape } from './soundscape'
 import {
   hiddenNote,
   hotkeyFor,
@@ -129,14 +129,6 @@ const MAX_ROWS = 5
 const TALL_ROWS = 14
 /** A desktop site redraws at most 10 times a second (`$.ui.invalidate`'s limit there). */
 const DESKTOP_MS = 100
-/**
- * Small events are gathered this long (ms) and played together, each at its
- * moment: each clip holds one of the player's few plays for its length and
- * almost a second more (afplay starting and draining), so not much shorter.
- */
-const SOUND_BURST_MS = 1000
-/** The nearest two events of a kind with clips play (nearer, the ear hears one). */
-const SOUND_STAGGER_MS = 120
 /** A desktop site that hasn't rendered for this many ticks (about 3 s) is gone. */
 const DESKTOP_STALE_TICKS = 45
 /** A desktop cell in CSS pixels (its text's column and line), to size the frame's image. */
@@ -582,17 +574,33 @@ async function seedTips($: EngineInterface, usedBefore: boolean, settings: FlowC
 }
 
 /**
- * A chance for a one-time tip (see nextTip), the store keeping which have been
- * given: the tip, if one's due. `noteOnly`: no chance (no prompt to toast
- * over), but what's on is noted all the same (see noteTips): the sound turned
- * on in /config in such a session, and off again later, still counts as tried.
+ * A chance for a one-time tip (see tipChance), the store keeping which have been given: the tip, if one's due.
+ * `noteOnly`: no chance (no prompt to toast over), but what's on is noted all the same.
  */
 async function takeTip($: EngineInterface, cfg: FlowConfig, noteOnly = false): Promise<string | undefined> {
   try {
-    const before = readTips(await $.store.get(TIPS))
-    const { tip, tips } = noteOnly ? { tip: undefined, tips: noteTips(before, cfg) } : nextTip(before, cfg)
-    if (JSON.stringify(tips) !== JSON.stringify(before)) await $.store.set(TIPS, tips)
+    const { tip, tips, changed } = tipChance(await $.store.get(TIPS), cfg, noteOnly)
+    if (changed) await $.store.set(TIPS, tips)
     return tip
+  } catch {
+    return undefined
+  }
+}
+
+const WARNED = 'warned'
+
+/**
+ * On a Claude Code older than Flow is built against (see versionNote), the note to give: once for that
+ * version, the store keeping which it was said for. None where it can't tell (a Claude Code too old to say
+ * its version), or on any failure: it never stands in the way.
+ */
+async function versionWarning($: EngineInterface): Promise<string | undefined> {
+  try {
+    const { version, base } = await $.session.version()
+    const note = versionNote('Claude Code', base ?? version)
+    if (!note || (await $.store.get(WARNED)) === version) return undefined
+    await $.store.set(WARNED, version)
+    return note
   } catch {
     return undefined
   }
@@ -731,61 +739,12 @@ export const register: Register = (on, options) => {
   /** A subagent's step or tool call arrived: count the running ones at the next poll. */
   let subagentSeen = false
   /**
-   * The soundscape: the clips playing (each stoppable), its own clock (ms),
-   * each bed layer's take (`bedStep` keeps them) and their players by id,
-   * when the next burst of events is due, and the events gathered since the last.
+   * The soundscape (soundscape.ts): its player comes with the session's engine (session.start). Silent till
+   * someone's at the session (`present`: a spare session Claude Code warms in the background has a terminal and
+   * shows its scene, but no one hears it), and for good once the session has ended (`over`: the frames still
+   * running till the process goes start nothing, as a clip begun then outlives it and plays out in full).
    */
-  const sound = {
-    playing: new Set<AbortController>(),
-    clock: 0,
-    bed: [] as (BedTake | undefined)[],
-    takes: new Map<number, AbortController>(),
-    nextBurst: 0,
-    lastBurst: 0,
-    queue: [] as (SoundEvent & { at: number })[],
-    /** How many events the window has seen (more than the queue holds when it's busy). */
-    seen: 0,
-    /** When each kind of event with a clip of its own may play next (a closer one waits till then). */
-    nextOf: new Map<string, number>(),
-    /** Bumped whenever the soundscape stops (a new scene, sound off, hidden): what was scheduled before is stale. */
-    gen: 0,
-    /** When the waits on the person began and ended, and the last chime (chimeStep keeps it). */
-    chime: newChimeState(),
-    /** The event clips playing, oldest first (the first to give way when the player is full). */
-    events: [] as AbortController[],
-    /** The last volley's clip (a fast gun's run of shots), stopped early when its gun falls silent (`cease`). */
-    volley: undefined as AbortController | undefined,
-    seed: 1,
-    scene: '',
-    /**
-     * The session has ended for good (Claude Code quitting): the frames still running till the process goes
-     * start nothing, as a clip begun then outlives it and plays out in full.
-     */
-    over: false,
-    /**
-     * Someone has been seen at the session (`keepPresent`). A spare session Claude Code warms in the
-     * background has a terminal and shows its scene, but no one hears it: it stays quiet till then.
-     */
-    present: false,
-  }
-  /**
-   * Whether what was scheduled in generation `gen` may still play: the soundscape hasn't stopped since, and
-   * no change waits for the next frame to stop it (another scene picked, the sound turned off).
-   */
-  const current = (gen: number) => sound.gen === gen && cfg.sound === 'on' && cfg.style === sound.scene
-  const stopSound = () => {
-    // (A new generation: a delayed event or retry from the soundscape stopped here never plays.)
-    sound.gen++
-    for (const c of sound.playing) c.abort()
-    sound.playing.clear()
-    sound.takes.clear()
-    sound.events.length = 0
-    sound.volley = undefined
-    sound.bed = []
-    sound.queue.length = 0
-    sound.seen = 0
-    sound.scene = ''
-  }
+  const sound = new Soundscape(cfg)
   /** The tick a blit went out on, -1 when none is in flight. */
   let blitAt = -1
   let lastCells = ''
@@ -987,52 +946,20 @@ export const register: Register = (on, options) => {
     // A one-time tip, the settings now in: the other scenes, or the sound. With no prompt to toast over, what's on is noted.
     const tip = await takeTip($, cfg, !e.isInteractive)
     if (tip) $.ui.toast(tip, { timeoutMs: 12_000 })
+    // On a Claude Code older than Flow is built against: said once for that version (it runs all the same).
+    const warning = e.isInteractive ? await versionWarning($) : undefined
+    if (warning) $.ui.toast(warning, { timeoutMs: 12_000 })
 
-    // A clip: one of the plugin's own (`asset`) or synthesized here (base64 WAV). Claude Code plays at
-    // most MAX_PLAYS at once for a plugin: a clip finding them all going stops the oldest event clip
-    // (`take` undefined) first (a tail cut beats a strike unheard, or the bed dropping out); a refused
-    // one tries again a moment on (a bed's take stopping an event clip each time: busy events never
-    // keep the bed out).
-    const play = (clip: { asset: string } | { base64: string; mime: string }, gain = 1, take?: number, tries = 0, volley = false): void => {
-      const event = take === undefined
-      if ((tries === 0 || !event) && sound.playing.size >= MAX_PLAYS) sound.events.shift()?.abort()
-      const stop = new AbortController()
-      sound.playing.add(stop)
-      if (volley) sound.volley = stop
-      if (event) sound.events.push(stop)
-      else sound.takes.set(take, stop)
-      // No player (a Linux or Windows terminal), or refused for good: just silence. Refused because the
-      // player's full, it tries again a moment on: unless the soundscape has stopped since, or (a bed's
-      // take) the planner has stopped that take (it took its entry out of `takes`).
-      const gen = sound.gen
-      let retrying = false
-      // (Every clip at the sound's volume, as it is when it starts: never past the gain a clip clips at.)
-      void $.audio
-        .play(clip, { gain: volumeGain(gain, cfg.volume), signal: stop.signal })
-        .catch((err: unknown) => {
-          if (!String(err).includes('at once') || stop.signal.aborted) return
-          if (tries >= 4) {
-            // A bed's take refused for good: its next is due now, so the bed comes back next frame.
-            if (take !== undefined && sound.takes.get(take) === stop && current(gen)) bedFailed(sound.bed, take, sound.clock)
-            return
-          }
-          retrying = true
-          $.clock.after(50, () => {
-            if (!current(gen) || (take !== undefined && sound.takes.get(take) !== stop)) return
-            play(clip, gain, take, tries + 1, volley)
-          })
-        })
-        .finally(() => {
-          sound.playing.delete(stop)
-          const i = sound.events.indexOf(stop)
-          if (i >= 0) sound.events.splice(i, 1)
-          if (!retrying && take !== undefined && sound.takes.get(take) === stop) sound.takes.delete(take)
-        })
+    // Claude Code's player: at most MAX_PLAYS clips at once for a plugin, a fifth refused ("4 plays are going
+    // at once"). No player (a Linux or Windows terminal): every clip refused, just silence.
+    sound.player = {
+      maxPlays: MAX_PLAYS,
+      play: (clip, gain, signal) => $.audio.play(clip, { gain, signal }),
+      full: err => String(err).includes('at once'),
+      after: (ms, fn) => {
+        $.clock.after(ms, fn)
+      },
     }
-    /** What the scene on show has to be heard this frame (one array, emptied each frame). */
-    const events: SoundEvent[] = []
-    /** What the bed's planner is told each heard frame (one object, its fields set afresh). */
-    const mood: SoundMood = { scene: '', level: 0, tint: 'normal', night: false, amb: {}, volume: cfg.volume }
 
     // The frame loop: its own pace, rescheduled each tick.
     let wasShown = driver.isShown()
@@ -1044,82 +971,14 @@ export const register: Register = (on, options) => {
       const deskSite = desktopSite()
       // The soundscape, while the scene is on screen: beds crossfading one
       // into the next, and what happens on screen heard as it happens.
-      sound.clock += elapsed
-      const heard = !sound.over && sound.present && cfg.sound === 'on' && (site || deskSite) && driver.isShown()
-      // A wait on the person beginning: a soft chime (once a wait; not for one right behind another).
-      const chime = chimeStep(sound.chime, driver.waiting(), sound.clock)
-      const shownScene = site ? driver.scene : deskSite ? desktopDriver.scene : undefined
-      events.length = 0
-      for (const sc of [driver.scene, desktopDriver.scene]) {
-        if (!sc.sounds) continue
-        if (heard && sc === shownScene) events.push(...sc.sounds)
-        sc.sounds.length = 0
-      }
-      if (!heard || !shownScene) {
-        if (sound.scene) stopSound()
-      } else {
-        // Another scene (or the first heard frame): what played before stops, before anything of this one starts.
-        if (cfg.style !== sound.scene) {
-          stopSound()
-          sound.scene = cfg.style
-        }
-        // Events with a clip of their own play now; the rest gather into a burst.
-        for (const e of events) {
-          // A gun fallen silent: the rest of its volley's clip, shots never fired, isn't heard.
-          if (e.kind === 'cease') {
-            sound.volley?.abort()
-            sound.volley = undefined
-            continue
-          }
-          const p = eventPlay(e, sound.seed++, cfg.style, shownScene.strength)
-          if (!p) {
-            // (Somewhere since the last frame, at random: a frame's pops all at once would buzz at the frame rate.)
-            const at = sound.clock - Math.min(elapsed, 150) * unit(sound.seed++)
-            gather(sound.queue, sound.seen++, { ...e, at }, sound.seed++)
-            continue
-          }
-          // Each is heard, however close: one of a kind at most every SOUND_STAGGER_MS, a close one put back
-          // a moment (two rocks striking together are two booms; any nearer, the ear hears one).
-          const at = Math.max(sound.clock, sound.nextOf.get(e.kind) ?? 0)
-          if (at - sound.clock > 4 * SOUND_STAGGER_MS) continue
-          sound.nextOf.set(e.kind, at + SOUND_STAGGER_MS)
-          if (at === sound.clock) play({ asset: p.asset }, p.gain, undefined, 0, p.volley)
-          else {
-            const gen = sound.gen
-            $.clock.after(at - sound.clock, () => current(gen) && play({ asset: p.asset }, p.gain, undefined, 0, p.volley))
-          }
-        }
-        mood.scene = cfg.style
-        // (A rocket acts its level out a stage at a time: its own strength is the one to hear.)
-        mood.level = shownScene.strength
-        mood.tint = driver.tint()
-        mood.night = driver.isNight()
-        mood.amb = shownScene.ambience?.() ?? {}
-        // (The volume too: a change crossfades a fresh take in rather than wait for the next.)
-        mood.volume = cfg.volume
-        const beds = bedStep(sound.bed, mood, sound.clock, sound.seed++)
-        for (const id of beds.stop) {
-          sound.takes.get(id)?.abort()
-          sound.takes.delete(id)
-        }
-        for (const p of beds.play) play({ asset: p.asset }, p.gain, p.id)
-        if (chime) {
-          const c = chimePlay(sound.seed++)
-          play({ asset: c.asset }, c.gain)
-        }
-        if (sound.clock >= sound.nextBurst) {
-          // Each event at its moment in the window since the last burst.
-          const from = Math.max(sound.lastBurst, sound.clock - 2 * SOUND_BURST_MS)
-          sound.lastBurst = sound.clock
-          sound.nextBurst = sound.clock + SOUND_BURST_MS
-          if (sound.queue.length) {
-            const wav = burst(sound.queue.map(e => ({ ...e, offset: Math.max(0, (e.at - from) / 1000) })), sound.seed++)
-            if (wav) play({ base64: wav, mime: 'audio/wav' }, master(cfg.style, shownScene.strength))
-            sound.queue.length = 0
-            sound.seen = 0
-          }
-        }
-      }
+      sound.step(elapsed, {
+        heard: (site !== null || deskSite !== undefined) && driver.isShown(),
+        shown: site ? driver.scene : deskSite ? desktopDriver.scene : undefined,
+        scenes: [driver.scene, desktopDriver.scene],
+        waiting: driver.waiting(),
+        tint: driver.tint(),
+        night: driver.isNight(),
+      })
       // Every second or so, while it's the balloon, note its altitude if it moved, so a /config change made
       // from the menu (a reload) resumes it too.
       if (ticks % 15 === 0 && cfg.style === 'balloon') {
@@ -1465,7 +1324,7 @@ export const register: Register = (on, options) => {
     // is written to /config (only `/flow save` does that).
     const goesOn = e.reason === 'clear' || e.reason === 'resume'
     if (!goesOn) sound.over = true
-    stopSound()
+    sound.stop()
     // What it waited on you for was its own: none carries over to the session the process moves to.
     activity.forgetWaits()
     // A /clear or a resume from inside the session: the process goes on under another id, with no

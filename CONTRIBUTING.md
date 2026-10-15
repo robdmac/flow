@@ -19,7 +19,7 @@ CI runs the same on every pull request. For a change you can see, also run `npm 
 
 Flow runs inside people's coding sessions, so it stays small and local. A pull request that crosses one of these lines needs a good reason, said up front:
 
-- **No network.** Nothing in `hooks/` or `pi/` contacts a host, and nothing a hook reads (the conversation, files, settings) leaves the machine.
+- **No network.** Nothing in `hooks/`, `opencode/` or `pi/` contacts a host, and nothing a hook reads (the conversation, files, settings) leaves the machine.
 - **No new runtime dependencies.** The mod runs on its own files alone. Dev tools go in `devDependencies`, pinned to an exact version (no lockfile is committed: see AGENTS.md).
 - **Hooks only watch.** Every hook passes its event on unchanged. Flow never blocks, allows or rewrites a tool call, a permission or a prompt, and it answers no command but `/flow`.
 - **What it stores stays as described** in the README's *What Flow does on your machine*. If a change reads or keeps something new, update that section in the same pull request.

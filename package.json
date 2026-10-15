@@ -1,14 +1,15 @@
 {
   "name": "flow",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
-  "description": "Ambient scenes that move with your coding agent's work (a fire, bubbles, surf, rockets and more), for Claude Code and pi",
+  "description": "Ambient scenes that move with your coding agent's work (a fire, bubbles, surf, rockets and more), for Claude Code, opencode and pi",
   "author": "Rob Macrae",
   "license": "MIT",
   "repository": "github:robdmac/flow",
   "keywords": [
     "pi-package",
     "claude-code",
+    "opencode",
     "fun",
     "animation",
     "ambient",
@@ -18,6 +19,9 @@
     "extensions": [
       "./pi/index.ts"
     ]
+  },
+  "exports": {
+    "./tui": "./opencode/tui.ts"
   },
   "scripts": {
     "new-scene": "tsx scripts/new-scene.ts",
