@@ -4462,3 +4462,15 @@ test('a chance for a tip over the tips as kept: the tip, what to keep, and wheth
   // Whatever was stored that isn't a tip is read as nothing.
   expect(tipChance('junk', fire).tip).toContain('/flow pick')
 })
+
+test("opencode: a subagent's session deleted before its run ends is gone, not left working", async () => {
+  const a = new Activity()
+  const work = new OpenCodeWork(a)
+  work.show(OC)
+  work.event({ type: 'session.created', data: { sessionID: SUB, parentID: OC, title: 'Left behind' } })
+  expect(a.runningAgents).toBe(1)
+  work.event({ type: 'session.deleted', data: { sessionID: SUB } })
+  expect(a.runningAgents).toBe(0)
+  expect(a.roster.dials()[0]!.state).toBe('done')
+  expect(a.roster.dials()[0]!.ok).toBe(false)
+})

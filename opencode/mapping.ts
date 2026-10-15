@@ -1,4 +1,4 @@
-// REVISION: flow-v2-opencode-effort
+// REVISION: flow-v3-opencode-deleted
 //
 // opencode's events in the heat model's terms, for the session on screen and
 // the subagents it runs (child sessions, each with its `parentID`). Pure (no
@@ -9,7 +9,7 @@
 //   session.text.delta, reasoning.delta  streamed text and thinking keep it going
 //   session.tool.input.started / called  a tool call: its name, then its input (edits push it, commands spark)
 //   session.tool.success / failed        it's over; a shell that failed (its exit code) shows as smoke
-//   session.created (with a parentID)    a subagent: a companion of its own
+//   session.created (with a parentID)    a subagent: a companion of its own (its session deleted: it's gone)
 //   permission.asked, form.created       a question put to the person: the scene settles and breathes
 //   session.compaction.ended             smoke, as a compaction is in Claude Code
 //   session.usage.updated                how full the context is (the step's tokens over the model's limit): blue
@@ -173,6 +173,15 @@ export class OpenCodeWork {
           type: typeof data.agent === 'string' ? data.agent : '',
           description: typeof data.title === 'string' ? data.title : '',
         })
+        this.list()
+        return
+      }
+      case 'session.deleted': {
+        // A subagent's session deleted before its run ended (else it would stay working, quiet, for good).
+        const child = typeof data.sessionID === 'string' ? this.children.get(data.sessionID) : undefined
+        if (child?.status !== 'running') return
+        child.status = 'failed'
+        this.activity.roster.finished(child.id, false)
         this.list()
         return
       }
