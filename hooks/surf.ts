@@ -1,4 +1,4 @@
-// REVISION: flow-v173-directory
+// REVISION: flow-v184-surf-barrel
 //
 // Surf (the `surf` style): a surfer and the ocean on the same dials as the
 // fire; the level is the swell. At 1 the sea is glassy under a dawn sky and
@@ -767,7 +767,7 @@ export class Surf {
         // Water.
         let wet = clamp(y + 1 - surf)
         let inTube = false
-        let lip = 0
+        let onLip = false
         if (lip > 0 && isMain && Math.abs(xc - this.ex) < this.rx + 1 && yc < seaY + 1) {
           const dx = (xc - this.ex) / this.rx
           const dy = (yc - this.ey) / this.ry
@@ -779,11 +779,11 @@ export class Surf {
             const sa = Math.sin((phi * Math.PI) / 180)
             const R = Math.hypot(this.rx * ca, 2 * this.ry * sa)
             const th = ((vertical ? 5 : 2.6) * (1 - 0.45 * prog) * (0.6 + 0.4 * lip)) / R
-            if (phi <= this.phiEnd && r > 1 - th && r < 1 && (yc < surf || phi > -140)) lip = 1
+            if (phi <= this.phiEnd && r > 1 - th && r < 1 && (yc < surf || phi > -140)) onLip = true
             else if (yc < surf && r < 1) inTube = true
           } else if (yc >= hood) wet = 1
         } else if (yc >= hood && yc < surf) wet = clamp(y + 1 - hood)
-        if (lip) {
+        if (onLip) {
           // The lip: lit through, pale green-blue; frothing at the tip.
           const dyc = (yc - this.ey) / this.ry
           c = mix(P.faceLip, P.foam, clamp(0.25 + dyc * 0.5) * 0.7)
