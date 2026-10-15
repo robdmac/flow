@@ -208,8 +208,14 @@ function setup(ctx: OcContext): () => void {
   /** A session has shown since Flow started: the first is a chance for a tip. */
   let tipChanceTaken = false
   const follow = () => {
-    const id = shownSession?.id()
-    if (!id) return
+    // A session shows while one of its views is up: back on the home screen they're gone, and there's none.
+    const up = (v: SceneView | undefined) => v !== undefined && !v.isDestroyed
+    const id = up(views.band) || up(views.spine) ? shownSession?.id() : undefined
+    if (!id) {
+      if (opened !== undefined) work.show(undefined)
+      opened = openedAt = undefined
+      return
+    }
     if (!tipChanceTaken) {
       tipChanceTaken = true
       setTimeout(() => {
