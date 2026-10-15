@@ -1,11 +1,11 @@
-// REVISION: flow-v180-opencode
+// REVISION: flow-v181-tip-chance
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { AsciiFire, colorFor, params } from '../hooks/fire'
 import { effortFloor, Activity, linesWritten, WAIT_LEVEL } from '../hooks/activity'
-import { firstTips, nextTip, readTips, changedText, changesFor, helpText, isNightAt, ownHint, parseFlowArgs, readConfig, resetText, savedText, staleRows, statusText } from '../hooks/settings'
+import { firstTips, nextTip, readTips, tipChance, changedText, changesFor, helpText, isNightAt, ownHint, parseFlowArgs, readConfig, resetText, savedText, staleRows, statusText } from '../hooks/settings'
 import { CLAUDE_CODE, type FlowAdapter, replyTo } from '../hooks/settings'
 import { differences, type Own, ownAfterSwitch, pinShown, readOwn, readRecord, SESSION_KEPT_MS, SESSIONS_KEPT, sessionKey, staleSessions, storedOwn, storedRecord, withOwn } from '../hooks/sessions'
 import { gridToAnsi } from '../pi/ansi'
@@ -4440,4 +4440,22 @@ test("opencode: the model's variant sets the turn's floor, as thinking effort do
   work.event({ type: 'session.created', data: { sessionID: SUB, parentID: OC, model: { id: 'm', providerID: 'p', variant: 'max' } } })
   work.event({ type: 'session.step.started', data: { sessionID: SUB } })
   expect(a.floor).toBe(effortFloor('low'))
+})
+
+test('a chance for a tip over the tips as kept: the tip, what to keep, and whether that changed (every adapter alike)', async () => {
+  const fire = readConfig(undefined)
+  // Someone new, on the fire: the scenes tip, and a record to keep.
+  const first = tipChance({}, fire)
+  expect(first.tip).toContain('/flow pick')
+  expect(first.changed).toBe(true)
+  // Nothing due and nothing new on: nothing to write.
+  const told = { scenesTold: true, soundTold: true }
+  expect(tipChance(told, fire)).toEqual({ tip: undefined, tips: told, changed: false })
+  // No chance (no prompt to toast over), but the sound being on is noted all the same.
+  const noted = tipChance({ scenesTold: true }, { ...fire, sound: 'on' }, true)
+  expect(noted.tip).toBeUndefined()
+  expect(noted.tips.triedSound).toBe(true)
+  expect(noted.changed).toBe(true)
+  // Whatever was stored that isn't a tip is read as nothing.
+  expect(tipChance('junk', fire).tip).toContain('/flow pick')
 })

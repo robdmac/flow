@@ -1,4 +1,4 @@
-// REVISION: flow-v2-opencode-effort
+// REVISION: flow-v3-opencode-tips
 //
 // Flow for opencode (2.0), by Rob Macrae: the same ambient scenes as the
 // Claude Code mod and the pi extension, in opencode's terminal UI. A terminal
@@ -14,6 +14,8 @@
 //                and breathes), compaction, how full its context is
 //   /flow        the same command as in Claude Code and pi; `/flow pick` is opencode's own list
 //   sound        the same soundscapes, played by afplay in the background (macOS; player.ts)
+//   tips         the same one-time tips (the other scenes, then the sound), a toast as a session first shows
+//                or under a `/flow` reply, kept in the store beside the settings
 //
 // Settings are per session, as elsewhere: `/flow` changes the session it runs in, kept in Flow's own
 // opencode store under the session's id (the 100 used most recently), so reopening it brings them back;
@@ -26,7 +28,7 @@ import { fileURLToPath } from 'node:url'
 import { Activity, FRAME_MS } from '../hooks/activity'
 import { agentLine } from '../hooks/agents'
 import { staleSessions } from '../hooks/sessions'
-import { type FlowConfig, type Host, parseFlowArgs, readConfig, replyTo, storedValue } from '../hooks/settings'
+import { firstTips, type FlowConfig, type Host, parseFlowArgs, readConfig, replyTo, storedValue, tipChance, type Tips } from '../hooks/settings'
 import { SceneDriver } from '../hooks/scene'
 import { Soundscape } from '../hooks/soundscape'
 import { SCENES } from '../hooks/styles'
@@ -45,16 +47,19 @@ const TALL_SHARE = 0.5
 /** The spine's rows in the sidebar: what the terminal leaves under opencode's own (its title, context, files), within these. */
 const SPINE_ROWS = [12, 40] as const
 const SPINE_LEFT = 18
+/** A session first showing is a chance for a tip this long after (the store has loaded from disk by then). */
+const TIP_AFTER_MS = 1500
 /** How often the defaults are read afresh (another opencode may have saved), and the clock. */
 const DEFAULTS_EVERY_MS = 30_000
 const CLOCK_EVERY_MS = 5_000
 /** Flow's key in opencode's storage for the plugin. */
 const STORE = 'flow'
 
-/** What Flow keeps in opencode's store: the defaults `/flow save` wrote, and each session's own settings. */
+/** What Flow keeps in opencode's store: the defaults `/flow save` wrote, each session's own settings, and the one-time tips given. */
 type Kept = {
   defaults: Record<string, string | number>
   sessions: Record<string, { own: Record<string, string | number>; at: number }>
+  tips?: Tips
 }
 
 /** The plugin's folder: its sounds/ are played from there. */
@@ -96,6 +101,33 @@ function setup(ctx: OcContext): () => void {
     Date.now(),
   )
   if (stale.length) void keep(d => stale.forEach(key => delete d.sessions[key]))
+
+  /**
+   * The one-time tips (settings.ts), the person's, not a session's: begun at the first chance, before that
+   * chance's `/flow` keeps anything, as someone new (told nothing) or someone who'd had Flow here before (told
+   * both). Then each chance (a session first showing, a `/flow`) may give one.
+   */
+  let tipsBegun: Tips | undefined
+  const beginTips = () => {
+    if (kept.tips !== undefined || tipsBegun) return
+    const usedBefore = Object.keys(kept.sessions).length > 0 || Object.keys(kept.defaults).length > 0
+    tipsBegun = firstTips(usedBefore, readConfig({ ...ctx.options, ...kept.defaults }))
+    void keep(d => {
+      d.tips ??= tipsBegun
+    })
+  }
+  const takeTip = (): string | undefined => {
+    beginTips()
+    const { tip, tips, changed } = tipChance(kept.tips ?? tipsBegun, cfg)
+    if (changed) {
+      tipsBegun = tips
+      void keep(d => {
+        d.tips = tips
+      })
+    }
+    // (The toast is titled flow already.)
+    return tip?.replace(/^flow: /, '')
+  }
 
   /** The context limit of a session's model. */
   const contextLimit = (sessionID: string) => {
@@ -162,9 +194,18 @@ function setup(ctx: OcContext): () => void {
    * opencode showing the same session may change them.
    */
   let openedAt: number | undefined
+  /** A session has shown since Flow started: the first is a chance for a tip. */
+  let tipChanceTaken = false
   const follow = () => {
     const id = shownSession?.id()
     if (!id) return
+    if (!tipChanceTaken) {
+      tipChanceTaken = true
+      setTimeout(() => {
+        const tip = takeTip()
+        if (tip) ctx.ui.toast.show({ title: 'flow', message: tip, duration: 12_000 })
+      }, TIP_AFTER_MS)
+    }
     const at = kept.sessions[id]?.at
     if (id === opened && at === openedAt) return
     if (id !== opened) work.show(id, ctx.data.session.status(id) === 'running')
@@ -233,6 +274,7 @@ function setup(ctx: OcContext): () => void {
     let cmd = parseFlowArgs(args)
     follow()
     const entries = opened ? entriesOf(opened) : undefined
+    beginTips()
     await settings.refresh(entries)
     // The scene shows in a session: on the home screen there's none to change (the status and the help say all there is).
     if (!entries && cmd.kind !== 'show' && cmd.kind !== 'help') {
@@ -271,13 +313,12 @@ function setup(ctx: OcContext): () => void {
       reset: async () => settings.reset(entries),
       change: changes => settings.change(changes, entries),
     })
+    // A one-time tip goes under the reply, as in Claude Code.
+    const tip = takeTip()
+    const text = (cmd.kind === 'error' ? reply.text.replace(/^! /, '') : reply.text) + (tip ? `\n\n${tip}` : '')
     // (The help is long: a dialog to read at leisure. The rest is a line or two, a toast.)
-    if (cmd.kind === 'help') return void (await ctx.ui.dialog.alert({ title: 'flow', message: reply.text }))
-    ctx.ui.toast.show({
-      title: 'flow',
-      message: cmd.kind === 'error' ? reply.text.replace(/^! /, '') : reply.text,
-      variant: reply.level === 'warning' ? 'warning' : 'info',
-    })
+    if (cmd.kind === 'help') return void (await ctx.ui.dialog.alert({ title: 'flow', message: text }))
+    ctx.ui.toast.show({ title: 'flow', message: text, variant: reply.level === 'warning' ? 'warning' : 'info', duration: tip ? 12_000 : undefined })
   }
   ctx.keymap.layer(() => ({
     mode: 'global',

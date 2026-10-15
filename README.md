@@ -201,7 +201,7 @@ As in Claude Code, each session keeps its own settings, kept in the session itse
 
 ## opencode
 
-The same scenes run as an opencode terminal UI plugin (`opencode/tui.ts`, opencode 2.0 or later): above the prompt of the session on screen, or with `/flow spine` in its sidebar. They share the scenes, the activity model, the soundscapes and the `/flow` command with the Claude Code version; `/flow pick` is opencode's own list, `/flow help` a dialog. Click a subagent's companion to see what it's doing: its task, whether it's working, quiet, waiting on you or done, and how long it's run. opencode's events drive it:
+The same scenes run as an opencode terminal UI plugin (`opencode/tui.ts`, opencode 2.0 or later): above the prompt of the session on screen, or with `/flow spine` in its sidebar. They share the scenes, the activity model, the soundscapes and the `/flow` command with the Claude Code version; `/flow pick` is opencode's own list, `/flow help` a dialog. Click a subagent's companion to see what it's doing: its task, whether it's working, quiet, waiting on you or done, and how long it's run. The one-time tips are the same as in Claude Code: the other scenes, then the sound, each once, as a session first shows or under a `/flow` reply. opencode's events drive it:
 
 | opencode event | The scene |
 |---|---|
@@ -226,7 +226,7 @@ Each session keeps its own settings, kept in Flow's own opencode storage under t
 
 It writes no other settings, no files and no environment variables. (`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`, under *Not loading?*, is a variable you set yourself, if you need it.)
 
-**What it keeps:** in Claude Code's per-plugin store, each session's own `/flow` settings (the 100 most recently used sessions, none unused for 60 days) and which one-time tips you've seen. In the session's own plugin state, the balloon's altitude and whether someone has been at the session. In opencode, each session's own `/flow` settings (the 100 most recently used) and the defaults `/flow save` keeps, in opencode's storage for the plugin. In pi, a session's settings go in the session as an entry the model never sees, and `/flow save` writes `~/.pi/agent/flow.json`.
+**What it keeps:** in Claude Code's per-plugin store, each session's own `/flow` settings (the 100 most recently used sessions, none unused for 60 days) and which one-time tips you've seen. In the session's own plugin state, the balloon's altitude and whether someone has been at the session. In opencode, each session's own `/flow` settings (the 100 most recently used), the defaults `/flow save` keeps and which one-time tips you've seen, in opencode's storage for the plugin. In pi, a session's settings go in the session as an entry the model never sees, and `/flow save` writes `~/.pi/agent/flow.json`.
 
 **Sound:** off unless you turn it on. Claude Code plays the plugin's own clips (`sounds/`) through `afplay`, only after someone has typed or run a turn in the session; in opencode, Flow plays them through `afplay` itself, once a turn has run or `/flow` has been used in the session on screen.
 

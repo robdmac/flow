@@ -1,4 +1,4 @@
-// REVISION: flow-v180-shared-soundscape
+// REVISION: flow-v181-tip-chance
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -63,9 +63,7 @@ import {
   type FlowCommand,
   type FlowConfig,
   type FlowLayout,
-  nextTip,
-  noteTips,
-  readTips,
+  tipChance,
   staleRows,
   type StoredRow,
 } from './settings'
@@ -575,16 +573,13 @@ async function seedTips($: EngineInterface, usedBefore: boolean, settings: FlowC
 }
 
 /**
- * A chance for a one-time tip (see nextTip), the store keeping which have been
- * given: the tip, if one's due. `noteOnly`: no chance (no prompt to toast
- * over), but what's on is noted all the same (see noteTips): the sound turned
- * on in /config in such a session, and off again later, still counts as tried.
+ * A chance for a one-time tip (see tipChance), the store keeping which have been given: the tip, if one's due.
+ * `noteOnly`: no chance (no prompt to toast over), but what's on is noted all the same.
  */
 async function takeTip($: EngineInterface, cfg: FlowConfig, noteOnly = false): Promise<string | undefined> {
   try {
-    const before = readTips(await $.store.get(TIPS))
-    const { tip, tips } = noteOnly ? { tip: undefined, tips: noteTips(before, cfg) } : nextTip(before, cfg)
-    if (JSON.stringify(tips) !== JSON.stringify(before)) await $.store.set(TIPS, tips)
+    const { tip, tips, changed } = tipChance(await $.store.get(TIPS), cfg, noteOnly)
+    if (changed) await $.store.set(TIPS, tips)
     return tip
   } catch {
     return undefined

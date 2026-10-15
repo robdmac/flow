@@ -1,4 +1,4 @@
-// REVISION: flow-v177-opencode
+// REVISION: flow-v178-tip-chance
 //
 // Flow's settings and the `/flow` command's grammar, shared by every harness adapter (Claude Code's
 // register.tsx, pi's pi/index.ts). Pure: no engine imports. Replies carry no
@@ -507,6 +507,18 @@ export function firstTips(usedBefore: boolean, settings: FlowConfig): Tips {
   const defaults = readConfig(undefined)
   const changed = (Object.keys(defaults) as (keyof FlowConfig)[]).some(k => settings[k] !== defaults[k])
   return usedBefore || changed ? { scenesTold: true, soundTold: true } : {}
+}
+
+/**
+ * A chance for a one-time tip over the tips as they're kept (raw, as stored): the tip, if one's due, the tips
+ * to keep, and whether they changed (else there's nothing to write). `noteOnly`: no chance (no prompt to toast
+ * over), but what's on is noted all the same (see noteTips): the sound turned on and off again in such a
+ * session still counts as tried. Each adapter keeps the tips its own way; this is the rest.
+ */
+export function tipChance(kept: unknown, cfg: FlowConfig, noteOnly = false): { tip?: string; tips: Tips; changed: boolean } {
+  const before = readTips(kept)
+  const { tip, tips } = noteOnly ? { tip: undefined, tips: noteTips(before, cfg) } : nextTip(before, cfg)
+  return { tip, tips, changed: JSON.stringify(tips) !== JSON.stringify(before) }
 }
 
 /**
