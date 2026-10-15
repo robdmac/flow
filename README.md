@@ -91,7 +91,7 @@ https://github.com/user-attachments/assets/2e9e4247-8f1f-42b6-b0d1-60598e6e4957
 
 https://github.com/user-attachments/assets/20196ad3-8dae-4e6e-99db-83fcd560b20e
 
-`/flow pick` shows them all at once, each one live, to choose from with the arrow keys and Enter (in pi, a list).
+`/flow pick` shows them all at once, each one live, to choose from with the arrow keys and Enter (in opencode and pi, a list).
 
 Some scenes also answer to other names: `inferno` and `flame` (fire), `stars` (warp), `colony` and `interstellar` (avalon), `mechanism` (engine), `rocket` (falcon), `spaceship` (starship), `ocean` and `sea` (surf), `snow` (ski), `rail` and `railway` (train).
 
@@ -113,13 +113,15 @@ Balloon, falcon, starship, surf, ski and train also have a **night** version: st
 | near a full context (≥85%) | blue: a blue-white flame, a storm, dusk on the slopes, a blue gas flame, rain driving past the train, cold blue light over the moon, the techbase flooded with cold blue light |
 | waiting on you: a permission to grant, its question, a plan to approve | settles to a calm 2 and holds, the whole scene turned a warm sepia that breathes slowly, about every 4 s: the fire banks to a bed of glowing coals, the stars stop, the colony ship comes to rest, the balloon hovers with its pilot light glowing, the engine runs down and lets off steam, a rocket holds its stage with amber lights up the tower, the surfer sits up waiting for a wave, the skier stops, the bubbles slow, the train draws up at a red signal or a platform, its headlight and the signal glowing with each breath, the Earth stops turning, the marine stops and lowers his gun as the monsters slink back into the dark, the computer panels glowing with each breath. With sound on, a soft chime as the wait begins |
 
+The table is in Claude Code's terms; opencode and pi move it the same way from their own events (see *opencode* and *pi* below), except that pi tells Flow nothing of subagents or of a wait on you.
+
 A plain answer sits around 5, edit-and-test loops reach about 8, and 10 takes several subagents editing in parallel, or a long turn: it climbs a level every 30 s it keeps going.
 
 Waiting on you shows only while a dialog is actually up for you: a permission ask that auto mode's classifier settles by itself, or that a hook answers, isn't one. It ends when you answer (once the call is over, or as soon as a long command shows it's running). Like the tints, it shows in auto mode only, and only in the session that waits.
 
 ### Subagents, one by one
 
-In fire, surf, ski, balloon, falcon, starship, engine, train, avalon, doom and doom3d, each running subagent has a companion of its own, in its own colors or its own place, so you can tell at a glance which are busy, which have gone quiet or are waiting on you, and when each finishes:
+In Claude Code and opencode (pi has no subagents), in fire, surf, ski, balloon, falcon, starship, engine, train, avalon, doom and doom3d, each running subagent has a companion of its own, in its own colors or its own place, so you can tell at a glance which are busy, which have gone quiet or are waiting on you, and when each finishes:
 
 | Scene | Arrives | Working | Quiet (nothing for 20 s) | Waiting on you (a permission dialog, its question) | Done |
 |---|---|---|---|---|---|
@@ -133,19 +135,19 @@ In fire, surf, ski, balloon, falcon, starship, engine, train, avalon, doom and d
 | `doom`, `doom3d` | another marine in co-op colors (indigo, brown, red, grey) runs in from behind (through his eyes, past him) and falls in with the squad | fires with him at whatever comes | drops back a little, gun lowered | a lamp blinks amber over its head | teleports out in a shimmer of green fog (failed: falls where it stood, and the squad walks on) |
 | `avalon` | a probe launches from a bay on the ship's hull (the hatch glowing in its color) and flies up beside it | holds station by the ship on its own flickering drive | drive off, falls back along the ship, a running light blinking | an amber beacon flashes | turns about and burns away aft, off toward home (failed: drive dead, tumbles away dark) |
 
-A scene has room for a few (the fire 4 to 6 small fires across the band, 1 or 2 in the spine, surf 5, ski 4, balloon 4, the rockets 3 mini rockets (one of them behind the big launch site in the spine; 1 in a spine narrower than 19 columns), the engine 6 lamp groups, the train up to 4 trains, avalon 4 probes, doom 4 marines (2 in a spine narrower than 14 columns); fewer in the narrow spine or a narrow band: only as many as it shows whole); more wait for a place to come free. Warp and bubbles keep the plain company above: they're a stream of stars, a glass of anonymous bubbles, with nothing that stays put long enough to be someone. In the Claude desktop app, put the pointer over a companion to see its subagent's task, what it's doing and for how long.
+A scene has room for a few (the fire 4 to 6 small fires across the band, 1 or 2 in the spine, surf 5, ski 4, balloon 4, the rockets 3 mini rockets (one of them behind the big launch site in the spine; 1 in a spine narrower than 19 columns), the engine 6 lamp groups, the train up to 4 trains, avalon 4 probes, doom 4 marines (2 in a spine narrower than 14 columns); fewer in the narrow spine or a narrow band: only as many as it shows whole); more wait for a place to come free. Warp and bubbles keep the plain company above: they're a stream of stars, a glass of anonymous bubbles, with nothing that stays put long enough to be someone. In the Claude desktop app, put the pointer over a companion to see its subagent's task, what it's doing and for how long; in opencode, click it and the same shows as a notice.
 
 ## The command
 
 `/flow` changes things at once, in the session you run it in. Each session keeps its own scene and settings, so two sessions side by side can show different scenes, and resuming one (`claude --resume`, `claude --continue`, or opening it again in the Claude desktop app) brings its settings back. A `/clear` keeps the scene you had.
 
-A new session starts on your defaults: the rows in `/config` (*Scene mode*, *Scene*, *Scene while idle*, *Manual level*, *Scene layout*, *Day or night*, *Sound*, *Sound volume*). `/flow save` makes the current session's settings your default, and `/flow reset` puts a session back on it. Changing a row in `/config` changes the default and the session you're in. A session already running keeps what it shows when the default changes elsewhere (another session's `/flow save`, say), and `/flow` on its own says when the session differs from your default, and how. `/flow save` saves exactly what the session shows.
+A new session starts on your defaults: the rows in `/config` (*Scene mode*, *Scene*, *Scene while idle*, *Manual level*, *Scene layout*, *Day or night*, *Sound*, *Sound volume*). `/flow save` makes the current session's settings your default, and `/flow reset` puts a session back on it. Changing a row in `/config` changes the default and the session you're in. A session already running keeps what it shows when the default changes elsewhere (another session's `/flow save`, say), and `/flow` on its own says when the session differs from your default, and how. `/flow save` saves exactly what the session shows. In opencode and pi there are no `/config` rows: the defaults are kept in opencode's storage for the plugin, or in pi's `~/.pi/agent/flow.json`, and `/flow save` writes them there (see *opencode* and *pi* below).
 
 | Command | Effect |
 |---|---|
 | `/flow` | show the scene, mode, level and time of day |
 | `/flow <scene>` | pick a scene by name or alias (`/flow surf`, `/flow sea`) |
-| `/flow pick` | every scene at once, live, side by side in a pane: the arrows (or Tab) move, Enter (or the scene's number) picks it for this session, as `/flow <scene>` does, Esc closes; on desktop, click one |
+| `/flow pick` | every scene at once, live, side by side in a pane: the arrows (or Tab) move, Enter (or the scene's number) picks it for this session, as `/flow <scene>` does, Esc closes; on desktop, click one. In opencode and pi, a list to choose from |
 | `/flow next` | the next scene |
 | `/flow day` / `night` | pin the time of day |
 | `/flow clock` | day or night by your local clock (the default) |
@@ -155,8 +157,8 @@ A new session starts on your defaults: the rows in `/config` (*Scene mode*, *Sce
 | `/flow idle glow` / `dark` | in auto mode while idle: a low glow (the default), or nothing (the band gives its rows back) |
 | `/flow sound` | toggle a soundscape for the scene, swelling with the work (macOS; off by default); `/flow sound on` / `off` to set it |
 | `/flow sound 1`–`10` | the soundscape's volume, turning it on (7 is the default; each step below it 3 dB quieter); `/flow sound 0` turns it off. `/flow volume 1`–`10` does the same |
-| `/flow band` / `spine` | a 5-row band above the prompt (the default; also `horizontal`, `bar` or `flat`), or a tall pane docked beside the transcript (also `portrait`, `vertical` or `side`) |
-| `/flow save` | make this session's settings your default, the one new sessions start with (it writes them to `/config`) |
+| `/flow band` / `spine` | a 5-row band above the prompt (the default; also `horizontal`, `bar` or `flat`), or a tall pane docked beside the transcript (also `portrait`, `vertical` or `side`); in opencode, the sidebar. pi has no panes, so there it's always the band |
+| `/flow save` | make this session's settings your default, the one new sessions start with (it writes them to `/config`; in opencode, its storage; in pi, `flow.json`) |
 | `/flow reset` | put this session back on your default |
 | `/flow help` | list all of this |
 
@@ -169,17 +171,17 @@ The background is long takes that blend one into the next at random moments, so 
 
 `/flow sound 1` to `10` turns it on at that volume in the session you run it in (*Sound volume* in `/config` is the volume new sessions start with, and `/flow save` makes this session's it). 7, the default, is the loudness the scenes were tuned to; each step below it is 3 dB quieter, so 1 is 18 dB down. Above 7 there's little room left: the loudest sounds already play near full scale, and any louder they'd distort. So 8, 9 and 10 lift the quieter sounds by up to 2, 4 and 6 dB, the louder ones by less and the loudest not at all, and a busier moment still sounds busier than a calm one. `/flow sound 0` turns it off, and `/flow sound` turns it back on at the volume it had.
 
-When Claude starts waiting on you (a permission, its question, a plan to approve), a soft chime: two struck tubes rising a fourth, about as loud as a scene at 6. Once a wait, and not for one right behind another (within 20 s): you're there already. It's part of the soundscape, so it follows the session's sound setting: `/flow sound` turns it on and off with the rest. For an alert without the ambience, there's Claude Code's own notification setting in `/config`.
+When your agent starts waiting on you (a permission, its question, a plan to approve; in Claude Code and opencode, as pi doesn't say when it waits), a soft chime: two struck tubes rising a fourth, about as loud as a scene at 6. Once a wait, and not for one right behind another (within 20 s): you're there already. It's part of the soundscape, so it follows the session's sound setting: `/flow sound` turns it on and off with the rest. For an alert without the ambience, there's Claude Code's own notification setting in `/config` (opencode has its own notifications too).
 
-It plays only while the scene is on screen, and stops with the session. Claude Code plays the clips with `afplay`, and in opencode Flow runs `afplay` itself, so it's macOS only; elsewhere the setting does nothing. It's set per session like everything else, so you can have it on in one session and not another, or quieter in one; several sessions with it on each play their own.
+It plays only while the scene is on screen, and stops with the session. Claude Code plays the clips with `afplay`, and in opencode and pi Flow runs `afplay` itself, so it's macOS only; elsewhere the setting does nothing. It's set per session like everything else, so you can have it on in one session and not another, or quieter in one; several sessions with it on each play their own.
 
 ## Turning it off
 
-Run `/flow off`, or `/flow idle dark` to stay in auto mode but show nothing while idle. Either applies to the session you run it in; follow it with `/flow save` to make it the default for new sessions too. You can also disable the plugin. Flow draws in the terminal and in the Claude desktop app; not in VS Code or on mobile.
+Run `/flow off`, or `/flow idle dark` to stay in auto mode but show nothing while idle. Either applies to the session you run it in; follow it with `/flow save` to make it the default for new sessions too. You can also disable the plugin (in opencode, `opencode plugin remove github:robdmac/flow`; in pi, `pi remove git:github.com/robdmac/flow`). In Claude Code, Flow draws in the terminal and in the Claude desktop app; not in VS Code or on mobile.
 
 ## pi
 
-The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's editor, drawn as 24-bit ANSI lines. It shares the scenes, the activity model and the `/flow` command with the Claude Code version. pi has no side panes, so there is no spine there, and no built-in subagents (so no companions). pi's events drive it:
+The same scenes run as a pi extension (`pi/index.ts`): a widget above pi's editor, drawn as 24-bit ANSI lines. It shares the scenes, the activity model, the soundscapes and the `/flow` command with the Claude Code version. pi has no side panes, so there is no spine there, and no built-in subagents (so no companions). pi's events drive it:
 
 | pi event | The scene |
 |---|---|
@@ -195,7 +197,7 @@ In a terminal that draws images (Ghostty, kitty, WezTerm, Warp; not under tmux),
 
 `doom3d` takes the same height in characters (`"rows"` sets it too), for the view through the marine's eyes. In Claude Code its band is as tall as the prompt leaves room for, up to 14 rows.
 
-pi tells an extension nothing of a wait on you, so there the scenes never show one. Nor has it a player, so the scenes are silent there: `/flow sound` says so.
+pi tells an extension nothing of a wait on you, so there the scenes never show one (nor chime). It has no player for an extension's sounds either, so for the soundscape Flow runs `afplay` (macOS) in the background itself, as in opencode, once a turn has run or `/flow` has been used: `/flow sound` turns it on. The one-time tips are the same as in Claude Code and opencode, kept in `flow.json`.
 
 As in Claude Code, each session keeps its own settings, kept in the session itself (an entry the model never sees), so resuming or forking it brings them back. `~/.pi/agent/flow.json` holds the defaults new sessions start with; `/flow save` writes it. To try it without installing: `pi --extension ./pi/index.ts`.
 
@@ -220,15 +222,15 @@ Each session keeps its own settings, kept in Flow's own opencode storage under t
 
 **Privacy:** Flow collects nothing. It has no servers, sends no data anywhere, and keeps what little it stores (below) on your machine: in Claude Code's or opencode's own storage for the plugin, or in pi under `~/.pi/agent/flow.json` and `~/.cache/flow`.
 
-**Network:** none. Flow sends nothing anywhere and contacts no hosts. Everything it draws and plays is computed locally from the plugin's own files. The one call that takes anything out of the plugin is `$.audio.play`, which hands one of the plugin's own clips from `sounds/` (and a volume) to the local audio player, `afplay`: nothing Flow reads (settings, the conversation, your files) goes into it, and it reaches no address. In opencode, which has no such call, Flow starts `/usr/bin/afplay` itself for each clip (macOS only, and only with the sound on): its arguments are a volume and the path of one of the plugin's own clips, or of a short sound it made (written to a file of its own in the system's temporary folder, and deleted once played). It runs nothing else.
+**Network:** none. Flow sends nothing anywhere and contacts no hosts. Everything it draws and plays is computed locally from the plugin's own files. The one call that takes anything out of the plugin is `$.audio.play`, which hands one of the plugin's own clips from `sounds/` (and a volume) to the local audio player, `afplay`: nothing Flow reads (settings, the conversation, your files) goes into it, and it reaches no address. In opencode and pi, which have no such call, Flow starts `/usr/bin/afplay` itself for each clip (macOS only, and only with the sound on): its arguments are a volume and the path of one of the plugin's own clips, or of a short sound it made (written to a file of its own in the system's temporary folder, and deleted once played). It runs nothing else.
 
 **Your settings:** Flow writes its own `/config` rows (the `flow-scenes` plugin's options: scene, mode, sound and the rest) only when you run `/flow save`, which writes the settings your session shows as the defaults for new sessions. It reads them (`$.config.list()`) to start each session on your defaults.
 
-It writes no other settings, no files and no environment variables. (`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`, under *Not loading?*, is a variable you set yourself, if you need it.)
+In Claude Code it writes no other settings, no files and no environment variables. (`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`, under *Not loading?*, is a variable you set yourself, if you need it.)
 
-**What it keeps:** in Claude Code's per-plugin store, each session's own `/flow` settings (the 100 most recently used sessions, none unused for 60 days) and which one-time tips you've seen. In the session's own plugin state, the balloon's altitude and whether someone has been at the session. In opencode, each session's own `/flow` settings (the 100 most recently used), the defaults `/flow save` keeps and which one-time tips you've seen, in opencode's storage for the plugin. In pi, a session's settings go in the session as an entry the model never sees, and `/flow save` writes `~/.pi/agent/flow.json`.
+**What it keeps:** in Claude Code's per-plugin store, each session's own `/flow` settings (the 100 most recently used sessions, none unused for 60 days) and which one-time tips you've seen. In the session's own plugin state, the balloon's altitude and whether someone has been at the session. In opencode, each session's own `/flow` settings (the 100 most recently used), the defaults `/flow save` keeps and which one-time tips you've seen, in opencode's storage for the plugin. In pi, a session's settings go in the session as an entry the model never sees, and `~/.pi/agent/flow.json` holds the defaults `/flow save` writes, which one-time tips you've seen and the pi version a too-old warning was given for (Claude Code and opencode keep those last two in their stores too); `~/.cache/flow` keeps earthrise's picture for the last few sizes. With the sound on in opencode or pi, a short sound Flow makes is written to the system's temporary folder while it plays, then deleted.
 
-**Sound:** off unless you turn it on. Claude Code plays the plugin's own clips (`sounds/`) through `afplay`, only after someone has typed or run a turn in the session; in opencode, Flow plays them through `afplay` itself, once a turn has run or `/flow` has been used in the session on screen.
+**Sound:** off unless you turn it on. Claude Code plays the plugin's own clips (`sounds/`) through `afplay`, only after someone has typed or run a turn in the session; in opencode and pi, Flow plays them through `afplay` itself, once a turn has run or `/flow` has been used (in opencode, in the session on screen).
 
 **What its hooks see, and what they decide:** nothing. Every hook passes the event on unchanged (the one Flow answers is its own `/flow` command); Flow never blocks, allows, rewrites or answers a tool call, a permission, a prompt or a setting. It only watches, to set how busy the scene looks:
 

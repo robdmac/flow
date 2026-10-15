@@ -1,4 +1,4 @@
-// REVISION: flow-v4-opencode-built-against
+// REVISION: flow-v5-shared-player
 //
 // Flow for opencode (2.0), by Rob Macrae: the same ambient scenes as the
 // Claude Code mod and the pi extension, in opencode's terminal UI. A terminal
@@ -13,7 +13,7 @@
 //                command shows as smoke), its subagents (a companion each), what it asks you (it settles
 //                and breathes), compaction, how full its context is
 //   /flow        the same command as in Claude Code and pi; `/flow pick` is opencode's own list
-//   sound        the same soundscapes, played by afplay in the background (macOS; player.ts)
+//   sound        the same soundscapes, played by afplay in the background (macOS; node/player.ts)
 //   tips         the same one-time tips (the other scenes, then the sound), a toast as a session first shows
 //                or under a `/flow` reply, kept in the store beside the settings
 //
@@ -35,7 +35,7 @@ import { SCENES } from '../hooks/styles'
 import { FLOW_ENTRY } from '../pi/mapping'
 import { PiSettings, type SessionEntries } from '../pi/session'
 import { OpenCodeWork } from './mapping'
-import { afplayPlayer } from './player'
+import { afplayPlayer } from '../node/player'
 import type { OcContext } from './types'
 import type { SceneView } from './view'
 import { sceneViewClass } from './view'

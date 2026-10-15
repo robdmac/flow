@@ -1,7 +1,8 @@
-// REVISION: flow-v1-opencode
+// REVISION: flow-v2-shared-player
 //
-// opencode has no player for a plugin's clips (its own notification sounds
-// only), so Flow plays them itself: each clip is macOS's `afplay` run in the
+// The soundscape's player where the host has none for a plugin's clips
+// (opencode, whose sounds are its own notifications only; pi, none at all),
+// so Flow plays them itself: each clip is macOS's `afplay` run in the
 // background at its gain (`-v`), stopped by killing it, exactly as Claude
 // Code's `audio.play` does it. A synthesized burst (base64 WAV) is written to
 // a file of its own first, removed once played. Only the plugin's own clips

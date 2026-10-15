@@ -1,4 +1,4 @@
-// REVISION: flow-v182-slow-tests
+// REVISION: flow-v183-pi-sound
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -954,7 +954,7 @@ test('soundscapes: a bed take the player refuses for good is replaced at once, n
   await ui.unmount()
 })
 
-test('soundscapes: a scene holds only a few events for the adapter, so one that never takes them (pi) stays bounded', { timeoutMs: SLOW_MS }, () => {
+test('soundscapes: a scene holds only a few events for the adapter, so one that never takes them (a host with no player) stays bounded', { timeoutMs: SLOW_MS }, () => {
   for (const style of STYLES) {
     const f = makeScene(style, 2)
     f.ensure(100, 5)
