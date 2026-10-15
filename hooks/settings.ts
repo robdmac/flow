@@ -1,4 +1,4 @@
-// REVISION: flow-v179-built-against
+// REVISION: flow-v188-dry
 //
 // Flow's settings and the `/flow` command's grammar, shared by every harness adapter (Claude Code's
 // register.tsx, pi's pi/index.ts). Pure: no engine imports. Replies carry no
@@ -409,6 +409,20 @@ export function changesFor(cmd: FlowCommand, cfg: FlowConfig): Partial<FlowConfi
 
 /** A `/flow` reply: its text, and how pi shows it (a warning: a command not taken, a save that failed). */
 export type FlowReply = { text: string; level?: 'info' | 'warning' }
+
+/** `/flow sound` where there's no player (opencode, pi: afplay, which they run themselves, is macOS's). */
+export const NO_PLAYER = 'the soundscapes play through afplay, which only macOS has'
+
+/** A tip or a note without its `flow: `, where the host shows whose it is already (pi's notice, opencode's toast title). */
+export const untitled = (text: string): string => text.replace(/^flow: /, '')
+
+/**
+ * `/flow`'s reply as pi and opencode show it: as it is, with no `!` before what was wrong,
+ * and a one-time tip, if one's due, under it (as in Claude Code).
+ */
+export function hostReplyText(cmd: FlowCommand, reply: FlowReply, tip: string | undefined): string {
+  return (cmd.kind === 'error' ? reply.text.replace(/^! /, '') : reply.text) + (tip ? `\n\n${tip}` : '')
+}
 
 /**
  * What `/flow` needs of an adapter: the settings it shows (changed in place),

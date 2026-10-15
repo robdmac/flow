@@ -1,4 +1,4 @@
-// REVISION: flow-v121-fresh-defaults
+// REVISION: flow-v188-dry
 //
 // pi's settings for one session, apart from pi and the disk so the shared
 // tests cover them: the defaults new sessions start with (flow.json, through
@@ -9,7 +9,7 @@
 // Pure (no Node imports).
 
 import { differences, type Own, pinShown, storedOwn, withOwn } from '../hooks/sessions'
-import { ownHint, readConfig, resetText, savedText, type FlowConfig } from '../hooks/settings'
+import { type FlowConfig, type FlowReply, ownHint, readConfig, resetText, savedText } from '../hooks/settings'
 import { ownInSession } from './mapping'
 import type { PiSessionEntry } from './types'
 
@@ -75,19 +75,19 @@ export class PiSettings {
   }
 
   /** `/flow save`: flow.json takes every setting the session shows that it doesn't hold, so new sessions start just so. */
-  async save(session: SessionEntries | undefined): Promise<{ text: string; saved: boolean }> {
+  async save(session: SessionEntries | undefined): Promise<FlowReply> {
     const before = { ...this.defaults }
     const changes = differences(this.cfg, this.defaults)
     if (Object.keys(changes).length) {
       try {
         await this.file.save(changes)
       } catch {
-        return { text: "not saved: flow.json couldn't be written", saved: false }
+        return { text: "not saved: flow.json couldn't be written", level: 'warning' }
       }
       this.defaults = { ...this.defaults, ...changes }
     }
     if (session && Object.keys(this.own).length) this.keep(session, {})
-    return { text: savedText(this.cfg, before, Object.keys(changes).length > 0), saved: true }
+    return { text: savedText(this.cfg, before, Object.keys(changes).length > 0), level: 'info' }
   }
 
   /** `/flow reset`: the session back on the defaults. */
