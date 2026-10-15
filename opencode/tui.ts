@@ -1,4 +1,4 @@
-// REVISION: flow-v8-same-frame
+// REVISION: flow-v9-tidy
 //
 // Flow for opencode (2.0), by Rob Macrae: the same ambient scenes as the
 // Claude Code mod and the pi extension, in opencode's terminal UI. A terminal
@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url'
 import { Activity } from '../hooks/activity'
 import { agentLine } from '../hooks/agents'
 import { staleSessions, storedOwn } from '../hooks/sessions'
-import { clockAt, firstTips, type FlowConfig, type Host, hostReplyText, NO_PLAYER, parseFlowArgs, readConfig, replyTo, tipChance, type Tips, untitled, versionNote } from '../hooks/settings'
+import { clockAt, firstTips, type Host, hostReplyText, NO_PLAYER, parseFlowArgs, readConfig, replyTo, tipChance, type Tips, untitled, versionNote } from '../hooks/settings'
 import { FRAME_MS, SceneDriver } from '../hooks/scene'
 import { Soundscape } from '../hooks/soundscape'
 import { type Scene, SCENES } from '../hooks/styles'

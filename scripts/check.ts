@@ -1,7 +1,8 @@
-// REVISION: flow-v185-clips
+// REVISION: flow-v191-tidy
 //
 // What every scene must hold to (AGENTS.md), measured: plugin.json lists
-// the scenes in SCENES, hooks/sound-files.ts lists the clips in sounds/,
+// the scenes in SCENES, register.tsx's FLOW_REVISION is the files' newest,
+// plugin.json's and package.json's versions agree, hooks/sound-files.ts lists the clips in sounds/,
 // level 0 draws nothing, a frame has at most 1024 colour pairs, and
 // step() + grid() takes under ~2 ms at the band's and the spine's sizes
 // (a scene with a taller view of its own, doom3d's, at its taller band too)
@@ -13,6 +14,7 @@
 //   npm run check -- surf ski    just these
 //   FLOW_MAX_MS=6 npm run check  a looser time budget, as CI runs it
 
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { SOUND_FILES } from '../hooks/sound-files'
 import { makeScene } from '../hooks/styles'
@@ -47,6 +49,23 @@ const bad = (why: string) => {
 }
 
 if (syncManifest(false)) bad('plugin.json is out of step with SCENES: run `npm run sync`')
+
+// The REVISION the mod logs at load (register.tsx's FLOW_REVISION) is the newest of the files' own (the counter
+// hooks/, scripts/, pi/ and tests/ share), so the debug log says which version is running.
+const ROOT = join(import.meta.dirname, '..')
+const revisionOf = (text: string) => Number(/^\/\/ REVISION: flow-v(\d+)-/.exec(text)?.[1] ?? 0)
+const newest = Math.max(
+  ...['hooks', 'scripts', 'pi', 'tests'].flatMap(dir =>
+    readdirSync(join(ROOT, dir))
+      .filter(f => /\.tsx?$/.test(f))
+      .map(f => revisionOf(readFileSync(join(ROOT, dir, f), 'utf8'))),
+  ),
+)
+const logged = Number(/const FLOW_REVISION = 'flow-v(\d+)-/.exec(readFileSync(join(ROOT, 'hooks', 'register.tsx'), 'utf8'))?.[1] ?? 0)
+if (logged !== newest) bad(`register.tsx's FLOW_REVISION is v${logged}, the files' newest v${newest}: make it that`)
+// One version: the plugin's (plugin.json, what Claude Code shows) and the package's (pi's and opencode's).
+const versionOf = (file: string) => (JSON.parse(readFileSync(join(ROOT, file), 'utf8')) as { version?: string }).version
+if (versionOf('.claude-plugin/plugin.json') !== versionOf('package.json')) bad('plugin.json and package.json give different versions')
 
 // The clips on disk and the ones the manifest names, as scripts/make-sounds.ts lists them.
 const SOUNDS = join(import.meta.dirname, '..', 'sounds')

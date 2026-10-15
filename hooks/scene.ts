@@ -1,7 +1,7 @@
-// REVISION: flow-v172-cleanup-followups
+// REVISION: flow-v191-tidy
 //
-// What every harness adapter (Claude Code's register.tsx, pi's pi/index.ts)
-// does the same way: one scene instance per style (so a switch resumes where
+// What every harness adapter (Claude Code's register.tsx, opencode's
+// opencode/tui.ts, pi's pi/index.ts) does the same way: one scene instance per style (so a switch resumes where
 // that scene left off), the level the settings and the activity call for, whether
 // anything shows at all, and pointing the current scene at those dials, the
 // time of day and whether Claude waits on the person. Two drivers can share

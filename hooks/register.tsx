@@ -1,4 +1,4 @@
-// REVISION: flow-v188-dry
+// REVISION: flow-v191-tidy
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -106,7 +106,7 @@ import {
 } from './picker'
 
 
-const FLOW_REVISION = 'flow-v173-directory'
+const FLOW_REVISION = 'flow-v191-tidy'
 const PLUGIN = 'flow-scenes'
 const KEY = 'flow'
 /** The command. */
@@ -1527,7 +1527,7 @@ export const register: Register = (on, options) => {
         <Box flexDirection="column">
           {hint}
           {SCENES.map((d, i) => (
-            <Box flexDirection="row" gap={1}>
+            <Box key={`row:${d.name}`} flexDirection="row" gap={1}>
               {button(d.name, i)}
               <Text dimColor wrap="truncate-end">
                 {d.blurb}
@@ -1555,7 +1555,7 @@ export const register: Register = (on, options) => {
     const grid: RenderElement[] = []
     for (let at = 0; at < SCENES.length; at += layout.across) {
       grid.push(
-        <Box flexDirection="row" columnGap={1}>
+        <Box key={`row:${at}`} flexDirection="row" columnGap={1}>
           {SCENES.slice(at, at + layout.across).map((d, k) => tile(d.name, at + k))}
         </Box>,
       )

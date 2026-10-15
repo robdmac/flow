@@ -30,7 +30,7 @@ hooks/
   pixel-scene.ts     PixelScene: the quick base for a scene that paints pixels (easing, fold, specks, level 0)
   cells.ts           Cells (the grid every scene returns), Rng and freshSeed, Raster encoding
   pixels.ts          shared helpers: mix, dist, clamp, smooth(step), approach, rampAt, rampStops, retain, hash*, fnv1a, noise1, noise2,
-                     luma, grey, QUAD, BITS, BRAILLE, fitQuad, groupColor
+                     luma, grey, QUAD, BITS, BRAILLE, fitQuad
   night.ts           the shared night: sky colors, STAR, MOON, moon placement, easeNight
   waiting.ts         the shared wait on the person: easeWait, the breath, waitTone (sepia, breathing)
   fire.ts            the fire scene's automaton (its heat grid), glyphs and 256-color ramps
@@ -148,7 +148,7 @@ claude plugin validate .     # the module's rules, the manifests, the hooks
 claude plugin test .         # the tests, including those that need the engine
 npm install                  # once, for the scripts below (tsx); no lockfile is kept (see below)
 npm run preview -- <scene>   # print it here: levels 1/5/10, band and spine, day/night, each tint
-npm run check                # plugin.json in step, level 0 blank, colour pairs, timing (with companions, waiting, and
+npm run check                # plugin.json in step, FLOW_REVISION and the versions, level 0 blank, colour pairs, timing (with companions, waiting, and
                              # over each of avalon's suns and nebulae); exits 1 on a problem
 npm run cvd -- [scene]       # how far apart the tints look to colour-blind eyes (and --sheets DIR for pictures)
 npm run sounds               # rebuild the soundscapes' clips (needs sox and ffmpeg)
@@ -157,7 +157,7 @@ npm run sounds               # rebuild the soundscapes' clips (needs sox and ffm
 - The oldest Claude Code, opencode and pi Flow is built against are `BUILT_AGAINST` (`settings.ts`, and the README's Compatibility): on an older one each adapter gives `versionNote` once for that version (Claude Code's `session.version()`, opencode's `app.version`, pi's own `VERSION`), kept where it keeps the rest (Claude Code's store `warned`, opencode's store, flow.json's `warned`), and runs all the same. Raise them when Flow starts needing something newer, and say so in the README.
 - No `package-lock.json` is committed (it's gitignored): Claude Code runs `npm ci` in a plugin's folder when it finds a lockfile beside `package.json`, and Flow needs none of its dev tools to run. `package.json` pins them to exact versions instead; bump them there.
 - Hot reload doesn't follow symlinks. To use a dev-mods folder, copy the plugin's files in rather than linking it.
-- Every file starts with a `// REVISION: flow-vNN-<what>` line; bump it when you change the file. On load the mod logs `[flow] REVISION: …`, the local time and the UTC offset to the debug log (`claude --debug`), so you can tell which version is running.
+- Every file starts with a `// REVISION: flow-vNN-<what>` line; bump it when you change the file. On load the mod logs `[flow] REVISION: …` (`FLOW_REVISION` in `register.tsx`: the newest of the files', which `npm run check` holds it to), the local time and the UTC offset to the debug log (`claude --debug`), so you can tell which version is running. `npm run check` also holds `plugin.json`'s and `package.json`'s versions to one.
 - After visual changes, run `npm run preview -- <scene>` (levels 1, 5 and 10 in both layouts, by day and night, with each tint and waiting on the person; `--waiting` for just that) and look at it.
 - Run `npm run check`: the color-pair count and the timing for each scene.
 - After changing a tint, run `npm run cvd -- <scene>`: for each pair of tints, the CIEDE2000 distance of what the tint changes, seen with normal vision, protanopia, deuteranopia, tritanopia (Machado 2009) and achromatopsia (luminance alone), worst setting first. Under 10 is weak, under 5 can't be told at a glance; it lists what colour blindness loses that normal vision sees, and `--sheets DIR` draws those settings as each vision sees them.

@@ -1,4 +1,4 @@
-// REVISION: flow-v8-earthrise-tones
+// REVISION: flow-v191-tidy
 //
 // Earthrise (the `earthrise` scene): the Earth coming up over a cratered
 // lunar horizon in long, low sunlight, after "earthrise" by Shubham on
@@ -1297,7 +1297,7 @@ function layout(pw: number, ph: number, ry: number, tall: boolean): Layout {
  * Once the last column is in, mark where the Earth can reach.
  */
 function build(L: Layout, budget: number): void {
-  const { pw, ph, s, sy, col0, row0, k, ex, er, sub, at, ground } = L
+  const { pw, ph, s, sy, col0, k, sub, at, ground } = L
   if (L.done >= pw) return
   const rows = ph * sub
   if (gx.length < rows) {
