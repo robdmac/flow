@@ -1,4 +1,4 @@
-// REVISION: flow-v183-pi-sound
+// REVISION: flow-v185-hygiene-bugs
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -36,6 +36,7 @@ import { rampAt, rampStops, retain } from '../hooks/pixels'
 import { freshSeed } from '../hooks/cells'
 import { type Player, Soundscape } from '../hooks/soundscape'
 import { effortOf as ocEffortOf, linesWritten as ocLinesWritten, OpenCodeWork } from '../opencode/mapping'
+import { colorCache } from '../opencode/colors'
 
 /** A test that walks every scene (each at several sizes or levels): a shared CI runner can take several times a laptop's 5 s default. */
 const SLOW_MS = 30_000
@@ -4473,6 +4474,23 @@ test("opencode: a subagent's session deleted before its run ends is gone, not le
   expect(a.runningAgents).toBe(0)
   expect(a.roster.dials()[0]!.state).toBe('done')
   expect(a.roster.dials()[0]!.ok).toBe(false)
+})
+
+test("opencode: each colour is made once while in use, but what's kept stays bounded however many a scene goes through", async () => {
+  let made = 0
+  const color = colorCache(c => ({ c, n: made++ }), 8)
+  const first = color(0x102030)
+  expect(color(0x102030)).toBe(first)
+  expect(made).toBe(1)
+  // A breathing wait: a new colour every frame, without end. What's kept never passes the bound.
+  for (let c = 0; c < 1000; c++) color(c)
+  expect(made).toBe(1001)
+  const again = color(999)
+  expect(made).toBe(1001)
+  expect(again.c).toBe(999)
+  // The first went long ago (it started afresh past the bound): made again.
+  expect(color(0x102030)).not.toBe(first)
+  expect(made).toBe(1002)
 })
 
 test('a host older than Flow is built against is told so (it still runs); as new, newer or unreadable, nothing', async () => {
