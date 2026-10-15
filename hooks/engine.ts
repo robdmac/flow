@@ -1,4 +1,4 @@
-// REVISION: flow-v188-dry
+// REVISION: flow-v189-pure-grid
 //
 // Engine (the `engine` style): a Victorian steam engine room on the same dials
 // as the fire; the level is how hard it is being driven. At 1 it stands cold,
@@ -38,7 +38,7 @@ import type { AgentDial } from './agents'
 import { Cells, DEFAULT_COLOR, freshSeed, Rng, isTall } from './cells'
 import { beckon, Crew, failed, type AgentMark } from './crew'
 import type { Tint } from './styles'
-import { BRAILLE, clamp, clamp01, dist, mix, QUAD, rampAt } from './pixels'
+import { BRAILLE, clamp, clamp01, dist, hash, mix, QUAD, rampAt } from './pixels'
 import { defineScene } from './scene-def'
 import { hear, type SoundEvent } from './sound'
 import { breath, easeWait, waitTone } from './waiting'
@@ -1368,7 +1368,7 @@ export class Engine {
   }
 
   private fireAt(qx: number, qy: number): number {
-    const flick = this.rng.f() * 0.18 - 0.06 + Math.sin(this.t * 0.7 + qx * 1.3) * 0.04
+    const flick = hash(qx + this.t * 7919, qy, 61) * 0.18 - 0.06 + Math.sin(this.t * 0.7 + qx * 1.3) * 0.04
     const h = this.heat * (qy & 1 ? 1 : 0.88) + flick * (0.4 + this.heat)
     // Blue: a gas flame, never cold-dark, so it reads at every level.
     if (this.tint === 'blue') return fireColor(0.3 + h * 0.75, BLUE_FIRE)

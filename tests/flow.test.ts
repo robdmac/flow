@@ -1,4 +1,4 @@
-// REVISION: flow-v188-dry
+// REVISION: flow-v189-pure-grid
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -1562,6 +1562,26 @@ test('every scene has a unique lowercase name, a blurb, and builds', () => {
     s.ensure(40, 5)
     s.step()
     expect(s.grid().columns).toBe(40)
+  }
+})
+
+test('every scene draws without moving on: grid() twice gives one frame, and drawing never changes the frames after', { timeoutMs: SLOW_MS }, () => {
+  // (Hosts draw a step once, but a scene that drew from its rng would flicker under a second look, and step differently for it.)
+  for (const name of STYLES) for (const [columns, rows] of [[120, 5], [22, 50]] as const) {
+    const looked = makeScene(name, 7)
+    const not = makeScene(name, 7)
+    for (const s of [looked, not]) {
+      s.ensure(columns, rows)
+      s.strength = 10
+    }
+    for (let i = 0; i < 60; i++) {
+      looked.step()
+      not.step()
+      const first = looked.grid().words.slice()
+      expect(looked.grid().words, `${name} ${columns}×${rows}, step ${i}`).toEqual(first)
+      if (i % 3 === 0) continue // (the other only looks every third step)
+      expect(not.grid().words, `${name} ${columns}×${rows}, step ${i}`).toEqual(first)
+    }
   }
 })
 

@@ -79,6 +79,7 @@ A scene implements `Scene` (`hooks/styles.ts`). Its file exports a `SceneDef` (`
 - **Drawing**:
   - Most scenes paint a pixel layer at 2 × 2 pixels per cell, then fold it into quadrant glyphs with `fitQuad`. A cell holds only two colors; give `fitQuad` a sprite's pixels as its `keep` so a small figure never drops out of its own cell.
   - Braille (`BRAILLE`, 2 × 4 dots a cell) is for fine specks: spray, stars, bubbles.
+  - `grid()` only draws what `step()` made: the same frame however often it's called, and never the `Rng` (a flicker drawn there is a `hash` of the frame and the place). A test checks every scene.
   - `DEFAULT_COLOR` (0x01000000) is the terminal's own color, i.e. transparent.
   - A scene can also draw itself at real pixels (`Scene.picture(w, h, budget)`: RGBA, the open sky transparent), which pi shows as a kitty image in a terminal that draws them (`pi/picture.ts`); earthrise alone does so far, as a halftone like its original (each cell of a square grid a dot sized by its light, Bayer-dithered, in the original's palette), its ground built at the dots' grid, not at every pixel. A new size may take a while to make: `picture` makes `budget` of it a call and returns undefined until it's done (pi makes it between frames, showing the cells meanwhile). What took long goes in `pictureCache()` under `pictureKey(w, h)`, and pi keeps it in `~/.cache/flow` (`restorePicture` takes it back): bump the scene's version of it when what it makes changes.
 - **Limits**:
