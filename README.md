@@ -4,7 +4,7 @@
 
 <img width="1200" height="384" alt="Flow's fire above the prompt: pilot lights at idle, climbing with each of Claude's tool calls, an inferno with three subagents, then back down when Claude is done" src="https://github.com/user-attachments/assets/0f0120cc-af23-44ec-9398-309cccd42764" />
 
-Ambient scenes in your terminal that move with the work your coding agent is doing: a fire, fizzing bubbles, the surf, a ski run, two rockets, a hot-air balloon, a steam engine, a train through the countryside, a colony ship behind its shield, the Earth rising over the moon, and a space marine fighting through a 1993 techbase. They run above the prompt of Claude Code (in the terminal or the Claude desktop app) or [pi](https://github.com/badlogic/pi-mono), or in a tall pane beside Claude Code's transcript.
+Ambient scenes in your terminal that move with the work your coding agent is doing: a fire, fizzing bubbles, the surf, a ski run, two rockets, a hot-air balloon, a steam engine, a train through the countryside, a colony ship behind its shield, the Earth rising over the moon, and a space marine fighting through a 1993 techbase. They run above the prompt of Claude Code (in the terminal or the Claude desktop app), [opencode](https://opencode.ai) or [pi](https://github.com/badlogic/pi-mono), or in a tall pane beside Claude Code's transcript or in opencode's sidebar.
 
 Each scene is drawn in 24-bit color from Unicode block, quadrant and braille characters, so several pixels share each terminal cell. In the Claude desktop app, which has no character grid to draw into, the same frames are drawn as images.
 
@@ -23,6 +23,12 @@ https://github.com/user-attachments/assets/66673edf-7a52-43c3-b52b-3a804068bc5e
 Installed it before as `flow@robdmac`? The plugin is now `flow-scenes` (another plugin had the name `flow`). Run `/plugin uninstall flow@robdmac`, then install as above. The command is still `/flow`. Settings you'd saved in `/config` don't carry over: set them again, or set them with `/flow` and `/flow save`.
 
 **Claude desktop**, in the Code tab: click **+** next to the prompt box, then **Plugins** → **Add plugin**, add the marketplace `robdmac/flow` and install **Flow** (`flow-scenes`). Manage it later from **+** → **Plugins** → **Manage plugins**. The desktop app and Claude Code share their plugins, so if you've installed Flow in the terminal it's already there. It runs in local sessions, not cloud ones.
+
+**opencode** (2.0 or later), from your shell:
+
+```
+opencode plugin add github:robdmac/flow
+```
 
 **pi**, from your shell:
 
@@ -165,7 +171,7 @@ The background is long takes that blend one into the next at random moments, so 
 
 When Claude starts waiting on you (a permission, its question, a plan to approve), a soft chime: two struck tubes rising a fourth, about as loud as a scene at 6. Once a wait, and not for one right behind another (within 20 s): you're there already. It's part of the soundscape, so it follows the session's sound setting: `/flow sound` turns it on and off with the rest. For an alert without the ambience, there's Claude Code's own notification setting in `/config`.
 
-It plays only while the scene is on screen, and stops with the session. Claude Code plays the clips with `afplay`, so it's macOS only; elsewhere the setting does nothing. It's set per session like everything else, so you can have it on in one session and not another, or quieter in one; several sessions with it on each play their own.
+It plays only while the scene is on screen, and stops with the session. Claude Code plays the clips with `afplay`, and in opencode Flow runs `afplay` itself, so it's macOS only; elsewhere the setting does nothing. It's set per session like everything else, so you can have it on in one session and not another, or quieter in one; several sessions with it on each play their own.
 
 ## Turning it off
 
@@ -193,19 +199,36 @@ pi tells an extension nothing of a wait on you, so there the scenes never show o
 
 As in Claude Code, each session keeps its own settings, kept in the session itself (an entry the model never sees), so resuming or forking it brings them back. `~/.pi/agent/flow.json` holds the defaults new sessions start with; `/flow save` writes it. To try it without installing: `pi --extension ./pi/index.ts`.
 
+## opencode
+
+The same scenes run as an opencode terminal UI plugin (`opencode/tui.ts`, opencode 2.0 or later): above the prompt of the session on screen, or with `/flow spine` in its sidebar. They share the scenes, the activity model, the soundscapes and the `/flow` command with the Claude Code version; `/flow pick` is opencode's own list, `/flow help` a dialog. opencode's events drive it:
+
+| opencode event | The scene |
+|---|---|
+| `session.execution.started` / ended | a turn lifts it (a level more for every 30 s it runs), then it settles to idle; a turn that fails shows as smoke |
+| `session.step.started`, text and reasoning deltas | each model step, and streamed text and thinking, keep it going |
+| `session.tool.called` | `write`/`edit`/`apply_patch` push it by lines written, `shell` sparks, reads and other tools flicker |
+| `session.tool.success`, `.failed` | a command that exits non-zero shows as smoke |
+| `session.created` with a parent | a subagent: a companion of its own, there till its run ends (done well, or not) |
+| `permission.asked`, `form.created` | a permission or a question put to you: the scene settles and breathes till it's answered |
+| `session.compaction.ended` | smoke, as for a compaction in Claude Code |
+| `session.usage.updated` | a context nearly full (the last step's tokens over the model's limit) shows as blue |
+
+Each session keeps its own settings, kept in Flow's own opencode storage under the session's id (the 100 used most recently), so reopening it brings them back; `/flow save` makes them the defaults new sessions start with, for every opencode on the machine. Options set for the plugin in `cli.json` (`{ "package": "github:robdmac/flow", "options": { "style": "surf" } }`) are defaults too, under what `/flow save` keeps. opencode has no player for a plugin's own sounds, so for the soundscape Flow runs `afplay` (macOS) in the background itself, one per clip, stopped with the scene or opencode.
+
 ## What Flow does on your machine
 
-**Privacy:** Flow collects nothing. It has no servers, sends no data anywhere, and keeps what little it stores (below) on your machine: in Claude Code's own storage for the plugin, or in pi under `~/.pi/agent/flow.json` and `~/.cache/flow`.
+**Privacy:** Flow collects nothing. It has no servers, sends no data anywhere, and keeps what little it stores (below) on your machine: in Claude Code's or opencode's own storage for the plugin, or in pi under `~/.pi/agent/flow.json` and `~/.cache/flow`.
 
-**Network:** none. Flow sends nothing anywhere and contacts no hosts. Everything it draws and plays is computed locally from the plugin's own files. The one call that takes anything out of the plugin is `$.audio.play`, which hands one of the plugin's own clips from `sounds/` (and a volume) to the local audio player, `afplay`: nothing Flow reads (settings, the conversation, your files) goes into it, and it reaches no address.
+**Network:** none. Flow sends nothing anywhere and contacts no hosts. Everything it draws and plays is computed locally from the plugin's own files. The one call that takes anything out of the plugin is `$.audio.play`, which hands one of the plugin's own clips from `sounds/` (and a volume) to the local audio player, `afplay`: nothing Flow reads (settings, the conversation, your files) goes into it, and it reaches no address. In opencode, which has no such call, Flow starts `/usr/bin/afplay` itself for each clip (macOS only, and only with the sound on): its arguments are a volume and the path of one of the plugin's own clips, or of a short sound it made (written to a file of its own in the system's temporary folder, and deleted once played). It runs nothing else.
 
 **Your settings:** Flow writes its own `/config` rows (the `flow-scenes` plugin's options: scene, mode, sound and the rest) only when you run `/flow save`, which writes the settings your session shows as the defaults for new sessions. It reads them (`$.config.list()`) to start each session on your defaults.
 
 It writes no other settings, no files and no environment variables. (`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`, under *Not loading?*, is a variable you set yourself, if you need it.)
 
-**What it keeps:** in Claude Code's per-plugin store, each session's own `/flow` settings (the 100 most recently used sessions, none unused for 60 days) and which one-time tips you've seen. In the session's own plugin state, the balloon's altitude and whether someone has been at the session. In pi, a session's settings go in the session as an entry the model never sees, and `/flow save` writes `~/.pi/agent/flow.json`.
+**What it keeps:** in Claude Code's per-plugin store, each session's own `/flow` settings (the 100 most recently used sessions, none unused for 60 days) and which one-time tips you've seen. In the session's own plugin state, the balloon's altitude and whether someone has been at the session. In opencode, each session's own `/flow` settings (the 100 most recently used) and the defaults `/flow save` keeps, in opencode's storage for the plugin. In pi, a session's settings go in the session as an entry the model never sees, and `/flow save` writes `~/.pi/agent/flow.json`.
 
-**Sound:** off unless you turn it on. Claude Code plays the plugin's own clips (`sounds/`) through `afplay`, only after someone has typed or run a turn in the session.
+**Sound:** off unless you turn it on. Claude Code plays the plugin's own clips (`sounds/`) through `afplay`, only after someone has typed or run a turn in the session; in opencode, Flow plays them through `afplay` itself, once a turn has run or `/flow` has been used in the session on screen.
 
 **What its hooks see, and what they decide:** nothing. Every hook passes the event on unchanged (the one Flow answers is its own `/flow` command); Flow never blocks, allows, rewrites or answers a tool call, a permission, a prompt or a setting. It only watches, to set how busy the scene looks:
 
@@ -221,6 +244,8 @@ It writes no other settings, no files and no environment variables. (`CLAUDE_COD
 | `session.start`, `session.end`, `ui.*` | the session's id; the panes it draws | its settings; the band, the spine and `/flow pick` |
 
 It also lists the session's running subagents (`$.agent.list()`: their state, task and type) to give each one a companion and a hover card.
+
+In opencode, Flow is a terminal UI plugin only: nothing of it runs in opencode's server, and it changes nothing it hears. It reads opencode's events for the session on screen and its subagents, as in the table under *opencode*: tool names, the lines an edit writes (counted, not kept), a command's exit code, how much text streams (its length), that a permission or question is up and when it's answered, token counts. It draws in two places in opencode's screen (above the prompt, and the sidebar) and adds the `/flow` command.
 
 ## Cost
 
@@ -252,6 +277,8 @@ npm run check                # colour pairs and timing, before you open a pull r
 ```
 
 `new-scene` writes `hooks/aurora.ts`: a scene that already moves with the level, shows the tints, breathes while Claude waits on you and (with `--night`) has a night. Edit its `paint()`: it gets a grid of pixels (2 × 2 a terminal cell) and the dials (the level, eased; the frame count; night; the tint; how far into a wait on you; whether it's the tall spine). [AGENTS.md](AGENTS.md) has the rules a scene keeps to.
+
+To try the opencode version from a checkout, put a one-line `tui.ts` in a project's `.opencode/plugins/flow/`: `export { default } from '/path/to/flow/opencode/tui.ts'`, then run `opencode` in that project.
 
 Every hook file carries a `// REVISION:` marker. On startup the mod writes the loaded revision, the local time and the UTC offset to the debug log (`claude --debug`).
 

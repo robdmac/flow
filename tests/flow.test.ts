@@ -1,4 +1,4 @@
-// REVISION: flow-v179-doom-volleys
+// REVISION: flow-v180-opencode
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -34,6 +34,8 @@ import { beckon, easeTo, failed, finished, resting, type Mate } from '../hooks/c
 import { easeNight } from '../hooks/night'
 import { rampAt, rampStops, retain } from '../hooks/pixels'
 import { freshSeed } from '../hooks/cells'
+import { type Player, Soundscape } from '../hooks/soundscape'
+import { linesWritten as ocLinesWritten, OpenCodeWork } from '../opencode/mapping'
 
 const BAND = {
   component: 'AbovePrompt',
@@ -4279,4 +4281,143 @@ test('companions alike in every scene: resting, beckoning out of step by slot, l
   expect(resting(a)).toBe(false)
   expect(easeTo(Number.NaN, 5, 0.1)).toBe(5)
   expect(easeTo(0, 10, 0.5)).toBe(5)
+})
+
+// ── opencode ─────────────────────────────────────────────────────────────
+
+/** opencode's events as it sends them (recorded from opencode 2.0.29: a write, an edit, a failing shell, a subagent's read). */
+const OC = 'ses_main'
+const SUB = 'ses_sub'
+const ocRun = (sessionID: string) => [
+  { type: 'session.execution.started', data: { sessionID } },
+  { type: 'session.step.started', data: { sessionID } },
+]
+
+test('opencode: a turn, its edits and a failing shell drive the level and the smoke', async () => {
+  const a = new Activity()
+  const work = new OpenCodeWork(a)
+  work.show(OC)
+  for (const e of ocRun(OC)) work.event(e)
+  expect(a.isTurnActive).toBe(true)
+  const heat0 = a.heat
+  work.event({ type: 'session.tool.input.started', data: { sessionID: OC, id: 'c1', name: 'write' } })
+  work.event({ type: 'session.tool.called', data: { sessionID: OC, id: 'c1', input: { path: 'b.txt', content: 'one\ntwo\nthree' }, executed: false } })
+  expect(a.heat).toBeGreaterThan(heat0)
+  expect(a.toolsInFlight).toBe(1)
+  work.event({ type: 'session.tool.success', data: { sessionID: OC, id: 'c1', content: [{ type: 'text', text: 'Created' }], metadata: { truncated: false } } })
+  expect(a.toolsInFlight).toBe(0)
+  expect(a.tint).toBe('normal')
+  // A shell that exits 1 is a success to opencode (it ran), a failure to Flow: smoke.
+  work.event({ type: 'session.tool.input.started', data: { sessionID: OC, id: 'c2', name: 'shell' } })
+  work.event({ type: 'session.tool.called', data: { sessionID: OC, id: 'c2', input: { command: 'false' } } })
+  work.event({ type: 'session.tool.success', data: { sessionID: OC, id: 'c2', metadata: { status: 'completed', exit: 1 } } })
+  expect(a.tint).toBe('smoke')
+  work.event({ type: 'session.execution.succeeded', data: { sessionID: OC } })
+  expect(a.isTurnActive).toBe(false)
+  // Another session's work is none of this scene's.
+  work.event({ type: 'session.execution.started', data: { sessionID: 'ses_other' } })
+  expect(a.isTurnActive).toBe(false)
+})
+
+test('opencode: lines written by its write, edit and patch tools', async () => {
+  expect(ocLinesWritten('write', { content: 'a\nb\nc' })).toBe(3)
+  expect(ocLinesWritten('edit', { newString: 'one\nTWO\nthree', oldString: 'x' })).toBe(3)
+  expect(ocLinesWritten('apply_patch', { patchText: '*** Begin\n+a\n+b\n-c\n+++ x' })).toBe(2)
+  expect(ocLinesWritten('shell', { command: 'ls' })).toBeUndefined()
+})
+
+test('opencode: a subagent (a child session) is a companion: working, then done well or not', async () => {
+  const a = new Activity()
+  const work = new OpenCodeWork(a)
+  work.show(OC)
+  for (const e of ocRun(OC)) work.event(e)
+  work.event({ type: 'session.created', data: { sessionID: SUB, parentID: OC, title: 'Read a.txt contents', agent: 'general' } })
+  expect(a.runningAgents).toBe(1)
+  for (const e of ocRun(SUB)) work.event(e)
+  work.event({ type: 'session.tool.input.started', data: { sessionID: SUB, id: 's1', name: 'read' } })
+  work.event({ type: 'session.tool.called', data: { sessionID: SUB, id: 's1', input: { path: 'a.txt' } } })
+  let d = a.roster.dials()
+  expect(d.length).toBe(1)
+  expect(d[0]!.state).toBe('working')
+  expect(d[0]!.task).toBe('Read a.txt contents')
+  expect(d[0]!.type).toBe('general')
+  // A subagent's tools are its own: the main loop's in flight stay none.
+  expect(a.toolsInFlight).toBe(0)
+  work.event({ type: 'session.tool.success', data: { sessionID: SUB, id: 's1' } })
+  work.event({ type: 'session.execution.succeeded', data: { sessionID: SUB } })
+  d = a.roster.dials()
+  expect(d[0]!.state).toBe('done')
+  expect(d[0]!.ok).toBe(true)
+  expect(a.runningAgents).toBe(0)
+  // One interrupted is done, not well.
+  work.event({ type: 'session.created', data: { sessionID: 'ses_sub2', parentID: OC, title: 'Another' } })
+  work.event({ type: 'session.execution.interrupted', data: { sessionID: 'ses_sub2', reason: 'user' } })
+  expect(a.roster.dials().find(x => x.id === 'ses_sub2')!.ok).toBe(false)
+})
+
+test('opencode: a permission or a question put to the person settles the scene till answered, in any loop', async () => {
+  const a = new Activity()
+  const work = new OpenCodeWork(a)
+  work.show(OC)
+  for (const e of ocRun(OC)) work.event(e)
+  work.event({ type: 'permission.asked', data: { id: 'per_1', sessionID: OC, action: 'edit', resources: ['b.txt'] } })
+  expect(a.isAwaitingPerson).toBe(true)
+  expect(a.strength(1)).toBeLessThanOrEqual(WAIT_LEVEL)
+  work.event({ type: 'permission.replied', data: { sessionID: OC, requestID: 'per_1', reply: 'once' } })
+  expect(a.isAwaitingPerson).toBe(false)
+  work.event({ type: 'session.created', data: { sessionID: SUB, parentID: OC, title: 'Ask' } })
+  work.event({ type: 'form.created', data: { form: { id: 'frm_1', sessionID: SUB, title: 'Which?', fields: [] } } })
+  expect(a.isAwaitingPerson).toBe(true)
+  expect(a.roster.dials()[0]!.state).toBe('waiting')
+  work.event({ type: 'form.cancelled', data: { id: 'frm_1', sessionID: SUB } })
+  expect(a.isAwaitingPerson).toBe(false)
+})
+
+test("opencode: the context fills by each step's tokens over the model's limit; another session on screen starts afresh", async () => {
+  const a = new Activity()
+  const work = new OpenCodeWork(a, () => 10_000)
+  work.show(OC)
+  const usage = (input: number, read: number) => ({ type: 'session.usage.updated', data: { sessionID: OC, cost: 0, tokens: { input, output: 0, reasoning: 0, cache: { read, write: 0 } } } })
+  // The first is the session's total so far, not a step's.
+  work.event(usage(50_000, 0))
+  expect(a.contextPercent).toBe(0)
+  work.event(usage(50_500, 8_500))
+  expect(a.contextPercent).toBe(90)
+  expect(a.tint).toBe('blue')
+  work.show('ses_new')
+  expect(a.contextPercent).toBe(0)
+  expect(a.tint).toBe('normal')
+})
+
+test('the soundscape plays through any player: a bed, at most its plays at once, stopped when the sound goes off', async () => {
+  const cfg = readConfig({ style: 'fire', sound: 'on' })
+  const plays: { asset: string; signal: AbortSignal }[] = []
+  const later: (() => void)[] = []
+  const player: Player = {
+    maxPlays: 4,
+    play: (clip, _gain, signal) => {
+      if ('asset' in clip) plays.push({ asset: clip.asset, signal })
+      return new Promise(resolve => signal.addEventListener('abort', () => resolve()))
+    },
+    full: () => false,
+    after: (_ms, fn) => void later.push(fn),
+  }
+  const sound = new Soundscape(cfg, player)
+  const scene = makeScene('fire', 3)
+  scene.ensure(80, 5)
+  scene.strength = 6
+  const frame = (heard = true) => sound.step(70, { heard, shown: scene, scenes: [scene], waiting: false, tint: 'normal', night: false })
+  // Nobody there yet: nothing.
+  frame()
+  expect(plays.length).toBe(0)
+  sound.present = true
+  for (let i = 0; i < 400; i++) {
+    scene.step()
+    frame()
+  }
+  expect(plays.some(p => p.asset.startsWith('sounds/fire/bed-'))).toBe(true)
+  expect(plays.filter(p => !p.signal.aborted).length).toBeLessThanOrEqual(4)
+  cfg.sound = 'off'
+  frame()
+  expect(plays.every(p => p.signal.aborted)).toBe(true)
 })

@@ -1,4 +1,4 @@
-// REVISION: flow-v176-directory-lints
+// REVISION: flow-v177-opencode
 //
 // Flow's settings and the `/flow` command's grammar, shared by every harness adapter (Claude Code's
 // register.tsx, pi's pi/index.ts). Pure: no engine imports. Replies carry no
@@ -260,8 +260,11 @@ function differingItems(a: FlowConfig, b: FlowConfig): Item[] {
 
 const inWords = (cfg: FlowConfig, items: readonly Item[]) => items.map(i => itemText(cfg, i)).join(', ')
 
-/** What the harness can do that `/flow` speaks of: side panes (the spine, the picker's thumbnails), and a player for the soundscape. */
-export type Host = { panes: boolean; sound: boolean }
+/**
+ * What the harness can do that `/flow` speaks of: side panes (the spine, the picker's thumbnails), and a player
+ * for the soundscape. `thumbnails: false`: panes for the spine, but `/flow pick` is a list (opencode's).
+ */
+export type Host = { panes: boolean; sound: boolean; thumbnails?: boolean }
 /** Claude Code: both. */
 export const CLAUDE_CODE: Host = { panes: true, sound: true }
 
@@ -325,7 +328,7 @@ export function helpText(agent = "Claude's", host: Host = CLAUDE_CODE): string {
   const lines = [
     'ambient scenes that move with the work; each session keeps its own settings',
     `  /flow <name>          pick a scene: ${SCENES}`,
-    panes
+    panes && host.thumbnails !== false
       ? '  /flow pick            every scene live, side by side: arrows move, Enter picks, Esc closes'
       : '  /flow pick            choose a scene from a list',
     '  /flow next            the next scene',
