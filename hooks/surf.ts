@@ -1,4 +1,4 @@
-// REVISION: flow-v184-surf-barrel
+// REVISION: flow-v186-surf-smoke
 //
 // Surf (the `surf` style): a surfer and the ocean on the same dials as the
 // fire; the level is the swell. At 1 the sea is glassy under a dawn sky and
@@ -138,6 +138,8 @@ const NIGHT: Palette = {
 const NIGHT_SHADE = 0x0a1428
 /** Moonlight caught along the top of the water by night: the line between sea and sky. */
 const MOON_RIM = 0x4a7c94
+/** What the barrel (its lip, its tube) dulls toward under smoke: a grey sea in overcast light. */
+const SMOKE_LIP = 0x5d6466
 /** The band's sea by night: one even teal under the black sky (darkening a little with depth). */
 const BAND_SEA = 0x0c3448
 
@@ -787,6 +789,9 @@ export class Surf {
           // The lip: lit through, pale green-blue; frothing at the tip.
           const dyc = (yc - this.ey) / this.ry
           c = mix(P.faceLip, P.foam, clamp(0.25 + dyc * 0.5) * 0.7)
+          // Under smoke the barrel dulls further than the sea's greying alone:
+          // pale and bright, half-greyed it keeps its lightness (tritan eyes lose it).
+          if (this.kGrey > 0) c = mix(c, SMOKE_LIP, 0.6 * this.kGrey)
           if (bandNight > 0.01) c = mix(c, mix(BAND_SEA, MOON_RIM, 0.45), 0.7 * bandNight)
           this.water[k] = 1
         } else if (inTube) {
@@ -796,6 +801,7 @@ export class Surf {
           // the lip, close to the face's own color toward the mouth.
           const lit = clamp((dx + dy) * 0.4 + 0.55)
           c = mix(mix(P.tube, P.seaTop, 0.4), mix(P.seaTop, P.faceLip, 0.5), lit * 0.8)
+          if (this.kGrey > 0) c = mix(c, SMOKE_LIP, 0.6 * this.kGrey)
           if (bandNight > 0.01) c = mix(c, mix(BAND_SEA, P.seaDeep, 0.3), 0.7 * bandNight)
           this.water[k] = 0
         } else if (wet > 0) {
