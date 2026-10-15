@@ -1,4 +1,4 @@
-// REVISION: flow-v3-opencode-deleted
+// REVISION: flow-v4-hygiene
 //
 // opencode's events in the heat model's terms, for the session on screen and
 // the subagents it runs (child sessions, each with its `parentID`). Pure (no
@@ -177,6 +177,12 @@ export class OpenCodeWork {
         return
       }
       case 'session.deleted': {
+        // What's kept of any session goes with it: these hear the whole server, every session it ever makes.
+        if (typeof data.sessionID === 'string') {
+          this.parents.delete(data.sessionID)
+          this.used.delete(data.sessionID)
+          this.variants.delete(data.sessionID)
+        }
         // A subagent's session deleted before its run ended (else it would stay working, quiet, for good).
         const child = typeof data.sessionID === 'string' ? this.children.get(data.sessionID) : undefined
         if (child?.status !== 'running') return

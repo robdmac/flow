@@ -1,4 +1,4 @@
-// REVISION: flow-v173-directory
+// REVISION: flow-v187-surf-hood
 //
 // Surf (the `surf` style): a surfer and the ocean on the same dials as the
 // fire; the level is the swell. At 1 the sea is glassy under a dawn sky and
@@ -138,6 +138,8 @@ const NIGHT: Palette = {
 const NIGHT_SHADE = 0x0a1428
 /** Moonlight caught along the top of the water by night: the line between sea and sky. */
 const MOON_RIM = 0x4a7c94
+/** What the barrel (its lip, its tube) dulls toward under smoke: a grey sea in overcast light. */
+const SMOKE_LIP = 0x5d6466
 /** The band's sea by night: one even teal under the black sky (darkening a little with depth). */
 const BAND_SEA = 0x0c3448
 
@@ -767,7 +769,10 @@ export class Surf {
         // Water.
         let wet = clamp(y + 1 - surf)
         let inTube = false
-        let lip = 0
+        let onLip = false
+        // Water the crest throws forward over the barrel (above the face's own
+        // surface): the back of the wave curling over, so shaded as the back.
+        let hooded = false
         if (lip > 0 && isMain && Math.abs(xc - this.ex) < this.rx + 1 && yc < seaY + 1) {
           const dx = (xc - this.ex) / this.rx
           const dy = (yc - this.ey) / this.ry
@@ -779,14 +784,23 @@ export class Surf {
             const sa = Math.sin((phi * Math.PI) / 180)
             const R = Math.hypot(this.rx * ca, 2 * this.ry * sa)
             const th = ((vertical ? 5 : 2.6) * (1 - 0.45 * prog) * (0.6 + 0.4 * lip)) / R
-            if (phi <= this.phiEnd && r > 1 - th && r < 1 && (yc < surf || phi > -140)) lip = 1
+            if (phi <= this.phiEnd && r > 1 - th && r < 1 && (yc < surf || phi > -140)) onLip = true
             else if (yc < surf && r < 1) inTube = true
-          } else if (yc >= hood) wet = 1
-        } else if (yc >= hood && yc < surf) wet = clamp(y + 1 - hood)
-        if (lip) {
+          } else if (yc >= hood) {
+            wet = 1
+            hooded = yc < surf
+          }
+        } else if (yc >= hood && yc < surf) {
+          wet = clamp(y + 1 - hood)
+          hooded = true
+        }
+        if (onLip) {
           // The lip: lit through, pale green-blue; frothing at the tip.
           const dyc = (yc - this.ey) / this.ry
           c = mix(P.faceLip, P.foam, clamp(0.25 + dyc * 0.5) * 0.7)
+          // Under smoke the barrel dulls further than the sea's greying alone:
+          // pale and bright, half-greyed it keeps its lightness (tritan eyes lose it).
+          if (this.kGrey > 0) c = mix(c, SMOKE_LIP, 0.6 * this.kGrey)
           if (bandNight > 0.01) c = mix(c, mix(BAND_SEA, MOON_RIM, 0.45), 0.7 * bandNight)
           this.water[k] = 1
         } else if (inTube) {
@@ -796,6 +810,7 @@ export class Surf {
           // the lip, close to the face's own color toward the mouth.
           const lit = clamp((dx + dy) * 0.4 + 0.55)
           c = mix(mix(P.tube, P.seaTop, 0.4), mix(P.seaTop, P.faceLip, 0.5), lit * 0.8)
+          if (this.kGrey > 0) c = mix(c, SMOKE_LIP, 0.6 * this.kGrey)
           if (bandNight > 0.01) c = mix(c, mix(BAND_SEA, P.seaDeep, 0.3), 0.7 * bandNight)
           this.water[k] = 0
         } else if (wet > 0) {
@@ -808,7 +823,7 @@ export class Surf {
               // crest, so the face never starts as a hard-edged dark block.
               const backC = mix(P.seaTop, P.back, clamp(hf))
               const faceC = mix(mix(P.faceDeep, P.seaTop, 0.45), P.faceLip, Math.pow(clamp(hf), 1.25))
-              const fk = clamp((xc - cx) / (vertical ? Math.max(4, this.Wf * 0.45) : 5) + 0.35)
+              const fk = hooded ? 0 : clamp((xc - cx) / (vertical ? Math.max(4, this.Wf * 0.45) : 5) + 0.35)
               wc = mix(backC, faceC, fk)
               // The barrel's shadow fades out ahead of it rather than stopping on a line.
               if (lip > 0) {
@@ -823,7 +838,8 @@ export class Surf {
             const even = mix(BAND_SEA, P.seaDeep, clamp((yc - surf) / Math.max(2, ph - surf)) * 0.35)
             wc = mix(wc, even, 0.85 * bandNight)
           }
-          const depth = yc - surf
+          // (The hood's surface is its own top edge, not the face's below it.)
+          const depth = hooded ? yc - hood : yc - surf
           if (depth < 1) wc = mix(wc, P.foamShade, hump > 0.4 && hf > 0.5 ? 0.18 + 0.4 * clamp(hf - 0.5) : 0.18 * (1 - kNight))
           // Moonlight along the crests, strongest on the tallest faces; on a calm
           // sea only a faint line, or the swell reads as dark blocks on a bright stripe.

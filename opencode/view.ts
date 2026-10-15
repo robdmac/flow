@@ -1,4 +1,4 @@
-// REVISION: flow-v2-opencode-cards
+// REVISION: flow-v3-color-cache
 //
 // A scene in opencode's terminal UI: an OpenTUI renderable as wide as its
 // place (above the prompt, or the sidebar) and as tall as Flow asks, that
@@ -15,6 +15,7 @@
 import type { OptimizedBuffer, RenderContext, Renderable, RGBA } from '@opentui/core'
 
 import { type Cells, DEFAULT_COLOR } from '../hooks/cells'
+import { colorCache } from './colors'
 
 /** A scene's frame at a size, or none to draw nothing. */
 export type FrameAt = (columns: number, rows: number) => Cells | undefined
@@ -44,14 +45,7 @@ export function sceneViewClass(root: Renderable, theme: unknown): SceneViewClass
   const Rgba = rgbaIn(theme)
   if (!Rgba) throw new Error("flow: opencode's theme has no colours to draw with")
   const clear = Rgba.fromInts(0, 0, 0, 0)
-  /** Each colour as OpenTUI has it, made once (a scene uses a few hundred at most). */
-  const colors = new Map<number, RGBA>()
-  const color = (c: number): RGBA => {
-    if (c === DEFAULT_COLOR) return clear
-    let rgba = colors.get(c)
-    if (!rgba) colors.set(c, (rgba = Rgba.fromInts((c >> 16) & 255, (c >> 8) & 255, c & 255, 255)))
-    return rgba
-  }
+  const color = colorCache(c => (c === DEFAULT_COLOR ? clear : Rgba.fromInts((c >> 16) & 255, (c >> 8) & 255, c & 255, 255)))
 
   return class extends Base {
     constructor(

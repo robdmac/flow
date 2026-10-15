@@ -42,6 +42,7 @@ opencode/
                      settings in its storage, the soundscape)
   mapping.ts         opencode's events in the heat model's terms, its subagents (child sessions) on the roster (pure)
   view.ts            the scene as an OpenTUI renderable painting its cells, on the running opencode's own classes
+  colors.ts          the view's colours, made once while in use and bounded (pure)
   types.ts opentui.d.ts  what Flow uses of opencode's and OpenTUI's API, declared (nothing installed)
 node/
   player.ts          the soundscape's player where the host has none (opencode, pi): afplay run in the background

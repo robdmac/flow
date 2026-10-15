@@ -1,4 +1,4 @@
-// REVISION: flow-v5-shared-player
+// REVISION: flow-v6-hygiene
 //
 // Flow for opencode (2.0), by Rob Macrae: the same ambient scenes as the
 // Claude Code mod and the pi extension, in opencode's terminal UI. A terminal
@@ -31,7 +31,8 @@ import { staleSessions } from '../hooks/sessions'
 import { firstTips, type FlowConfig, type Host, parseFlowArgs, readConfig, replyTo, storedValue, tipChance, type Tips, versionNote } from '../hooks/settings'
 import { SceneDriver } from '../hooks/scene'
 import { Soundscape } from '../hooks/soundscape'
-import { SCENES } from '../hooks/styles'
+import { type Scene, SCENES } from '../hooks/styles'
+import type { Cells } from '../hooks/cells'
 import { FLOW_ENTRY } from '../pi/mapping'
 import { PiSettings, type SessionEntries } from '../pi/session'
 import { OpenCodeWork } from './mapping'
@@ -157,12 +158,20 @@ function setup(ctx: OcContext): () => void {
     return driver.scene.taller ? Math.max(ROWS, Math.min(TALL_ROWS, Math.floor(terminal * TALL_SHARE))) : ROWS
   }
 
-  /** The scene at a view's size, stepped by the frame loop: the view only draws it. */
+  /**
+   * The scene at a view's size, stepped by the frame loop: the view only draws it. opencode redraws far more
+   * often than a frame (each key, each streamed word), so a frame is made once a step and drawn as often as
+   * asked; made again on every redraw it would cost a frame's work each time, and the scenes that flicker at
+   * random as they draw (engine, the rockets) would flicker faster.
+   */
+  let made: { scene: Scene; cells: Cells } | undefined
   const frameAt = (columns: number, rows: number) => {
     const f = driver.scene
     if (!driver.isShown()) return undefined
+    if (made?.scene === f && made.cells.columns === columns && made.cells.rows === rows) return made.cells
     f.ensure(columns, rows)
-    return f.grid()
+    made = { scene: f, cells: f.grid() }
+    return made.cells
   }
   /**
    * A press on the scene: a companion there (or a cell beside it: they're small) shows its subagent's card, as
@@ -199,8 +208,14 @@ function setup(ctx: OcContext): () => void {
   /** A session has shown since Flow started: the first is a chance for a tip. */
   let tipChanceTaken = false
   const follow = () => {
-    const id = shownSession?.id()
-    if (!id) return
+    // A session shows while one of its views is up: back on the home screen they're gone, and there's none.
+    const up = (v: SceneView | undefined) => v !== undefined && !v.isDestroyed
+    const id = up(views.band) || up(views.spine) ? shownSession?.id() : undefined
+    if (!id) {
+      if (opened !== undefined) work.show(undefined)
+      opened = openedAt = undefined
+      return
+    }
     if (!tipChanceTaken) {
       tipChanceTaken = true
       setTimeout(() => {
@@ -257,6 +272,7 @@ function setup(ctx: OcContext): () => void {
     if (live) {
       f.ensure(live.width, live.height)
       f.step()
+      made = undefined
       live.requestRender()
     }
     sound.step(elapsed, {

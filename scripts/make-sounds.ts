@@ -1,4 +1,4 @@
-// REVISION: flow-v181-doom-volleys
+// REVISION: flow-v185-clips
 //
 // Builds the soundscapes' clips into sounds/ (AAC, mono 22.05 kHz) and the
 // manifest hooks/sound-files.ts. Each recipe makes a WAV with sox (and Node,
@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { join } from 'node:path'
 import { BED_FADE_MS, BED_MS, BED_TAKES, type BedMood, LAYERS, layerGain, master, MOODS } from '../hooks/sound'
 import { makeScene } from '../hooks/styles'
+import { listClips } from './clips'
 
 const ROOT = join(import.meta.dirname, '..')
 const OUT = join(ROOT, 'sounds')
@@ -1291,9 +1292,7 @@ for (const scene of Object.keys(LAYERS)) {
 writeFileSync(gainsFile, JSON.stringify(gains, null, 1))
 
 // The manifest: every clip there is, and each mood's gain.
-const files = readdirSync(OUT)
-  .flatMap(folder => readdirSync(join(OUT, folder)).map(f => `sounds/${folder}/${f}`))
-  .sort()
+const files = listClips(OUT)
 const sorted = Object.keys(gains).sort()
 writeFileSync(
   join(ROOT, 'hooks', 'sound-files.ts'),
