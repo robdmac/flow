@@ -1,4 +1,4 @@
-// REVISION: flow-v177-pi-sound
+// REVISION: flow-v185-pi-reload
 //
 // Flow for pi (badlogic/pi-mono), by Rob Macrae: the same ambient
 // scenes as the Claude Code mod, in a widget above pi's editor. pi's events
@@ -418,8 +418,13 @@ export default function flow(pi: PiApi) {
     if (timer) clearTimeout(timer)
     timer = undefined
   }
+  // pi quitting: the clips playing stop with it (else each would play out, up to a bed's 14 s). Held only while a
+  // session is: /reload loads Flow afresh in the same process, so a listener left behind would keep the old one.
+  const quitting = () => sound.stop()
 
   pi.on('session_start', async (_e, ctx) => {
+    process.off('exit', quitting)
+    process.once('exit', quitting)
     // A new session starts on the defaults; a resumed, forked or reloaded one on its own over them. (In every
     // mode: `/flow` runs in any, and compares with the defaults as they're kept.)
     await settings.open(entriesOf(ctx))
@@ -456,6 +461,9 @@ export default function flow(pi: PiApi) {
   pi.on('session_shutdown', (_e, ctx) => {
     stop()
     sound.stop()
+    process.off('exit', quitting)
+    // A picture being made a slice at a time stops with it.
+    making = undefined
     if (isMounted && ctx.hasUI) ctx.ui.setWidget(KEY, undefined)
     isMounted = false
     ctxRef = undefined
@@ -570,8 +578,6 @@ export default function flow(pi: PiApi) {
     // (pi shows a reply as it is: no `!` before what was wrong.)
     ctx.ui.notify(say((cmd.kind === 'error' ? reply.text.replace(/^! /, '') : reply.text) + (tip ? `\n\n${tip}` : '')), reply.level)
   }
-  // pi quitting: the clips playing stop with it (else each would play out, up to a bed's 14 s).
-  process.once('exit', () => sound.stop())
 
   pi.registerCommand('flow', {
     description:
