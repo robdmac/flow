@@ -1,10 +1,11 @@
-// REVISION: flow-v1-opencode
+// REVISION: flow-v2-opencode-cards
 //
 // A scene in opencode's terminal UI: an OpenTUI renderable as wide as its
 // place (above the prompt, or the sidebar) and as tall as Flow asks, that
 // paints the scene's cells straight into the frame each time it's drawn.
 // The terminal's own colour (DEFAULT_COLOR) is left transparent, so what's
-// behind shows through, as it does in Claude Code and pi.
+// behind shows through, as it does in Claude Code and pi. A press on it is
+// passed on at the cell it landed on (a companion there shows its card).
 //
 // OpenTUI's classes are the running opencode's own, taken from what it hands
 // the plugin (its renderer's root is a Renderable; its theme's colours are
@@ -19,7 +20,9 @@ import { type Cells, DEFAULT_COLOR } from '../hooks/cells'
 export type FrameAt = (columns: number, rows: number) => Cells | undefined
 
 export interface SceneView extends Renderable {}
-export type SceneViewClass = new (ctx: RenderContext, frame: FrameAt) => SceneView
+/** A press on the view, at a cell (its column and row in the scene). */
+export type Pressed = (column: number, row: number) => void
+export type SceneViewClass = new (ctx: RenderContext, frame: FrameAt, pressed: Pressed) => SceneView
 
 type RgbaClass = { fromInts(r: number, g: number, b: number, a?: number): RGBA }
 
@@ -54,8 +57,10 @@ export function sceneViewClass(root: Renderable, theme: unknown): SceneViewClass
     constructor(
       ctx: RenderContext,
       private readonly frame: FrameAt,
+      pressed: Pressed,
     ) {
       super(ctx, { width: '100%', height: 0, flexShrink: 0 })
+      this.onMouseDown = event => pressed(event.x - this.x, event.y - this.y)
     }
 
     protected override renderSelf(buffer: OptimizedBuffer): void {

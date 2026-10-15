@@ -201,12 +201,12 @@ As in Claude Code, each session keeps its own settings, kept in the session itse
 
 ## opencode
 
-The same scenes run as an opencode terminal UI plugin (`opencode/tui.ts`, opencode 2.0 or later): above the prompt of the session on screen, or with `/flow spine` in its sidebar. They share the scenes, the activity model, the soundscapes and the `/flow` command with the Claude Code version; `/flow pick` is opencode's own list, `/flow help` a dialog. opencode's events drive it:
+The same scenes run as an opencode terminal UI plugin (`opencode/tui.ts`, opencode 2.0 or later): above the prompt of the session on screen, or with `/flow spine` in its sidebar. They share the scenes, the activity model, the soundscapes and the `/flow` command with the Claude Code version; `/flow pick` is opencode's own list, `/flow help` a dialog. Click a subagent's companion to see what it's doing: its task, whether it's working, quiet, waiting on you or done, and how long it's run. opencode's events drive it:
 
 | opencode event | The scene |
 |---|---|
 | `session.execution.started` / ended | a turn lifts it (a level more for every 30 s it runs), then it settles to idle; a turn that fails shows as smoke |
-| `session.step.started`, text and reasoning deltas | each model step, and streamed text and thinking, keep it going |
+| `session.step.started`, text and reasoning deltas | each model step, and streamed text and thinking, keep it going; the model's variant sets the floor (`low` 2 … `max` 6) |
 | `session.tool.called` | `write`/`edit`/`apply_patch` push it by lines written, `shell` sparks, reads and other tools flicker |
 | `session.tool.success`, `.failed` | a command that exits non-zero shows as smoke |
 | `session.created` with a parent | a subagent: a companion of its own, there till its run ends (done well, or not) |
@@ -253,7 +253,7 @@ Flow repaints about 14 times a second while busy and 8 times when calm. It skips
 
 ## Compatibility
 
-Built against Claude Code 2.1.289 and pi 1.0.0. Mods (function-hook plugins) are early access: the API may change between Claude Code releases, so a newer release can break flow until it's updated.
+Built against Claude Code 2.1.289, opencode 2.0.29 and pi 1.0.0. Mods (function-hook plugins) are early access: the API may change between Claude Code releases, so a newer release can break flow until it's updated. opencode's plugin API for its terminal UI is new with opencode 2, and may change between its releases too.
 
 ## Development
 

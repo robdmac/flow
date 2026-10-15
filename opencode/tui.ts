@@ -1,4 +1,4 @@
-// REVISION: flow-v1-opencode
+// REVISION: flow-v2-opencode-effort
 //
 // Flow for opencode (2.0), by Rob Macrae: the same ambient scenes as the
 // Claude Code mod and the pi extension, in opencode's terminal UI. A terminal
@@ -8,7 +8,8 @@
 //   the band     above the prompt of the session on screen (`session.composer.top`), 5 rows
 //                (a taller scene's view, doom3d's, up to 14, never more than half the terminal)
 //   the spine    `/flow spine`: in the sidebar beside the transcript (`sidebar.content`)
-//   its events   mapping.ts: the session's turns, steps, streamed text, tool calls (edits push it, a failed
+//   its cards    a press on a companion shows its subagent's task, state and time run (a toast)
+//   its events   mapping.ts: the session's turns, steps (its model's variant sets the floor), streamed text, tool calls (edits push it, a failed
 //                command shows as smoke), its subagents (a companion each), what it asks you (it settles
 //                and breathes), compaction, how full its context is
 //   /flow        the same command as in Claude Code and pi; `/flow pick` is opencode's own list
@@ -23,6 +24,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { Activity, FRAME_MS } from '../hooks/activity'
+import { agentLine } from '../hooks/agents'
 import { staleSessions } from '../hooks/sessions'
 import { type FlowConfig, type Host, parseFlowArgs, readConfig, replyTo, storedValue } from '../hooks/settings'
 import { SceneDriver } from '../hooks/scene'
@@ -102,7 +104,9 @@ function setup(ctx: OcContext): () => void {
     const info = ctx.data.location.model.list()?.find(m => m.providerID === model.providerID && (m.id === model.id || m.modelID === model.id))
     return info?.limit?.context
   }
-  const work = new OpenCodeWork(activity, contextLimit)
+  /** A session's model variant: its own, else the one the prompt has selected. */
+  const variantOf = (sessionID: string) => ctx.data.session.get(sessionID)?.model?.variant ?? ctx.ui.model.current()?.variant
+  const work = new OpenCodeWork(activity, contextLimit, variantOf)
   const View = sceneViewClass(ctx.renderer.root, ctx.theme)
 
   /** Where the scene is drawn: the band above the prompt, the spine in the sidebar (the one the layout says shows). */
@@ -126,8 +130,20 @@ function setup(ctx: OcContext): () => void {
     f.ensure(columns, rows)
     return f.grid()
   }
+  /**
+   * A press on the scene: a companion there (or a cell beside it: they're small) shows its subagent's card, as
+   * hovering does in Claude desktop: its task, what it's doing, how long it's run.
+   */
+  const pressed = (column: number, row: number) => {
+    const f = driver.scene
+    const near = (m: { col: number; row: number; w: number; h: number }) =>
+      column >= m.col - 1 && column <= m.col + m.w && row >= m.row - 1 && row <= m.row + m.h
+    const mark = f.agentMarks?.().find(near)
+    const dial = mark && f.agents?.find(d => d.id === mark.id)
+    if (dial) ctx.ui.toast.show({ title: 'flow: a subagent', message: agentLine(dial) })
+  }
   const view = (layout: 'band' | 'spine') => (input: { readonly sessionID: string }) => {
-    const v = new View(ctx.renderer, frameAt)
+    const v = new View(ctx.renderer, frameAt, pressed)
     const rows = rowsFor(layout)
     v.visible = rows > 0
     v.height = Math.max(1, rows)

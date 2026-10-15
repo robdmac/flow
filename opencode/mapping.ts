@@ -1,11 +1,11 @@
-// REVISION: flow-v1-opencode
+// REVISION: flow-v2-opencode-effort
 //
 // opencode's events in the heat model's terms, for the session on screen and
 // the subagents it runs (child sessions, each with its `parentID`). Pure (no
 // opencode or Node imports), so the shared tests cover it.
 //
 //   session.execution.started / ended    a turn of the session on screen, or a subagent's run
-//   session.step.started                 a model step
+//   session.step.started                 a model step; the model's variant (its effort: low … max) sets the floor
 //   session.text.delta, reasoning.delta  streamed text and thinking keep it going
 //   session.tool.input.started / called  a tool call: its name, then its input (edits push it, commands spark)
 //   session.tool.success / failed        it's over; a shell that failed (its exit code) shows as smoke
@@ -14,7 +14,7 @@
 //   session.compaction.ended             smoke, as a compaction is in Claude Code
 //   session.usage.updated                how full the context is (the step's tokens over the model's limit): blue
 
-import { type Activity, countLines } from '../hooks/activity'
+import { type Activity, countLines, type Effort } from '../hooks/activity'
 import type { ListedAgent } from '../hooks/agents'
 
 /** One of opencode's events, as far as Flow reads it: its type and its data. */
@@ -24,6 +24,22 @@ export type OpenCodeEvent = { type: string; data?: unknown }
 export const COMMAND_TOOLS = new Set(['shell', 'bash'])
 export const READ_TOOLS = new Set(['read', 'grep', 'glob', 'list', 'ls', 'find', 'webfetch', 'websearch'])
 export const AGENT_TOOLS = new Set(['subagent', 'task'])
+
+/** A model variant as the heat model's effort: opencode's names for how hard it thinks (a provider's own, or `default`, set no floor of their own). */
+export function effortOf(variant: string | undefined): Effort {
+  switch (variant) {
+    case 'minimal':
+    case 'low':
+      return 'low'
+    case 'medium':
+    case 'high':
+    case 'xhigh':
+    case 'max':
+      return variant
+    default:
+      return undefined
+  }
+}
 
 /** Lines an opencode write or edit call writes: `content`, `newString`, or a patch's added lines. */
 export function linesWritten(tool: string, input: unknown): number | undefined {
@@ -73,12 +89,21 @@ export class OpenCodeWork {
   private running = new Set<string>()
   /** Each session's tokens so far, as its last usage said: a step's are the difference. */
   private used = new Map<string, number>()
+  /** Each session's model variant as its events said (created with, or selected since). */
+  private variants = new Map<string, string | undefined>()
 
   constructor(
     readonly activity: Activity,
     /** The context limit of a session's model, if known. */
     private readonly contextLimit: (sessionID: string) => number | undefined = () => undefined,
+    /** A session's model variant as opencode has it, for one whose events haven't said (begun before Flow came up). */
+    private readonly variantOf: (sessionID: string) => string | undefined = () => undefined,
   ) {}
+
+  /** The variant a session's steps run at: as its events said, else as opencode has it. */
+  private variant(sessionID: string): string | undefined {
+    return this.variants.has(sessionID) ? this.variants.get(sessionID) : this.variantOf(sessionID)
+  }
 
   /** The session on screen, if any. */
   get session(): string | undefined {
@@ -132,8 +157,11 @@ export class OpenCodeWork {
     const data = (e.data ?? {}) as Record<string, unknown>
     const a = this.activity
     switch (e.type) {
-      case 'session.created': {
+      case 'session.created':
+      case 'session.model.selected': {
         const id = data.sessionID
+        if (typeof id === 'string') this.variants.set(id, (data.model as { variant?: string } | undefined)?.variant)
+        if (e.type === 'session.model.selected') return
         const parent = data.parentID
         if (typeof id !== 'string' || typeof parent !== 'string') return
         this.parents.set(id, parent)
@@ -200,7 +228,7 @@ export class OpenCodeWork {
         return
       }
       case 'session.step.started':
-        a.modelStep(undefined, sub)
+        a.modelStep(main ? effortOf(this.variant(data.sessionID as string)) : undefined, sub)
         return
       case 'session.text.delta':
       case 'session.reasoning.delta': {

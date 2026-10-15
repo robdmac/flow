@@ -35,7 +35,7 @@ import { easeNight } from '../hooks/night'
 import { rampAt, rampStops, retain } from '../hooks/pixels'
 import { freshSeed } from '../hooks/cells'
 import { type Player, Soundscape } from '../hooks/soundscape'
-import { linesWritten as ocLinesWritten, OpenCodeWork } from '../opencode/mapping'
+import { effortOf as ocEffortOf, linesWritten as ocLinesWritten, OpenCodeWork } from '../opencode/mapping'
 
 const BAND = {
   component: 'AbovePrompt',
@@ -4420,4 +4420,24 @@ test('the soundscape plays through any player: a bed, at most its plays at once,
   cfg.sound = 'off'
   frame()
   expect(plays.every(p => p.signal.aborted)).toBe(true)
+})
+
+test("opencode: the model's variant sets the turn's floor, as thinking effort does elsewhere; a subagent's never does", async () => {
+  expect(ocEffortOf('low')).toBe('low')
+  expect(ocEffortOf('max')).toBe('max')
+  expect(ocEffortOf('default')).toBeUndefined()
+  expect(ocEffortOf(undefined)).toBeUndefined()
+  const a = new Activity()
+  // A session begun before Flow came up: its variant as opencode has it.
+  const work = new OpenCodeWork(a, undefined, id => (id === OC ? 'max' : undefined))
+  work.show(OC)
+  for (const e of ocRun(OC)) work.event(e)
+  expect(a.floor).toBe(effortFloor('max'))
+  // Another variant selected since: its events say.
+  work.event({ type: 'session.model.selected', data: { sessionID: OC, model: { id: 'm', providerID: 'p', variant: 'low' } } })
+  work.event({ type: 'session.step.started', data: { sessionID: OC } })
+  expect(a.floor).toBe(effortFloor('low'))
+  work.event({ type: 'session.created', data: { sessionID: SUB, parentID: OC, model: { id: 'm', providerID: 'p', variant: 'max' } } })
+  work.event({ type: 'session.step.started', data: { sessionID: SUB } })
+  expect(a.floor).toBe(effortFloor('low'))
 })

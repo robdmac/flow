@@ -1,4 +1,4 @@
-// REVISION: flow-v1-opencode
+// REVISION: flow-v2-opencode-effort
 //
 // What Flow uses of opencode's terminal UI plugin API (@opencode/plugin/tui,
 // opencode 2.0), declared here so the typecheck needs nothing installed.
@@ -39,7 +39,7 @@ export interface OcContext {
   readonly data: {
     listen(handler: (event: { details: OcEvent }) => void): () => void
     readonly session: {
-      get(sessionID: string): { readonly model?: { readonly id: string; readonly providerID: string } } | undefined
+      get(sessionID: string): { readonly model?: { readonly id: string; readonly providerID: string; readonly variant?: string } } | undefined
       status(sessionID: string): 'idle' | 'running'
     }
     readonly location: {
@@ -52,6 +52,7 @@ export interface OcContext {
   readonly storage: { store<Value extends object>(key: string, options: { readonly initial: Value }): OcStore<Value> }
   readonly ui: {
     slot(claim: OcSlot): () => void
+    readonly model: { current(): { readonly providerID: string; readonly modelID: string; readonly variant?: string } | undefined }
     readonly toast: { show(options: { readonly title?: string; readonly message: string; readonly variant?: 'info' | 'warning'; readonly duration?: number }): void }
     readonly dialog: {
       alert(options: { readonly title: string; readonly message: string }): Promise<void>

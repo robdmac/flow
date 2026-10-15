@@ -8,6 +8,10 @@ declare module '@opentui/core' {
   export interface RGBA {
     readonly r: number
   }
+  export interface MouseEvent {
+    readonly x: number
+    readonly y: number
+  }
   export interface OptimizedBuffer {
     setCell(x: number, y: number, char: string, fg: RGBA, bg: RGBA, attributes?: number): void
     setCellWithAlphaBlending(x: number, y: number, char: string, fg: RGBA, bg: RGBA, attributes?: number): void
@@ -33,6 +37,7 @@ declare module '@opentui/core' {
     get visible(): boolean
     set visible(value: boolean)
     requestRender(): void
+    set onMouseDown(handler: ((event: MouseEvent) => void) | undefined)
     protected renderSelf(buffer: OptimizedBuffer, deltaTime: number): void
   }
 }
