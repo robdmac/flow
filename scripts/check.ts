@@ -1,4 +1,4 @@
-// REVISION: flow-v174-taller-scenes
+// REVISION: flow-v185-clips
 //
 // What every scene must hold to (AGENTS.md), measured: plugin.json lists
 // the scenes in SCENES, hooks/sound-files.ts lists the clips in sounds/,
@@ -13,10 +13,10 @@
 //   npm run check -- surf ski    just these
 //   FLOW_MAX_MS=6 npm run check  a looser time budget, as CI runs it
 
-import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { SOUND_FILES } from '../hooks/sound-files'
 import { makeScene } from '../hooks/styles'
+import { listClips } from './clips'
 import { syncManifest } from './sync-manifest'
 import { backdropsOf, build, LOOKS, nightsOf, pairs, scenesFrom } from './scene-lab'
 
@@ -50,9 +50,7 @@ if (syncManifest(false)) bad('plugin.json is out of step with SCENES: run `npm r
 
 // The clips on disk and the ones the manifest names, as scripts/make-sounds.ts lists them.
 const SOUNDS = join(import.meta.dirname, '..', 'sounds')
-const clips = readdirSync(SOUNDS, { withFileTypes: true })
-  .filter(d => d.isDirectory())
-  .flatMap(d => readdirSync(join(SOUNDS, d.name)).filter(f => !f.startsWith('.')).map(f => `sounds/${d.name}/${f}`))
+const clips = listClips(SOUNDS)
 const named = new Set(SOUND_FILES)
 const unnamed = clips.filter(f => !named.has(f))
 const gone = SOUND_FILES.filter(f => !clips.includes(f))
