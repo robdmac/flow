@@ -1,4 +1,4 @@
-// REVISION: flow-v177-split-lamps
+// REVISION: flow-v188-dry
 //
 // Two launch sites in the sky world (sky.ts): a Falcon 9 and a Starship, each
 // beside a lattice launch tower (Starship's with two catch arms). The level is the
@@ -606,7 +606,7 @@ abstract class LaunchSite extends SkyWorld {
 
   /** Step the acted-out level toward the asked one (`strength`), then fly it. */
   override step(): void {
-    const asked = Math.max(0, Math.min(10, Math.round(this.strength)))
+    const asked = clamp(Math.round(this.strength), 0, 10)
     this.sinceStage++
     if (this.host) {
       // A mini rocket is asked its host's level as acted out (late): it acts it out as it is.
@@ -1225,7 +1225,7 @@ abstract class LaunchSite extends SkyWorld {
     const rest = s.mount / 2
     const catchAlt = (s.armCatch - s.grip) / 2
     const home = this.target <= 0
-    const lv = Math.max(0, Math.min(10, Math.round(this.strength)))
+    const lv = clamp(Math.round(this.strength), 0, 10)
     const want = LAYER[lv]!
     if (this.fresh) {
       this.fresh = false

@@ -1,4 +1,4 @@
-// REVISION: flow-v171-plain-names
+// REVISION: flow-v188-dry
 //
 // Engine (the `engine` style): a Victorian steam engine room on the same dials
 // as the fire; the level is how hard it is being driven. At 1 it stands cold,
@@ -38,7 +38,7 @@ import type { AgentDial } from './agents'
 import { Cells, DEFAULT_COLOR, freshSeed, Rng, isTall } from './cells'
 import { beckon, Crew, failed, type AgentMark } from './crew'
 import type { Tint } from './styles'
-import { BRAILLE, clamp01, dist, mix, QUAD, rampAt } from './pixels'
+import { BRAILLE, clamp, clamp01, dist, mix, QUAD, rampAt } from './pixels'
 import { defineScene } from './scene-def'
 import { hear, type SoundEvent } from './sound'
 import { breath, easeWait, waitTone } from './waiting'
@@ -645,7 +645,7 @@ export class Engine {
     this.t++
     this.crew.room = this.lampRoom()
     this.crew.update(this.agents, this.coverageBoost)
-    const level = Math.max(0, Math.min(10, Math.round(this.strength)))
+    const level = clamp(Math.round(this.strength), 0, 10)
     const smoke = this.tint === 'smoke'
     const was = breath(this.t - 1)
     this.kWait = easeWait(this.kWait, this.waiting)
@@ -882,7 +882,7 @@ export class Engine {
   grid(): Cells {
     const out = this.out
     const n = this.columns * this.rows
-    const level = Math.max(0, Math.min(10, Math.round(this.strength)))
+    const level = clamp(Math.round(this.strength), 0, 10)
     if (level <= 0 || n === 0) {
       for (let i = 0; i < n; i++) out.blank(i)
       return out

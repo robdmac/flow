@@ -1,4 +1,4 @@
-// REVISION: flow-v175-doom3d
+// REVISION: flow-v188-dry
 //
 // The scenes, all driven by the same dials (strength 0..10, coverage boost,
 // the agents one by one, tint, night, waiting): SCENES, the one list of them (each scene file exports its
@@ -16,7 +16,7 @@
 import type { AgentDial } from './agents'
 import { Crew, failed, type AgentMark, type Mate } from './crew'
 import { AsciiFire, colorFor, glyphFor, params, SMOKE_TIPS } from './fire'
-import { Cells, freshSeed, Rng } from './cells'
+import { Cells, freshSeed, isTall, Rng } from './cells'
 export type { Cells }
 import { heatColor, smokeColor } from './fire-palette'
 import { BRAILLE, clamp, hash1, lowerBlock, mix, rampAt, smooth } from './pixels'
@@ -226,7 +226,7 @@ class Ember implements Scene {
   }
 
   private get tall(): boolean {
-    return this.rows > 8
+    return isTall(this.columns, this.rows)
   }
 
   /** A companion fire's width and the gap beside it, in columns, for this layout. */

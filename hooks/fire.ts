@@ -1,4 +1,4 @@
-// REVISION: flow-v143-fire-crew
+// REVISION: flow-v188-dry
 //
 // A tiny Doom-fire–style cellular-automata fire, by Rob Macrae.
 //
@@ -206,11 +206,11 @@ export class AsciiFire {
     }
     // Propagate upward with strong random cooling + wind drift (-1, 0, +1);
     // rising into a headroom row cools harder, so only the tallest get there.
-    const isTall = h > BODY_ROWS + 1
-    const headroom = isTall ? 1 : Math.max(0, h - BODY_ROWS)
+    const stretched = h > BODY_ROWS + 1
+    const headroom = stretched ? 1 : Math.max(0, h - BODY_ROWS)
     // Cooling per row scales with the body's height: a 30-row spine burns
     // about as tall, relatively, as the 4-row band.
-    const stretch = isTall ? Math.min(1, (BODY_ROWS / (h - 1)) * 1.8) : 1
+    const stretch = stretched ? Math.min(1, (BODY_ROWS / (h - 1)) * 1.8) : 1
     for (let x = 0; x < w; x++) {
       for (let y = 1; y < h; y++) {
         const src = y * w + x
@@ -220,7 +220,7 @@ export class AsciiFire {
         } else {
           const extra = y - 1 < headroom ? HEADROOM_COOL_MIN + (this.rng.int() % HEADROOM_COOL) : 0
           const roll = this.rng.int() % 11
-          const cool = (isTall ? Math.round(roll * stretch) : roll) + extra
+          const cool = (stretched ? Math.round(roll * stretch) : roll) + extra
           const nx = x + (1 - (this.rng.int() % 3))
           if (nx >= 0 && nx < w) this.cells[(y - 1) * w + nx] = this.shut[nx] ? 0 : Math.max(0, p - cool)
         }

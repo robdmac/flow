@@ -1,4 +1,4 @@
-// REVISION: flow-v125-waiting
+// REVISION: flow-v188-dry
 //
 // Warp (the `warp` style): a starfield on the same dials as the fire, the
 // level is the ship's speed.
@@ -12,7 +12,7 @@
 // stop and hold, breathing in sepia (waiting.ts).
 
 import { Cells, Rng } from './cells'
-import { BRAILLE } from './pixels'
+import { BRAILLE, clamp } from './pixels'
 import { params } from './fire'
 import type { Tint } from './styles'
 import { defineScene } from './scene-def'
@@ -130,7 +130,7 @@ export class Starfield {
     // Fewer wanted: they go a few a frame, not all at once (none while it holds for the person); off is off at once.
     if (want === 0) this.stars.length = 0
     else if (this.stars.length > want && this.kWait === 0) this.stars.length = Math.max(want, this.stars.length - 2)
-    const speed = SPEED[Math.max(0, Math.min(10, this.strength))]! * (1 - this.kWait)
+    const speed = SPEED[clamp(this.strength, 0, 10)]! * (1 - this.kWait)
     for (let i = 0; i < this.stars.length; i++) {
       const s = this.stars[i]!
       s.z -= speed
@@ -152,7 +152,7 @@ export class Starfield {
     const { bits, bright } = this
     bits.fill(0)
     bright.fill(0)
-    const level = Math.max(0, Math.min(10, this.strength))
+    const level = clamp(this.strength, 0, 10)
     const speed = SPEED[level]!
     const trail = level >= STREAK_FROM ? (level - STREAK_FROM + 1) * 1.4 : 0
     for (const s of this.stars) {

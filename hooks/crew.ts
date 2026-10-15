@@ -1,4 +1,4 @@
-// REVISION: flow-v171-plain-names
+// REVISION: flow-v188-dry
 //
 // A scene's companions: one for each running subagent (the `agents` dial,
 // agents.ts), so a glance tells you which are busy, which have gone quiet or
@@ -20,7 +20,7 @@
 // Pure: no `$`.
 
 import type { AgentDial } from './agents'
-import { smooth } from './pixels'
+import { approach, fnv1a, smooth } from './pixels'
 
 /** Where a companion is drawn this frame, in cells: what desktop's hover card for its agent sits over. */
 export interface AgentMark {
@@ -66,8 +66,7 @@ const ANON = '~'
 
 /** [0, 1) from a string: FNV-1a, then scattered. */
 export function seedOf(id: string): number {
-  let h = 0x811c9dc5
-  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 0x01000193)
+  let h = fnv1a(id)
   h ^= h >>> 15
   h = Math.imul(h, 0x2c1b3c6d)
   h ^= h >>> 12
@@ -142,8 +141,7 @@ export class Crew {
       m.leaving = gone
       m.waiting = !gone && a!.state === 'waiting'
       const goal = !gone && a!.state === 'working' ? 1 : 0
-      m.busy += (goal - m.busy) * BUSY_EASE
-      if (Math.abs(goal - m.busy) < 0.01) m.busy = goal
+      m.busy = approach(m.busy, goal, BUSY_EASE)
       m.p = Math.max(0, Math.min(1, m.p + (m.leaving ? -1 / this.leave : 1 / this.arrive)))
       m.here = smooth(m.p)
       m.age++

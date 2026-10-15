@@ -1,4 +1,4 @@
-// REVISION: flow-v170-dry-scenes
+// REVISION: flow-v188-dry
 //
 // The world the balloon and the rockets fly through, on the fire's dials: the
 // level is a target altitude, eased toward, and the world scrolls past the
@@ -27,7 +27,7 @@ import { layered, snap } from './clouds/layered'
 import type { CloudContext } from './clouds/types'
 import type { Tint } from './styles'
 import { easeNight, MOON, MOON_ACROSS, MOON_ROW, NIGHT_HORIZON, NIGHT_ZENITH, STAR, STAR_DIM } from './night'
-import { g, hash, lowerBlock, mix, rampStops } from './pixels'
+import { clamp, g, hash, lowerBlock, mix, rampStops } from './pixels'
 import { easeWait, waitTone } from './waiting'
 
 /**
@@ -167,7 +167,7 @@ export abstract class SkyWorld {
 
   /** The altitude this level aims for. */
   protected get target(): number {
-    return ALTITUDE[Math.max(0, Math.min(10, this.strength))]!
+    return ALTITUDE[clamp(this.strength, 0, 10)]!
   }
 
   step(): void {
