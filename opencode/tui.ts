@@ -1,4 +1,4 @@
-// REVISION: flow-v7-dry
+// REVISION: flow-v9-tidy
 //
 // Flow for opencode (2.0), by Rob Macrae: the same ambient scenes as the
 // Claude Code mod and the pi extension, in opencode's terminal UI. A terminal
@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url'
 import { Activity } from '../hooks/activity'
 import { agentLine } from '../hooks/agents'
 import { staleSessions, storedOwn } from '../hooks/sessions'
-import { clockAt, firstTips, type FlowConfig, type Host, hostReplyText, NO_PLAYER, parseFlowArgs, readConfig, replyTo, tipChance, type Tips, untitled, versionNote } from '../hooks/settings'
+import { clockAt, firstTips, type Host, hostReplyText, NO_PLAYER, parseFlowArgs, readConfig, replyTo, tipChance, type Tips, untitled, versionNote } from '../hooks/settings'
 import { FRAME_MS, SceneDriver } from '../hooks/scene'
 import { Soundscape } from '../hooks/soundscape'
 import { type Scene, SCENES } from '../hooks/styles'
@@ -67,6 +67,8 @@ type Kept = {
 
 /** The plugin's folder: its sounds/ are played from there. */
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
+
+const sameWords = (a: Uint32Array, b: Uint32Array): boolean => a.length === b.length && a.every((w, i) => w === b[i])
 
 function setup(ctx: OcContext): () => void {
   const player = afplayPlayer(ROOT)
@@ -161,10 +163,11 @@ function setup(ctx: OcContext): () => void {
   /**
    * The scene at a view's size, stepped by the frame loop: the view only draws it. opencode redraws far more
    * often than a frame (each key, each streamed word), so a frame is made once a step and drawn as often as
-   * asked; made again on every redraw it would cost a frame's work each time, and the scenes that flicker at
-   * random as they draw (engine, the rockets) would flicker faster.
+   * asked; made again on every redraw it would cost a frame's work each time.
    */
   let made: { scene: Scene; cells: Cells } | undefined
+  /** The frame last sent to a view, and which: one just like it (a calm balloon's often is) asks for no redraw. */
+  let sent: { view: SceneView; words: Uint32Array } | undefined
   const frameAt = (columns: number, rows: number) => {
     const f = driver.scene
     if (!driver.isShown()) return undefined
@@ -272,8 +275,12 @@ function setup(ctx: OcContext): () => void {
       f.ensure(live.width, live.height)
       f.step()
       made = undefined
-      live.requestRender()
-    }
+      const words = frameAt(live.width, live.height)?.words
+      if (words && (sent?.view !== live || !sameWords(words, sent.words))) {
+        sent = { view: live, words: words.slice() }
+        live.requestRender()
+      }
+    } else sent = undefined
     sound.step(elapsed, {
       heard: live !== undefined,
       shown: live ? f : undefined,
