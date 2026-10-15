@@ -1,4 +1,4 @@
-// REVISION: flow-v171-dry-adapter
+// REVISION: flow-v188-dry
 //
 // Whether the tints read for colour-blind eyes. Every scene runs at levels 1,
 // 5 and 10, in the band (120 × 5) and the spine (22 × 50), by day and (for a
@@ -50,7 +50,7 @@ import { join } from 'node:path'
 import type { Cells } from '../hooks/cells'
 import type { SceneName, Tint } from '../hooks/styles'
 import { encodePng, gridPixels } from '../hooks/svg'
-import { type Backdrop, backdropsOf, build, nightsOf, option, scenesFrom, TINTS } from './scene-lab'
+import { BAND, type Backdrop, backdropsOf, build, nightsOf, option, scenesFrom, SPINE, TINTS } from './scene-lab'
 
 const argv = process.argv.slice(2)
 const sheetsDir = option(argv, '--sheets')
@@ -61,10 +61,7 @@ const names = argv.filter((a, i) => !a.startsWith('--') && argv[i - 1] !== '--sh
 
 /** The terminal behind the scene. */
 const BG = light ? 0xfafafa : 0x1e1e1e
-const LAYOUTS = [
-  { name: 'band', columns: 120, rows: 5 },
-  { name: 'spine', columns: 22, rows: 50 },
-] as const
+const LAYOUTS = [BAND, SPINE]
 const LEVELS = [1, 5, 10]
 /** Frames untinted before the tint comes on: long enough for the level to settle. */
 const WARM = 150

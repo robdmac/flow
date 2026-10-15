@@ -1,4 +1,4 @@
-// REVISION: flow-v171-dry-adapter
+// REVISION: flow-v188-dry
 //
 // Shared by preview, check and cvd-check: build a scene at a size and a
 // setting, warm it up (with subagents' companions in every state, if asked;
@@ -14,8 +14,9 @@ import type { Cells } from '../hooks/cells'
 export const TINTS: Tint[] = ['normal', 'smoke', 'blue']
 /** Every look a scene shows over its level: each tint, and waiting on the person. */
 export const LOOKS: { name: string; tint: Tint; waiting?: boolean }[] = [...TINTS.map(tint => ({ name: tint, tint })), { name: 'waiting', tint: 'normal', waiting: true }]
+/** The band and the spine every script shows and measures a scene at (check times many sizes besides). */
 export const BAND = { name: 'band', columns: 120, rows: 5 }
-export const SPINE = { name: 'spine', columns: 22, rows: 40 }
+export const SPINE = { name: 'spine', columns: 22, rows: 50 }
 
 /**
  * What a scene shows behind it that no setting chooses, and its time alone

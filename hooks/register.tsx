@@ -1,4 +1,4 @@
-// REVISION: flow-v182-built-against
+// REVISION: flow-v188-dry
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -52,6 +52,7 @@ import type { AgentMark } from './crew'
 import { FRAME_MS, SceneDriver } from './scene'
 import {
   CLAUDE_CODE,
+  clockAt,
   firstTips,
   ownHint,
   parseFlowArgs,
@@ -59,7 +60,6 @@ import {
   replyTo,
   resetText,
   savedText,
-  storedValue,
   type FlowCommand,
   type FlowConfig,
   type FlowLayout,
@@ -507,9 +507,7 @@ export async function planSave($: EngineInterface, ctx: SceneCtx): Promise<SaveP
   await refreshDefaults($, ctx)
   const s = ctx.session
   const changes = differences(ctx.driver.cfg, s.defaults)
-  const rows = (Object.entries(changes) as [keyof FlowConfig, FlowConfig[keyof FlowConfig]][]).map(
-    ([field, value]) => [field, storedValue(field, value)] as [keyof FlowConfig, string | number],
-  )
+  const rows = Object.entries(storedOwn(changes)) as [keyof FlowConfig, string | number][]
   return { before: { ...s.defaults }, changes, rows }
 }
 
@@ -869,8 +867,7 @@ export const register: Register = (on, options) => {
     lastCells = ''
   }
   const setClock = (ms: number) => {
-    const d = new Date(ms)
-    driver.clock = desktopDriver.clock = { hour: d.getHours(), minute: d.getMinutes() }
+    driver.clock = desktopDriver.clock = clockAt(ms)
   }
   /** The scene no longer draws in the spine (its pane closed, or showing the band's note). */
   const leftSpine = () => {

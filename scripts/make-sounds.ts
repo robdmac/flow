@@ -1,4 +1,4 @@
-// REVISION: flow-v185-clips
+// REVISION: flow-v188-dry
 //
 // Builds the soundscapes' clips into sounds/ (AAC, mono 22.05 kHz) and the
 // manifest hooks/sound-files.ts. Each recipe makes a WAV with sox (and Node,
@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import { BED_FADE_MS, BED_MS, BED_TAKES, type BedMood, LAYERS, layerGain, master, MOODS } from '../hooks/sound'
 import { makeScene } from '../hooks/styles'
 import { listClips } from './clips'
+import { BAND, SPINE } from './scene-lab'
 
 const ROOT = join(import.meta.dirname, '..')
 const OUT = join(ROOT, 'sounds')
@@ -1222,9 +1223,9 @@ function encode(from: string, to: string, rate: string): void {
 function moodsOf(scene: string): BedMood[] {
   const spec = MOODS[scene]!
   const seen = new Map<string, BedMood>()
-  for (const [cols, rows] of [[120, 5], [22, 50]] as const) {
+  for (const { columns, rows } of [BAND, SPINE]) {
     const f = makeScene(scene as never, 11)
-    f.ensure(cols, rows)
+    f.ensure(columns, rows)
     const plan = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 9, 7, 5, 3, 1, 10, 1, 6, 10, 4, 1]
     for (let round = 0; round < 2; round++)
       for (const level of plan)

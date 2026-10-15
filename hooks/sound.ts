@@ -1,4 +1,4 @@
-// REVISION: flow-v181-doom-volleys
+// REVISION: flow-v188-dry
 //
 // Soundscapes. Claude Code's `$.audio.play` plays a clip (macOS `afplay`) at a
 // gain set when it starts; it can't loop smoothly or change a clip as it
@@ -26,6 +26,7 @@
 // Pure: no engine imports, unit-tested directly.
 
 import { Rng, toBase64 } from './cells'
+import { fnv1a } from './pixels'
 import { BED_GAINS } from './sound-files'
 import type { Tint } from './styles'
 
@@ -418,8 +419,7 @@ const CLIP_HASH = new Map<string, number>()
 function clipHash(clip: string): number {
   let h = CLIP_HASH.get(clip)
   if (h === undefined) {
-    h = 2166136261
-    for (let i = 0; i < clip.length; i++) h = Math.imul(h ^ clip.charCodeAt(i), 16777619)
+    h = fnv1a(clip)
     CLIP_HASH.set(clip, h)
   }
   return h

@@ -1,4 +1,4 @@
-// REVISION: flow-v185-hygiene-bugs
+// REVISION: flow-v188-dry
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -6,7 +6,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { AsciiFire, colorFor, params } from '../hooks/fire'
 import { effortFloor, Activity, linesWritten, WAIT_LEVEL } from '../hooks/activity'
 import { firstTips, nextTip, readTips, tipChance, changedText, changesFor, helpText, isNightAt, ownHint, parseFlowArgs, readConfig, resetText, savedText, staleRows, statusText } from '../hooks/settings'
-import { BUILT_AGAINST, CLAUDE_CODE, type FlowAdapter, olderThan, replyTo, versionNote } from '../hooks/settings'
+import { BUILT_AGAINST, CLAUDE_CODE, clockAt, type FlowAdapter, hostReplyText, olderThan, replyTo, untitled, versionNote } from '../hooks/settings'
 import { differences, type Own, ownAfterSwitch, pinShown, readOwn, readRecord, SESSION_KEPT_MS, SESSIONS_KEPT, sessionKey, staleSessions, storedOwn, storedRecord, withOwn } from '../hooks/sessions'
 import { gridToAnsi } from '../pi/ansi'
 import { effortOf, ownInSession, piLinesWritten } from '../pi/mapping'
@@ -4509,4 +4509,22 @@ test('a host older than Flow is built against is told so (it still runs); as new
   const note = versionNote('opencode', 'v2.0.12')!
   expect(note).toContain('opencode 2.0.29 or later')
   expect(note).toContain('this is 2.0.12')
+})
+
+test("pi and opencode show a reply as it is (no `!` before what was wrong), a due tip under it, and drop `flow: ` where it's their title", () => {
+  const error = parseFlowArgs('nonsense')
+  expect(error.kind).toBe('error')
+  const wrong = hostReplyText(error, { text: '! no scene called nonsense', level: 'warning' }, undefined)
+  expect(wrong).toBe('no scene called nonsense')
+  // (Only an error's mark goes: a reply that happens to start so is left as it is.)
+  expect(hostReplyText({ kind: 'show' }, { text: '! as it is' }, undefined)).toBe('! as it is')
+  expect(hostReplyText({ kind: 'auto' }, { text: 'auto' }, 'a tip')).toBe('auto\n\na tip')
+  expect(hostReplyText({ kind: 'auto' }, { text: 'auto' }, '')).toBe('auto')
+  expect(untitled('flow: built for pi 1.0.0 or later')).toBe('built for pi 1.0.0 or later')
+  expect(untitled('no flow: here')).toBe('no flow: here')
+})
+
+test('the clock every adapter reads is the local time of day', () => {
+  const at = new Date(2026, 9, 15, 19, 7, 30).getTime()
+  expect(clockAt(at)).toEqual({ hour: 19, minute: 7 })
 })

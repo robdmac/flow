@@ -1,4 +1,4 @@
-// REVISION: flow-v185-pi-reload
+// REVISION: flow-v188-dry
 //
 // Flow for pi (badlogic/pi-mono), by Rob Macrae: the same ambient
 // scenes as the Claude Code mod, in a widget above pi's editor. pi's events
@@ -48,7 +48,8 @@ import { fileURLToPath } from 'node:url'
 import { Activity } from '../hooks/activity'
 import { FRAME_MS, SceneDriver } from '../hooks/scene'
 import { pickBlurb } from '../hooks/picker'
-import { firstTips, type Host, parseFlowArgs, readConfig, replyTo, storedValue, tipChance, type FlowConfig, versionNote } from '../hooks/settings'
+import { storedOwn } from '../hooks/sessions'
+import { clockAt, firstTips, type Host, hostReplyText, NO_PLAYER, parseFlowArgs, readConfig, replyTo, tipChance, type FlowConfig, untitled, versionNote } from '../hooks/settings'
 import { Soundscape } from '../hooks/soundscape'
 import { SCENES, type Scene } from '../hooks/styles'
 import { afplayPlayer } from '../node/player'
@@ -137,9 +138,7 @@ async function keepStored(changes: Record<string, unknown>): Promise<void> {
 
 /** Write just these settings into flow.json, as they're stored (keepStored). */
 async function saveSettings(changes: Partial<FlowConfig>): Promise<void> {
-  const stored: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(changes) as [keyof FlowConfig, FlowConfig[keyof FlowConfig]][]) stored[k] = storedValue(k, v)
-  await keepStored(stored)
+  await keepStored(storedOwn(changes))
 }
 
 /**
@@ -158,7 +157,7 @@ async function takeTip(cfg: FlowConfig): Promise<string | undefined> {
   try {
     const { tip, tips, changed } = tipChance((await readStored())?.tips, cfg)
     if (changed) await keepStored({ tips })
-    return tip?.replace(/^flow: /, '')
+    return tip && untitled(tip)
   } catch {
     return undefined
   }
@@ -337,8 +336,7 @@ export default function flow(pi: PiApi) {
 
   /** Read the local clock (pi runs on this machine, so its time is the person's). */
   const readClock = () => {
-    const d = new Date()
-    driver.clock = { hour: d.getHours(), minute: d.getMinutes() }
+    driver.clock = clockAt(Date.now())
   }
 
   /** Point the current scene at this frame's dials and size. */
@@ -542,7 +540,7 @@ export default function flow(pi: PiApi) {
       return
     }
     if (cmd.kind === 'sound' && !player) {
-      ctx.ui.notify('flow: the soundscapes play through afplay, which only macOS has', 'warning')
+      ctx.ui.notify(say(NO_PLAYER), 'warning')
       return
     }
     const reply = await replyTo(cmd, {
@@ -558,10 +556,7 @@ export default function flow(pi: PiApi) {
       },
       level: () => driver.level(),
       tint: () => driver.tint(),
-      save: async () => {
-        const { text, saved } = await settings.save(entries)
-        return { text, level: saved ? 'info' : 'warning' }
-      },
+      save: () => settings.save(entries),
       reset: async () => {
         const text = settings.reset(entries)
         redraw(ctx)
@@ -575,8 +570,7 @@ export default function flow(pi: PiApi) {
     })
     // A one-time tip goes under the reply, as in Claude Code and opencode.
     const tip = await takeTip(cfg)
-    // (pi shows a reply as it is: no `!` before what was wrong.)
-    ctx.ui.notify(say((cmd.kind === 'error' ? reply.text.replace(/^! /, '') : reply.text) + (tip ? `\n\n${tip}` : '')), reply.level)
+    ctx.ui.notify(say(hostReplyText(cmd, reply, tip)), reply.level)
   }
 
   pi.registerCommand('flow', {

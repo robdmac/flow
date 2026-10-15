@@ -1,4 +1,4 @@
-// REVISION: flow-v170-dry-scenes
+// REVISION: flow-v188-dry
 //
 // Small pieces the scene renderers share: packed-RGB color math and ramps,
 // easing, hashes and noise, glyph tables, and the fit of a cell's four
@@ -25,6 +25,13 @@ export const smoothstep = (a: number, b: number, v: number) => smooth(clamp01((v
 export function approach(v: number, goal: number, k: number): number {
   const n = v + (goal - v) * k
   return Math.abs(goal - n) < 0.01 ? goal : n
+}
+
+/** A string hashed, FNV-1a (32-bit; as Math.imul leaves it, so possibly negative). */
+export function fnv1a(s: string): number {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193)
+  return h
 }
 
 /** `a` moved `k` (0..1, held there) of the way to `b`, per channel of 0xRRGGBB. */
