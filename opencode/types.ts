@@ -33,6 +33,7 @@ export type OcStore<Value> = readonly [Value, (mutation: (draft: Value) => void)
 
 export interface OcContext {
   readonly options: Readonly<Record<string, unknown>>
+  readonly app: { readonly version: string }
   readonly renderer: RenderContext & { readonly root: Renderable }
   /** opencode's theme: its colours are OpenTUI's RGBA. */
   readonly theme: unknown

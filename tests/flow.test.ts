@@ -6,7 +6,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { AsciiFire, colorFor, params } from '../hooks/fire'
 import { effortFloor, Activity, linesWritten, WAIT_LEVEL } from '../hooks/activity'
 import { firstTips, nextTip, readTips, tipChance, changedText, changesFor, helpText, isNightAt, ownHint, parseFlowArgs, readConfig, resetText, savedText, staleRows, statusText } from '../hooks/settings'
-import { CLAUDE_CODE, type FlowAdapter, replyTo } from '../hooks/settings'
+import { BUILT_AGAINST, CLAUDE_CODE, type FlowAdapter, olderThan, replyTo, versionNote } from '../hooks/settings'
 import { differences, type Own, ownAfterSwitch, pinShown, readOwn, readRecord, SESSION_KEPT_MS, SESSIONS_KEPT, sessionKey, staleSessions, storedOwn, storedRecord, withOwn } from '../hooks/sessions'
 import { gridToAnsi } from '../pi/ansi'
 import { effortOf, ownInSession, piLinesWritten } from '../pi/mapping'
@@ -4473,4 +4473,22 @@ test("opencode: a subagent's session deleted before its run ends is gone, not le
   expect(a.runningAgents).toBe(0)
   expect(a.roster.dials()[0]!.state).toBe('done')
   expect(a.roster.dials()[0]!.ok).toBe(false)
+})
+
+test('a host older than Flow is built against is told so (it still runs); as new, newer or unreadable, nothing', async () => {
+  expect(olderThan('2.1.280', '2.1.289')).toBe(true)
+  expect(olderThan('2.1.289', '2.1.289')).toBe(false)
+  expect(olderThan('2.1.300', '2.1.289')).toBe(false)
+  expect(olderThan('2.0.9', '2.0.29')).toBe(true)
+  expect(olderThan('v2.0.12', '2.0.29')).toBe(true)
+  expect(olderThan('1.10.0', '1.9.0')).toBe(false)
+  expect(olderThan('2.1.280-dev.20260920.t101500.sha1a2b3c4', '2.1.289')).toBe(true)
+  expect(olderThan('nightly', '2.1.289')).toBe(false)
+  for (const host of Object.keys(BUILT_AGAINST) as (keyof typeof BUILT_AGAINST)[]) {
+    expect(versionNote(host, BUILT_AGAINST[host])).toBeUndefined()
+    expect(versionNote(host, undefined)).toBeUndefined()
+  }
+  const note = versionNote('opencode', 'v2.0.12')!
+  expect(note).toContain('opencode 2.0.29 or later')
+  expect(note).toContain('this is 2.0.12')
 })

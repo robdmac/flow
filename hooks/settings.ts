@@ -1,4 +1,4 @@
-// REVISION: flow-v178-tip-chance
+// REVISION: flow-v179-built-against
 //
 // Flow's settings and the `/flow` command's grammar, shared by every harness adapter (Claude Code's
 // register.tsx, pi's pi/index.ts). Pure: no engine imports. Replies carry no
@@ -265,6 +265,35 @@ const inWords = (cfg: FlowConfig, items: readonly Item[]) => items.map(i => item
  * for the soundscape. `thumbnails: false`: panes for the spine, but `/flow pick` is a list (opencode's).
  */
 export type Host = { panes: boolean; sound: boolean; thumbnails?: boolean }
+/**
+ * The release of each host Flow is built and tested against (README's Compatibility): the oldest it's known to
+ * work on. On an older one it runs all the same, and says so once for that version (`versionNote`).
+ */
+export const BUILT_AGAINST = { 'Claude Code': '2.1.289', opencode: '2.0.29', pi: '1.0.0' } as const
+export type HostName = keyof typeof BUILT_AGAINST
+
+/** A version's numbers (`v2.0.29`, `2.1.280-dev.…`: the leading three), or none when it has none. */
+function versionParts(v: string): number[] | undefined {
+  const m = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(v)
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3] ?? 0)] : undefined
+}
+
+/** Whether version `a` is older than `b`. One that can't be read is never older (no warning on a guess). */
+export function olderThan(a: string, b: string): boolean {
+  const x = versionParts(a)
+  const y = versionParts(b)
+  if (!x || !y) return false
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i]! < y[i]!
+  return false
+}
+
+/** What to say on a host older than Flow is built against (none on one as new or newer, or unknown). */
+export function versionNote(host: HostName, version: string | undefined): string | undefined {
+  const min = BUILT_AGAINST[host]
+  if (!version || !olderThan(version, min)) return undefined
+  return `flow: built for ${host} ${min} or later, and this is ${version.replace(/^v/, '')}: it runs, but if a scene misbehaves, update ${host}.`
+}
+
 /** Claude Code: both. */
 export const CLAUDE_CODE: Host = { panes: true, sound: true }
 

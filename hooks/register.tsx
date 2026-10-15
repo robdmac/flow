@@ -1,4 +1,4 @@
-// REVISION: flow-v181-tip-chance
+// REVISION: flow-v182-built-against
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -64,6 +64,7 @@ import {
   type FlowConfig,
   type FlowLayout,
   tipChance,
+  versionNote,
   staleRows,
   type StoredRow,
 } from './settings'
@@ -586,6 +587,25 @@ async function takeTip($: EngineInterface, cfg: FlowConfig, noteOnly = false): P
   }
 }
 
+const WARNED = 'warned'
+
+/**
+ * On a Claude Code older than Flow is built against (see versionNote), the note to give: once for that
+ * version, the store keeping which it was said for. None where it can't tell (a Claude Code too old to say
+ * its version), or on any failure: it never stands in the way.
+ */
+async function versionWarning($: EngineInterface): Promise<string | undefined> {
+  try {
+    const { version, base } = await $.session.version()
+    const note = versionNote('Claude Code', base ?? version)
+    if (!note || (await $.store.get(WARNED)) === version) return undefined
+    await $.store.set(WARNED, version)
+    return note
+  } catch {
+    return undefined
+  }
+}
+
 /** `/flow`: show, help, or apply a change, keep it, and answer. */
 export async function runScene($: EngineInterface, e: CommandRunInput, ctx: SceneCtx): Promise<CommandRunResult> {
   return withTip($, ctx, await sceneReply($, e, ctx))
@@ -926,6 +946,9 @@ export const register: Register = (on, options) => {
     // A one-time tip, the settings now in: the other scenes, or the sound. With no prompt to toast over, what's on is noted.
     const tip = await takeTip($, cfg, !e.isInteractive)
     if (tip) $.ui.toast(tip, { timeoutMs: 12_000 })
+    // On a Claude Code older than Flow is built against: said once for that version (it runs all the same).
+    const warning = e.isInteractive ? await versionWarning($) : undefined
+    if (warning) $.ui.toast(warning, { timeoutMs: 12_000 })
 
     // Claude Code's player: at most MAX_PLAYS clips at once for a plugin, a fifth refused ("4 plays are going
     // at once"). No player (a Linux or Windows terminal): every clip refused, just silence.

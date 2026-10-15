@@ -1,4 +1,4 @@
-// REVISION: flow-v175-plain-names
+// REVISION: flow-v176-built-against
 //
 // Flow for pi (badlogic/pi-mono), by Rob Macrae: the same ambient
 // scenes as the Claude Code mod, in a widget above pi's editor. pi's events
@@ -43,7 +43,7 @@ import { dirname, join } from 'node:path'
 import { Activity } from '../hooks/activity'
 import { FRAME_MS, SceneDriver } from '../hooks/scene'
 import { pickBlurb } from '../hooks/picker'
-import { type Host, parseFlowArgs, readConfig, replyTo, storedValue, type FlowConfig } from '../hooks/settings'
+import { type Host, parseFlowArgs, readConfig, replyTo, storedValue, type FlowConfig, versionNote } from '../hooks/settings'
 import { SCENES, type Scene } from '../hooks/styles'
 import { gridToAnsi } from './ansi'
 import { cellPixels, kittyImages, kittyLines, pictureId, pictureSize } from './picture'
@@ -130,6 +130,43 @@ async function saveSettings(changes: Partial<FlowConfig>): Promise<void> {
   }
   await mkdir(dirname(SETTINGS), { recursive: true })
   await writeFile(SETTINGS, JSON.stringify(stored, null, 2) + '\n')
+}
+
+/** pi's version, from its own package (named one way since 1.1, another before): none if it can't be read. */
+async function piVersion(): Promise<string | undefined> {
+  for (const name of ['@earendil-works/pi-coding-agent', '@mariozechner/pi-coding-agent']) {
+    try {
+      const v = ((await import(name)) as { VERSION?: unknown }).VERSION
+      if (typeof v === 'string') return v
+    } catch {
+      // Not under this name: the next.
+    }
+  }
+  return undefined
+}
+
+/**
+ * On a pi older than Flow is built against (see versionNote), the note to give: once for that version,
+ * flow.json keeping which it was said for (`warned`, beside its own keys). None on any failure.
+ */
+async function versionWarning(): Promise<string | undefined> {
+  const version = await piVersion()
+  const note = versionNote('pi', version)
+  if (!note) return undefined
+  let stored: Record<string, unknown> = {}
+  try {
+    stored = JSON.parse(await readFile(SETTINGS, 'utf8')) as Record<string, unknown>
+  } catch {
+    // None yet: one starts with the note.
+  }
+  if (stored.warned === version) return undefined
+  try {
+    await mkdir(dirname(SETTINGS), { recursive: true })
+    await writeFile(SETTINGS, JSON.stringify({ ...stored, warned: version }, null, 2) + '\n')
+  } catch {
+    // Unkept: said again next time.
+  }
+  return note
 }
 
 export default function flow(pi: PiApi) {
@@ -367,6 +404,9 @@ export default function flow(pi: PiApi) {
     isMounted = false
     sync(ctx)
     frame(FRAME_MS)
+    // On a pi older than Flow is built against: said once for that version (it runs all the same).
+    const warning = await versionWarning()
+    if (warning) ctx.ui.notify(warning, 'warning')
   })
 
   // `/tree` to another branch: the settings that branch kept.

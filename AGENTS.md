@@ -150,6 +150,7 @@ npm run cvd -- [scene]       # how far apart the tints look to colour-blind eyes
 npm run sounds               # rebuild the soundscapes' clips (needs sox and ffmpeg)
 ```
 
+- The oldest Claude Code, opencode and pi Flow is built against are `BUILT_AGAINST` (`settings.ts`, and the README's Compatibility): on an older one each adapter gives `versionNote` once for that version (Claude Code's `session.version()`, opencode's `app.version`, pi's own `VERSION`), kept where it keeps the rest (Claude Code's store `warned`, opencode's store, flow.json's `warned`), and runs all the same. Raise them when Flow starts needing something newer, and say so in the README.
 - No `package-lock.json` is committed (it's gitignored): Claude Code runs `npm ci` in a plugin's folder when it finds a lockfile beside `package.json`, and Flow needs none of its dev tools to run. `package.json` pins them to exact versions instead; bump them there.
 - Hot reload doesn't follow symlinks. To use a dev-mods folder, copy the plugin's files in rather than linking it.
 - Every file starts with a `// REVISION: flow-vNN-<what>` line; bump it when you change the file. On load the mod logs `[flow] REVISION: …`, the local time and the UTC offset to the debug log (`claude --debug`), so you can tell which version is running.

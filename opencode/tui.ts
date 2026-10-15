@@ -1,4 +1,4 @@
-// REVISION: flow-v3-opencode-tips
+// REVISION: flow-v4-opencode-built-against
 //
 // Flow for opencode (2.0), by Rob Macrae: the same ambient scenes as the
 // Claude Code mod and the pi extension, in opencode's terminal UI. A terminal
@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url'
 import { Activity, FRAME_MS } from '../hooks/activity'
 import { agentLine } from '../hooks/agents'
 import { staleSessions } from '../hooks/sessions'
-import { firstTips, type FlowConfig, type Host, parseFlowArgs, readConfig, replyTo, storedValue, tipChance, type Tips } from '../hooks/settings'
+import { firstTips, type FlowConfig, type Host, parseFlowArgs, readConfig, replyTo, storedValue, tipChance, type Tips, versionNote } from '../hooks/settings'
 import { SceneDriver } from '../hooks/scene'
 import { Soundscape } from '../hooks/soundscape'
 import { SCENES } from '../hooks/styles'
@@ -60,6 +60,8 @@ type Kept = {
   defaults: Record<string, string | number>
   sessions: Record<string, { own: Record<string, string | number>; at: number }>
   tips?: Tips
+  /** The opencode version the note that Flow is built for a newer one was given for (once each). */
+  warned?: string
 }
 
 /** The plugin's folder: its sounds/ are played from there. */
@@ -204,6 +206,15 @@ function setup(ctx: OcContext): () => void {
       setTimeout(() => {
         const tip = takeTip()
         if (tip) ctx.ui.toast.show({ title: 'flow', message: tip, duration: 12_000 })
+        // On an opencode older than Flow is built against: said once for that version (it runs all the same).
+        const version = ctx.app.version
+        const note = versionNote('opencode', version)
+        if (note && kept.warned !== version) {
+          void keep(d => {
+            d.warned = version
+          })
+          ctx.ui.toast.show({ title: 'flow', message: note.replace(/^flow: /, ''), variant: 'warning', duration: 12_000 })
+        }
       }, TIP_AFTER_MS)
     }
     const at = kept.sessions[id]?.at

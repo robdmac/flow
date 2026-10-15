@@ -253,7 +253,7 @@ Flow repaints about 14 times a second while busy and 8 times when calm. It skips
 
 ## Compatibility
 
-Built against Claude Code 2.1.289, opencode 2.0.29 and pi 1.0.0. Mods (function-hook plugins) are early access: the API may change between Claude Code releases, so a newer release can break flow until it's updated. opencode's plugin API for its terminal UI is new with opencode 2, and may change between its releases too.
+Built against Claude Code 2.1.289, opencode 2.0.29 and pi 1.0.0, the oldest of each it's known to work on. On an older one Flow still runs, but says so once (a notice when a session starts, once for each version), since a scene may misbehave there. Mods (function-hook plugins) are early access: the API may change between Claude Code releases, so a newer release can break flow until it's updated. opencode's plugin API for its terminal UI is new with opencode 2, and may change between its releases too.
 
 ## Development
 
