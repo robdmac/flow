@@ -1,4 +1,4 @@
-// REVISION: flow-v189-pure-grid
+// REVISION: flow-v192-roadster
 
 import type { EngineInterface, On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
@@ -16,6 +16,7 @@ import { Balloon, skyColor } from '../hooks/balloon'
 import { Falcon } from '../hooks/rocket'
 import { Colony } from '../hooks/colony'
 import { Train } from '../hooks/train'
+import { Roadster } from '../hooks/roadster'
 import { Doom } from '../hooks/doom'
 import { makeScene, nextStyle, SCENES, STYLES, styleNamed, type SceneName } from '../hooks/styles'
 import { finishSave, openSession, planSave, runScene, type SceneCtx } from '../hooks/register'
@@ -3174,13 +3175,72 @@ test('train: waiting on the person, it draws up at a red signal or a platform an
     }
 })
 
+test('roadster: parked at 1; at 10 it flips over the cars in its lane, never through one (nor its companions through theirs); waiting, it pulls into a lot and stands, its lights on; answered, away', () => {
+  for (const [columns, rows] of [[120, 5], [22, 60]] as const)
+    for (const seed of [3, 8]) {
+      const r = makeScene('roadster', seed) as Roadster
+      const where = `${columns}×${rows} seed ${seed}`
+      const inside = r as unknown as {
+        cars: { x: number; lane: number; truck: boolean }[]
+        pos: number
+        main: { w: number }
+        near: { w: number }
+        crew: { mates: Mate[] }
+        own: Map<string, { jump?: { wait: number } }>
+      }
+      let through = 0
+      let mates = 0
+      const run = (frames: number, level: number, waiting: boolean) => {
+        r.strength = level
+        r.waiting = waiting
+        const kinds: string[] = []
+        for (let i = 0; i < frames; i++) {
+          r.step()
+          kinds.push(...r.sounds.map(e => e.kind))
+          r.sounds.length = 0
+          // On its wheels, it's never inside another car in its lane.
+          if (!r.flying)
+            for (const c of inside.cars) if (c.lane === 1 && c.x < inside.pos + inside.main.w && c.x + inside.near.w > inside.pos) through++
+          for (const m of inside.crew.mates) {
+            const j = inside.own.get(m.id)?.jump
+            if (m.here < 1 || (j && j.wait <= 0)) continue
+            const x = inside.pos + m.x
+            for (const c of inside.cars) if (c.lane === 0 && c.x < x + 14 && c.x + (c.truck ? 22 : 14) > x) mates++
+          }
+        }
+        return kinds
+      }
+      r.ensure(columns, rows)
+      r.agents = ['a', 'b', 'c'].map((id, i) => ({ id, state: i === 1 ? 'idle' : 'working', ok: true, task: '', type: '', ms: 0 }))
+      run(20, 1, false)
+      expect({ where, parked: r.parked }).toEqual({ where, parked: true })
+      const heard = run(1500, 10, false)
+      expect({ where, jets: heard.includes('jets'), land: heard.includes('land') }).toEqual({ where, jets: true, land: true })
+      // Slowing back through the levels, the traffic it leaves keeps clear of it.
+      for (const level of [8, 5, 3]) run(200, level, false)
+      expect({ where, through, mates }).toEqual({ where, through: 0, mates: 0 })
+      // A wait: the level settles to 2, which would drive on; waiting, it pulls into the next lot and stands.
+      run(600, WAIT_LEVEL, true)
+      expect({ where, parked: r.parked }).toEqual({ where, parked: true })
+      // Its tail lights keep their red in the sepia.
+      const g = r.grid()
+      let red = 0
+      for (let i = 0; i < columns * rows; i++)
+        for (const c of [g.foreground(i), g.background(i)]) if (((c >> 16) & 255) > 200 && ((c >> 8) & 255) < 90 && (c & 255) < 90) red++
+      expect({ where, red: red > 0 }).toEqual({ where, red: true })
+      // Answered: out of the bay and away.
+      run(80, 5, false)
+      expect({ where, parked: r.parked, moving: r.speed > 0 }).toEqual({ where, parked: false, moving: true })
+    }
+})
+
 // ── The picker (/flow pick) ──────────────────────────────────────────────
 
 /** The picker's pane as a docked terminal pane draws it (two thumbnails across). */
 const PICK_PANE = {
   component: 'Pane',
   requestId: 'flow-pick',
-  props: { title: 'flow: pick a scene', isFocused: true, bodyColumns: 64, placement: 'dock', scroll: { offset: 0, bodyRows: 44 }, view: {} },
+  props: { title: 'flow: pick a scene', isFocused: true, bodyColumns: 64, placement: 'dock', scroll: { offset: 0, bodyRows: 50 }, view: {} },
 } as const
 
 /** Stand for the engine's panes: what opens and closes, and with what. */
@@ -3230,8 +3290,8 @@ test("picker layout: fits the room it has, thumbnails at the band's 5 rows where
       expect([3, 4, 5]).toContain(l.rows)
     }
   }
-  // A docked pane two thumbnails wide: framed, two across, each wide enough to read.
-  const dock = pickLayout(64, 44, STYLES.length)!
+  // A docked pane two thumbnails wide (as tall as 15 scenes framed need): framed, two across, each wide enough to read.
+  const dock = pickLayout(64, 50, STYLES.length)!
   expect(dock).toMatchObject({ across: 2, framed: true, lines: true })
   expect(dock.columns).toBeGreaterThanOrEqual(20)
   // A wide, short inline pane: the band's 5 rows, many across.
@@ -3412,7 +3472,7 @@ test('the picker on desktop: an Svg thumbnail and a Button for every scene; its 
   const svgs = await ui.findAll({ type: 'Svg' })
   expect(svgs).toHaveLength(STYLES.length)
   const png = decodeSvgPng(svgs[0]!.props.source as string)
-  const layout = pickLayout(64, 44, STYLES.length)!
+  const layout = pickLayout(64, 50, STYLES.length)!
   expect([png.width, png.height]).toEqual([layout.columns * 2, layout.rows * 4])
   // Redrawn while it's there, as the band is.
   seen.invalidates = 0

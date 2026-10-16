@@ -1,4 +1,4 @@
-// REVISION: flow-v188-dry
+// REVISION: flow-v192-roadster
 //
 // The scenes, all driven by the same dials (strength 0..10, coverage boost,
 // the agents one by one, tint, night, waiting): SCENES, the one list of them (each scene file exports its
@@ -34,6 +34,7 @@ import { bubblesScene } from './bubbles'
 import { trainScene } from './train'
 import { earthriseScene } from './earthrise'
 import { doom3dScene, doomScene } from './doom'
+import { roadsterScene } from './roadster'
 
 
 /** What shows over a scene: smoke after a failure or a compaction, blue when the context is nearly full. */
@@ -580,6 +581,7 @@ export const SCENES = [
   earthriseScene,
   doomScene,
   doom3dScene,
+  roadsterScene,
 ] as const
 export type SceneName = (typeof SCENES)[number]['name']
 export const STYLES: readonly SceneName[] = SCENES.map(d => d.name)
