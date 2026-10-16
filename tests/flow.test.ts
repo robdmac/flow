@@ -3175,7 +3175,7 @@ test('train: waiting on the person, it draws up at a red signal or a platform an
     }
 })
 
-test('roadster: parked at 1; at 10 it flips over the cars in its lane, never through one (nor its companions through theirs); waiting, it pulls into a lot and stands, its lights on; answered, away', () => {
+test('roadster: parked at 1 (its companions too, no flips); at 10 it flips over the cars in its lane, never through one (nor its companions through theirs); waiting, it pulls into a lot and stands, its lights on; answered, away', () => {
   for (const [columns, rows] of [[120, 5], [22, 60]] as const)
     for (const seed of [3, 8]) {
       const r = makeScene('roadster', seed) as Roadster
@@ -3212,8 +3212,13 @@ test('roadster: parked at 1; at 10 it flips over the cars in its lane, never thr
       }
       r.ensure(columns, rows)
       r.agents = ['a', 'b', 'c'].map((id, i) => ({ id, state: i === 1 ? 'idle' : 'working', ok: true, task: '', type: '', ms: 0 }))
-      run(20, 1, false)
-      expect({ where, parked: r.parked }).toEqual({ where, parked: true })
+      // Parked, its companions stand by it on their wheels: no flips.
+      let airborne = 0
+      for (let i = 0; i < 300; i++) {
+        run(1, 1, false)
+        for (const m of inside.crew.mates) if (inside.own.get(m.id)?.jump) airborne++
+      }
+      expect({ where, parked: r.parked, airborne }).toEqual({ where, parked: true, airborne: 0 })
       const heard = run(1500, 10, false)
       expect({ where, jets: heard.includes('jets'), land: heard.includes('land') }).toEqual({ where, jets: true, land: true })
       // Slowing back through the levels, the traffic it leaves keeps clear of it.

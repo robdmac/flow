@@ -17,8 +17,8 @@
 // Each subagent is a smaller Roadster of its own in its own colour
 // (crew.ts), in the far lane: it draws up from behind when its agent starts,
 // keeps pace while the agent works (gaining and losing a little, its lights
-// on, flipping now and then as the big one does), drops back with its lights
-// off while the agent is quiet (its hazards blinking while it waits on you),
+// on, flipping now and then on the freeway as the big one does), drops
+// back with its lights off while the agent is quiet (its hazards blinking while it waits on you),
 // and when the agent is done flips once and races off ahead, or, failed,
 // falls back out of sight trailing smoke. Every one of them jumps the
 // traffic in its lane on the freeway.
@@ -829,8 +829,10 @@ export class Roadster extends PixelScene {
             this.heardJets(m)
           } else x = ahead ? c.x - L - 1 - this.pos : c.x + Lc + 1 - this.pos
         }
-        const flip = finished(m) && !o.waved
-        o.next -= dt * (m.busy > 0.5 && !m.leaving && !m.waiting ? 1 : 0)
+        // Flips only on the road: as it works, out on the freeway; on its way out (its task done) if it's moving at all.
+        const flip = finished(m) && !o.waved && moving >= 1
+        const fast = levelFor(this.v / k) >= 7
+        o.next -= dt * (fast && m.busy > 0.5 && !m.leaving && !m.waiting ? 1 : 0)
         if (!o.jump && (flip || o.next <= 0)) {
           // A flip of its own as it works (and one on its way out, its task done).
           o.waved ||= flip
