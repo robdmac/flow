@@ -156,8 +156,8 @@ const RIM = 0x8a9098
 const TAIL = 0xff2a2a
 const HEAD = 0xfff0c0
 const HAZARD = 0xffa020
-/** The Roadster's pearl white. */
-const PEARL = 0xeef1f4
+/** The Roadster's white: pure, so it stands out by day and night. */
+const PEARL = 0xffffff
 /** The companions' colours, a slot each: red, blue, yellow, green, orange, purple. */
 const LIVERY = [0xe0303a, 0x2f6fe0, 0xf0c020, 0x30b050, 0xf07a20, 0x9a50d0] as const
 /** The traffic's: muted. */
@@ -1285,10 +1285,10 @@ export class Roadster extends PixelScene {
     }
   }
 
-  /** A car's colours: its body (and shade), glass, lamps, tyres; by night a little darker. */
-  private livery(c: number, d: Dials, lights: number): Livery {
+  /** A car's colours: its body (and shade), glass, lamps, tyres; by night darker by `dusk` (the Roadster's white hardly). */
+  private livery(c: number, d: Dials, lights: number, dusk = 0.45): Livery {
     const n = q(d.night, 4)
-    const B = this.tone(mix(c, mix(c, 0x0a0c12, 0.45), n), d)
+    const B = this.tone(mix(c, mix(c, 0x0a0c12, dusk), n), d)
     const lit = lights > 0
     return {
       B,
@@ -1431,7 +1431,7 @@ export class Roadster extends PixelScene {
     const s = this.main
     const top = this.wheelY() - s.h + 1 - this.lift(this.jump)
     const lights = d.night > 0.3 || this.kRain > 0.3 || d.wait > 0 ? 1 : 0
-    this.drawCar(px, s, this.carX, top, this.turn(this.jump), this.livery(PEARL, d, lights), d.wait > 0, this.jump?.roll)
+    this.drawCar(px, s, this.carX, top, this.turn(this.jump), this.livery(PEARL, d, lights, 0.12), d.wait > 0, this.jump?.roll)
   }
 
   private paintMate(px: Painter, m: Mate, o: Own | undefined, d: Dials): void {
