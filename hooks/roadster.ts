@@ -39,6 +39,8 @@
 
 import type { AgentDial } from './agents'
 import { Rng } from './cells'
+import { layered, snap } from './clouds/layered'
+import type { CloudContext } from './clouds/types'
 import { beckon, Crew, failed, finished, type AgentMark, type Mate } from './crew'
 import { MOON, moonCover, moonPixel, moonRadius, NIGHT_HORIZON, NIGHT_ZENITH, STAR, STAR_DIM } from './night'
 import { PixelScene, type Dials, type Painter } from './pixel-scene'
@@ -84,6 +86,8 @@ function levelFor(v: number): number {
 
 // ── The world: what the road runs through, by the level ─────────────────
 
+/** How much bigger than the cloud painter's own scale the spine draws its clouds (the balloon's are 2). */
+const CLOUD_SCALE = 1.5
 /** The road's stretches: a parking lot, the town's streets, the suburbs' artery road, the freeway. */
 const LOT = 0
 const TOWN = 1
@@ -276,6 +280,8 @@ export class Roadster extends PixelScene {
   private pos = 0
   private v = 0
   private started = false
+  /** What it asks the clouds with (refilled for each cell). */
+  private readonly cloudAt: CloudContext = { x: 0, y: 0, sky: 0, t: 0 }
   /** Where it parks (the bay's world x), and how far into the lot it is (0 in its lane .. 1 parked). */
   private stopAt: number | undefined
   private inLot = 0
@@ -287,8 +293,6 @@ export class Roadster extends PixelScene {
   private segs: Seg[] = []
   private mids: Prop[] = []
   private fars: Prop[] = []
-  /** Clouds in the spine's sky (its layer's pixels: `h` its row, `form` its height). */
-  private clouds: Prop[] = []
   private cars: Car[] = []
   private puffs: Puff[] = []
   private kSmoke = 0
@@ -389,7 +393,6 @@ export class Roadster extends PixelScene {
     this.segs.length = 0
     this.mids.length = 0
     this.fars.length = 0
-    this.clouds.length = 0
     this.cars.length = 0
     this.puffs.length = 0
     this.taken.length = 0
@@ -491,19 +494,6 @@ export class Roadster extends PixelScene {
     }
   }
 
-  /** The spine's clouds, laid ahead, drifting along at their own pace. */
-  private layClouds(): void {
-    const r = this.rng
-    const off = this.pos * F_CLOUD + this.now * 0.02
-    while (!this.clouds.length || this.clouds[this.clouds.length - 1]!.a < off + this.W + 30) {
-      const last = this.clouds[this.clouds.length - 1]
-      const a = (last ? last.a : off - 20) + 14 + Math.floor(r.f() * 30)
-      const sky = this.farWalk
-      this.clouds.push({ a, w: 10 + Math.floor(r.f() * 14), kind: 0, form: 2 + Math.floor(r.f() * 3), h: (Math.floor(2 + r.f() * sky * 0.45) >> 1) * 2, c: 0, seed: r.int() & 0xffff })
-    }
-    retain(this.clouds, c => c.a + c.w > off - 40)
-  }
-
   /** The stretch of road at world x (the last one, past the end). */
   private segAt(x: number): Seg | undefined {
     const s = this.segs
@@ -574,7 +564,6 @@ export class Roadster extends PixelScene {
     this.layProps(this.fars, this.pos * F_FAR + this.W + 40, this.pos * F_FAR - 40, level, true)
     retain(this.mids, p => p.a + p.w > this.pos * F_MID - 60)
     retain(this.fars, p => p.a + p.w > this.pos * F_FAR - 60)
-    if (this.tall) this.layClouds()
 
     let vT: number
     if (!idle) {
@@ -965,24 +954,34 @@ export class Roadster extends PixelScene {
       }
   }
 
-  /** Fair-weather clouds (the spine's sky): puffs, flat underneath, greyer by night, gone into the overcast or the storm. */
+  /**
+   * The spine's sky has the balloon's clouds (`clouds/layered.ts`): its low cumulus heaps a little above the
+   * skyline, its banks and cirrus higher, drifting slowly and sliding back a little as it drives; by day only,
+   * gone into the overcast or the storm.
+   */
   private paintClouds(px: Painter, d: Dials): void {
-    if (!this.clouds.length) return
+    if (!this.tall) return
     const k = q((1 - Math.max(this.kSmoke, this.kRain)) * (1 - d.night), 4)
     if (k <= 0) return
-    const off = this.pos * F_CLOUD + d.t * 0.02
-    for (const c of this.clouds) {
-      const x0 = Math.round(c.a - off)
-      if (x0 > this.W || x0 + c.w < 0) continue
-      for (let x = Math.max(0, x0); x < Math.min(this.W, x0 + c.w); x++) {
-        const u = (x - x0 + 0.5) / c.w
-        // Two or three lumps along it.
-        const bump = Math.sqrt(Math.max(Math.sin(Math.PI * u), 0.8 * Math.sin(Math.PI * clamp(u * 1.6 - 0.1)), 0.7 * Math.sin(Math.PI * clamp(u * 1.6 - 0.5))))
-        const top = c.h - Math.round(bump * c.form)
-        for (let y = Math.max(0, top); y <= c.h + 1; y++) {
-          const sky = this.sky(y, d)
-          px.set(x, y, mix(sky, y >= c.h ? 0xd4dce6 : 0xf6f8fa, k))
-        }
+    const at = this.cloudAt
+    const horizon = this.farWalk >> 1
+    const drift = this.pos * F_CLOUD * 0.5 + d.t * 0.03
+    for (let r = 0; r < horizon; r++) {
+      at.y = (horizon - r) / CLOUD_SCALE + 4
+      const top = this.sky(2 * r, d)
+      const bot = this.sky(2 * r + 1, d)
+      for (let col = 0; col < this.W >> 1; col++) {
+        at.x = Math.floor(col + drift) / CLOUD_SCALE
+        at.sky = top
+        at.t = d.t
+        const c = layered.cell(at)
+        if (!c) continue
+        const fg = snap(mix(top, c.fg, k), top)
+        const bg = snap(mix(bot, c.bg ?? top, k), bot)
+        px.set(2 * col, 2 * r, fg)
+        px.set(2 * col + 1, 2 * r, fg)
+        px.set(2 * col, 2 * r + 1, bg)
+        px.set(2 * col + 1, 2 * r + 1, bg)
       }
     }
   }

@@ -36,7 +36,7 @@ hooks/
   fire.ts            the fire scene's automaton (its heat grid), glyphs and 256-color ramps
   fire-palette.ts    the fire scene's truecolor ramps
   <scene>.ts         one file per scene: starfield (warp), colony, balloon + sky + clouds/,
-                     engine, rocket (falcon, starship), surf, ski, bubbles, train, doom (doom3d), roadster
+                     engine, rocket (falcon, starship), surf, ski, bubbles, train, doom (doom3d), roadster (its spine's sky has clouds/' cumulus)
 opencode/
   tui.ts             opencode adapter (a terminal UI plugin: the band above the prompt, the spine in the sidebar, /flow,
                      settings in its storage, the soundscape)
