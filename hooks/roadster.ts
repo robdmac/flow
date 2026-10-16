@@ -7,8 +7,9 @@
 // traffic lights), picking up speed through 2 to 4; at 5 and 6 it's out
 // through the suburbs on a faster artery road (houses, trees, power poles);
 // 7 to 9 it's on the freeway (a concrete barrier, light poles, gantry signs,
-// traffic to overtake), and at 10 it flips: jet-assisted somersaults over the
-// cars ahead, a puff of vapour off its jets as it lifts. When the work winds
+// traffic to overtake), and at 10 it flips: jet-assisted jumps over the cars
+// ahead, mostly rolling sideways about its length as the real one does, now
+// and then a somersault, a puff of vapour off its jets as it lifts. When the work winds
 // down it slows back through them and pulls into the next lot. Each part of
 // the world comes in from the right as the level says, so the way out and
 // the way back are never the same.
@@ -63,6 +64,8 @@ const APPROACH_MIN = 0.35
 const APPROACH_MAX = 1.4
 /** Frames from the work starting to pulling out of the bay. */
 const DEPART = 8
+/** How often a jump is a roll, the real car's sideways twist; the rest are somersaults, forward or back. */
+const ROLLS = 0.7
 /** At this level and up it flips over the cars in its lane. */
 const FLIP_LEVEL = 9.3
 
@@ -103,8 +106,11 @@ type Seg = { a: number; b: number; kind: number; seed: number }
 type Prop = { a: number; w: number; kind: number; form: number; h: number; c: number; seed: number }
 /** A car in the traffic: its tail's world x, lane (0 far, 1 near), speed, colour, and whether it's a truck. */
 type Car = { x: number; lane: number; v: number; c: number; truck: boolean }
-/** A jump: frames to wait before lifting off (its sound goes first), how far through, how long, how high, which way it turns, its sounds sent, its landing checked. */
-type Jump = { wait: number; t: number; len: number; hgt: number; dir: number; landed: boolean; checked: boolean }
+/**
+ * A jump: frames to wait before lifting off (its sound goes first), how far through, how long, how high, which way it
+ * turns, whether it rolls (the real one's twist about its length) or somersaults, its sounds sent, its landing checked.
+ */
+type Jump = { wait: number; t: number; len: number; hgt: number; dir: number; roll: boolean; landed: boolean; checked: boolean }
 /** Smoke, vapour or dust in the air (world x, pixel row): drifting, growing, fading. */
 type Puff = { x: number; y: number; vx: number; vy: number; r: number; life: number; fade: number; c: number }
 /** A companion's own goings on: its jump, its next flip, whether it flipped on its way out, where it was last frame (world). */
@@ -115,15 +121,15 @@ type Own = { jump: Jump | undefined; next: number; waved: boolean; last: number 
 type Sprite = { w: number; h: number; rows: readonly string[] }
 const sprite = (rows: string[]): Sprite => ({ w: rows[0]!.length, h: rows.length, rows })
 
-/** The Roadster: a low white roof over a dark band of glass, tail light at the back, headlight at the nose. */
-const ROADSTER = sprite(['....bBBBb.....', 'TBBBGGGGBBBBBL', '.WW.......WW..'])
-const ROADSTER_MID = sprite(['....BBBBBB......', '.bBBGGGGGGGGBBb.', 'TBBBBBBBBBBBBBBL', '..WW........WW..'])
+/** The Roadster: a long low nose, the cabin set back under a fastback roof, a dark band of glass, tail light at the back, headlight low at the nose. */
+const ROADSTER = sprite(['...bBBBb......', 'TBBGGGGBBBBBbL', '.WW.......WW..'])
+const ROADSTER_MID = sprite(['.....bBBBBb.......', '.bBBBGGGGGGBBbb...', 'TBBBBBBBBBBBBBBBBL', '..WW.........WW...'])
 const ROADSTER_BIG = sprite([
-  '......bBBBBBb.......',
-  '....bBGGGGGGGBb.....',
-  'bBBBBBBBBBBBBBBBBBBb',
-  'TBBBBbbbbbbbbbbBBBBL',
-  '...WRW.......WRW....',
+  '........bBBBBb..........',
+  '....bBBBGGGGGGGBbb......',
+  'bBBBBBBBBBBBBBBBBBBBBBb.',
+  'TBBBWRRWddddddddWRRWBBBL',
+  '....WWWW........WWWW....',
 ])
 /** Everyone else's cars: taller, the glass split by a pillar. */
 const SEDAN = sprite(['...bBBBBBb....', 'TBBGGBGGGBBBBL', '.WW.......WW..'])
@@ -349,7 +355,8 @@ export class Roadster extends PixelScene {
     const H = this.H
     if (this.tall) {
       this.k = 1.4
-      this.carX = 4
+      // (Nearer the edge in a narrow spine, so the traffic coming in from the right comes in ahead of it.)
+      this.carX = clamp(this.W - ROADSTER_BIG.w - 2, 0, 4) & ~1
       this.farWalk = H - 30
       this.farWheel = H - 24
       this.dashY = H - 21
@@ -662,7 +669,13 @@ export class Roadster extends PixelScene {
   /** A jump to clear a car `L` long, `gap` ahead, closing at `rv` (pixels a 70 ms frame), starting in `wait` frames. */
   private jumpOver(gap: number, L: number, own: number, rv: number, hgt: number, wait: number): Jump {
     const len = clamp((gap + L + own + 6 * this.k) / Math.max(0.1, rv), 10, 48)
-    return { wait, t: 0, len, hgt, dir: this.rng.f() < 0.6 ? -1 : 1, landed: false, checked: false }
+    return { wait, t: 0, len, hgt, ...this.twist(), landed: false, checked: false }
+  }
+
+  /** Which way a jump turns: mostly a roll, either way; else a somersault, more often back than forward. */
+  private twist(): { dir: number; roll: boolean } {
+    const roll = this.rng.f() < ROLLS
+    return { roll, dir: this.rng.f() < (roll ? 0.5 : 0.6) ? -1 : 1 }
   }
 
   /** How high it flies: the spine has the sky for it. */
@@ -812,7 +825,7 @@ export class Roadster extends PixelScene {
           if (close > 0.3) {
             // Touching one that's moving past: up and over it at once.
             const need = ahead ? c.x + Lc + 2 - wx : wx + L + 2 - c.x
-            o.jump = { wait: 0, t: 0, len: clamp(need / close, 8, 60), hgt: this.hgt(false), dir: ahead ? -1 : 1, landed: false, checked: false }
+            o.jump = { wait: 0, t: 0, len: clamp(need / close, 8, 60), hgt: this.hgt(false), ...this.twist(), landed: false, checked: false }
             this.heardJets(m)
           } else x = ahead ? c.x - L - 1 - this.pos : c.x + Lc + 1 - this.pos
         }
@@ -822,7 +835,7 @@ export class Roadster extends PixelScene {
           // A flip of its own as it works (and one on its way out, its task done).
           o.waved ||= flip
           o.next = (50 + this.rng.f() * 110) * (1.4 - clamp(d.level / 10))
-          o.jump = { wait: Math.round(lead), t: 0, len: 14 + this.rng.f() * 6, hgt: this.hgt(false) * (0.8 + this.rng.f() * 0.4), dir: this.rng.f() < 0.5 ? -1 : 1, landed: false, checked: false }
+          o.jump = { wait: Math.round(lead), t: 0, len: 14 + this.rng.f() * 6, hgt: this.hgt(false) * (0.8 + this.rng.f() * 0.4), ...this.twist(), landed: false, checked: false }
           this.heardJets(m)
         }
       }
@@ -1140,7 +1153,8 @@ export class Roadster extends PixelScene {
       const x0 = this.col(s.a)
       const x1 = this.col(s.b)
       if (x1 < 0 || x0 > this.W) continue
-      const top = tall ? this.kerb + 2 : this.lotWheel - 2
+      // (Across the road, a flat surface seen side-on: no higher than the pavement it's on.)
+      const top = tall ? this.kerb + 2 : this.lotWheel
       const bot = tall ? H : this.farWalk + 1
       for (let x = Math.max(0, x0); x < Math.min(this.W, x1); x++) for (let y = top; y < bot; y++) px.set(x, y, P.lot)
       for (const b of this.bays(s)) {
@@ -1293,7 +1307,7 @@ export class Roadster extends PixelScene {
    * pixel twice as tall as wide, so it's turned as it looks, not as stored).
    * `lamps` shines its lights through the waiting look's sepia.
    */
-  private drawCar(px: Painter, s: Sprite, x: number, top: number, ang: number, l: Livery, lamps: boolean): void {
+  private drawCar(px: Painter, s: Sprite, x: number, top: number, ang: number, l: Livery, lamps: boolean, roll = false): void {
     const color = (ch: string): number | undefined => {
       switch (ch) {
         case 'B':
@@ -1329,6 +1343,7 @@ export class Roadster extends PixelScene {
         }
       return
     }
+    if (roll) return this.drawRoll(px, s, x, top, ang, l, color)
     const cx = x + s.w / 2
     const cy = top + s.h / 2
     const cos = Math.cos(ang)
@@ -1348,11 +1363,74 @@ export class Roadster extends PixelScene {
       }
   }
 
+  /**
+   * A car rolled `ang` about its length, seen side-on: each column a box (its profile's height, the car's width deep)
+   * turned about the car's middle, and whichever face of it is nearest drawn: its side (upside down past a quarter
+   * turn), its roof or its underside.
+   */
+  private drawRoll(px: Painter, s: Sprite, x: number, top: number, ang: number, l: Livery, color: (ch: string) => number | undefined): void {
+    const h = s.h
+    const D = h
+    const cy = top + h / 2
+    const cos = Math.cos(ang)
+    const sin = Math.sin(ang)
+    const R = Math.ceil(Math.hypot(h, D) / 2) + 1
+    for (let i = 0; i < s.w; i++) {
+      let jt = -1
+      let jb = -1
+      let tyre = false
+      for (let j = 0; j < h; j++) {
+        const ch = s.rows[j]![i]!
+        if (color(ch) === undefined) continue
+        if (jt < 0) jt = j
+        jb = j
+        tyre ||= ch === 'W'
+      }
+      if (jt < 0) continue
+      const yt = h / 2 - jt
+      const yb = h / 2 - jb - 1
+      const roof = color(s.rows[jt]![i]!)!
+      for (let sy = Math.floor(cy - R); sy <= cy + R; sy++) {
+        const Y = cy - (sy + 0.5)
+        // The ray toward the eye: u, where y = Y cos + u sin and z = -Y sin + u cos; the nearest u inside the box.
+        let lo = -Infinity
+        let hi = Infinity
+        let face = 0
+        if (Math.abs(sin) > 1e-6) {
+          const a = (yb - Y * cos) / sin
+          const b = (yt - Y * cos) / sin
+          lo = Math.min(a, b)
+          hi = Math.max(a, b)
+          face = 1
+        } else if (Y * cos < yb || Y * cos > yt) continue
+        if (Math.abs(cos) > 1e-6) {
+          const a = (-D / 2 + Y * sin) / cos
+          const b = (D / 2 + Y * sin) / cos
+          lo = Math.max(lo, Math.min(a, b))
+          if (Math.max(a, b) < hi) {
+            hi = Math.max(a, b)
+            face = 2
+          }
+        } else if (Math.abs(Y * sin) > D / 2) continue
+        if (lo > hi) continue
+        let c: number | undefined
+        if (face === 2) {
+          const y = Y * cos + hi * sin
+          const j = clamp(Math.floor(h / 2 - y), jt, jb)
+          c = color(s.rows[j]![i]!) ?? l.b
+        } else if (Y * cos + hi * sin > (yt + yb) / 2) c = roof
+        // (Underneath, its tyres are at its sides.)
+        else c = tyre && Math.abs(-Y * sin + hi * cos) > D / 2 - 1 ? l.W : l.d
+        px.set(x + i, sy, c, true)
+      }
+    }
+  }
+
   private paintMain(px: Painter, d: Dials): void {
     const s = this.main
     const top = this.wheelY() - s.h + 1 - this.lift(this.jump)
     const lights = d.night > 0.3 || this.kRain > 0.3 || d.wait > 0 ? 1 : 0
-    this.drawCar(px, s, this.carX, top, this.turn(this.jump), this.livery(PEARL, d, lights), d.wait > 0)
+    this.drawCar(px, s, this.carX, top, this.turn(this.jump), this.livery(PEARL, d, lights), d.wait > 0, this.jump?.roll)
   }
 
   private paintMate(px: Painter, m: Mate, o: Own | undefined, d: Dials): void {
@@ -1364,7 +1442,7 @@ export class Roadster extends PixelScene {
     const top = this.farWheel - s.h + 1 - lift
     // Lights: on while it works (and on its way); hazards while it waits on you; off while it's quiet.
     const lights = m.waiting && !m.leaving ? (beckon(m, d.t) ? 2 : 0) : m.busy >= 0.5 || m.leaving || m.here < 1 ? 1 : 0
-    this.drawCar(px, s, x, top, this.turn(o?.jump), this.livery(LIVERY[m.slot % LIVERY.length]!, d, lights), false)
+    this.drawCar(px, s, x, top, this.turn(o?.jump), this.livery(LIVERY[m.slot % LIVERY.length]!, d, lights), false, o?.jump?.roll)
     this.crew.mark(m, x / 2, top / 2, s.w / 2, (s.h + 1) / 2, d.columns, d.rows)
   }
 
