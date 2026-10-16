@@ -1,4 +1,4 @@
-// REVISION: flow-v191-tidy
+// REVISION: flow-v192-roadster
 //
 // Flow for Claude Code, by Rob Macrae: ambient scenes (a fire, the surf, a ski run,
 // rockets, a hot-air balloon and more) drawn as one terminal `Raster` in the
@@ -106,7 +106,7 @@ import {
 } from './picker'
 
 
-const FLOW_REVISION = 'flow-v191-tidy'
+const FLOW_REVISION = 'flow-v192-roadster'
 const PLUGIN = 'flow-scenes'
 const KEY = 'flow'
 /** The command. */

@@ -1,4 +1,4 @@
-// REVISION: flow-v188-dry
+// REVISION: flow-v192-roadster
 //
 // Builds the soundscapes' clips into sounds/ (AAC, mono 22.05 kHz) and the
 // manifest hooks/sound-files.ts. Each recipe makes a WAV with sox (and Node,
@@ -792,6 +792,69 @@ const RECIPES: Record<string, Record<string, Recipe>> = {
       ]),
     ),
   },
+  roadster: {
+    // Designed (no recording matched): an electric car, so no engine note. A
+    // city's distant traffic while it's parked; moving, an EV's sound as
+    // measured inside one: the tyres' roar on the asphalt (strongest near
+    // 1 kHz) swelling with speed, the motor's whine (a pitch rising with the
+    // speed: three, crossfading) and, on the freeway, the wind. The jets and
+    // the landings are events.
+    city: {
+      variants: 3,
+      make: (out, t) => {
+        // Traffic a few streets away: a low roar swelling and easing at random, a breath of air over it.
+        synth(t.tmp('r.wav'), 'synth', SLEN, 'brownnoise', 'synth', SLEN, 'pinknoise', 'mix', 'lowpass', 700, 'highpass', 70)
+        synth(t.tmp('a.wav'), 'synth', SLEN, 'pinknoise', 'highpass', 1800, 'lowpass', 7000, 'gain', -20)
+        fx([t.tmp('r.wav'), t.tmp('a.wav')], t.tmp('m.wav'), 'gain', '-n', -3)
+        turbulence(t.tmp('m.wav'), seedOf(out), [[0.12, 0.35], [0.5, 0.2], [1.7, 0.08]])
+        fx([t.tmp('m.wav')], out, 'reverb', 60, 50, 100, 'gain', '-n', -3, ...bedEnd(t))
+      },
+    },
+    tyres: {
+      variants: 3,
+      make: (out, t) => {
+        // The road's grain: a band of noise centred near 1 kHz, the surface changing at random under it.
+        synth(t.tmp('n.wav'), 'synth', SLEN, 'pinknoise', 'highpass', 250, 'lowpass', 3200, 'equalizer', 950, '0.8q', 6, 'bass', -4, 120)
+        turbulence(t.tmp('n.wav'), seedOf(out), [[0.35, 0.18], [1.4, 0.1], [5.3, 0.05]])
+        fx([t.tmp('n.wav')], out, 'reverb', 15, 'gain', '-n', -3, ...bedEnd(t))
+      },
+    },
+    wind: {
+      variants: 3,
+      make: (out, t) => {
+        // Air tearing past the glass: a rush, a whistle wandering through it.
+        wander(t.tmp('w.wav'), seedOf(out), SLEN, 900, 3200, 0.6, 40)
+        synth(t.tmp('r.wav'), 'synth', SLEN, 'pinknoise', 'highpass', 400, 'lowpass', 6000, 'gain', -3)
+        turbulence(t.tmp('r.wav'), seedOf(out) + 1, [[0.5, 0.3], [2.2, 0.15]])
+        fx([t.tmp('w.wav'), t.tmp('r.wav')], t.tmp('m.wav'), 'gain', '-n', -3)
+        fx([t.tmp('m.wav')], out, 'reverb', 30, 'gain', '-n', -3, ...bedEnd(t))
+      },
+    },
+    // The motor's whine: a pitch with its overtones (narrow resonances on
+    // noise, see hum, so takes crossfade without beating), higher with the
+    // speed, a faint inverter's sing far above it.
+    ...Object.fromEntries(
+      (
+        [
+          [1, 190, 1450],
+          [2, 330, 2300],
+          [3, 520, 3400],
+        ] as const
+      ).map(([n, hz, sing]) => [
+        `motor${n}`,
+        {
+          variants: 3,
+          make: (out: string, t: Tools) => {
+            hum(t.tmp('h.wav'), seedOf(out), SLEN, [[hz, 0.5], [hz * 2, 0.35], [hz * 3, 0.18], [hz * 4, 0.08], [sing, 0.06]], 500)
+            synth(t.tmp('n.wav'), 'synth', SLEN, 'pinknoise', 'highpass', 150, 'lowpass', 1500, 'gain', -26)
+            fx([t.tmp('h.wav'), t.tmp('n.wav')], t.tmp('m.wav'), 'gain', '-n', -3)
+            turbulence(t.tmp('m.wav'), seedOf(out) + 1, [[0.3, 0.08], [1.1, 0.05]])
+            fx([t.tmp('m.wav')], out, 'reverb', 25, 50, 80, 'gain', '-n', -3, ...bedEnd(t, false))
+          },
+        },
+      ]),
+    ),
+  },
   earthrise: {
     // Designed, as the warp drive and the colony ship are (no real counterpart).
     // There's no air on the moon, so no noise, wind or swells: only steady tones,
@@ -989,6 +1052,35 @@ const RECIPES: Record<string, Record<string, Recipe>> = {
       make: (out, t) => {
         hum(t.tmp('h.wav'), 250, 6.5, [[110, 0.3], [165, 0.28], [220, 0.22], [277.5, 0.15]], 300)
         fx([t.tmp('h.wav')], out, 'fade', 'q', 2.5, 6.5, 3.5, 'reverb', 80, 50, 100, 'gain', '-n', -4)
+      },
+    },
+    jets: {
+      // The Roadster's jets lifting it into a flip, matched to a recording of
+      // the car's jump: a deep roar (most of it at 125-250 Hz) swelling on and
+      // carrying it through the air, a hard hiss of gas over it at lift-off
+      // dying sooner, a low whump as it lifts, out in the open.
+      variants: 3,
+      make: (out, t) => {
+        const len = 1.1 + 0.1 * t.v
+        synth(t.tmp('r.wav'), 'synth', len, 'pinknoise', 'highpass', 85, 'lowpass', 450, 'equalizer', 150 + 15 * t.v, '1q', 6)
+        turbulence(t.tmp('r.wav'), seedOf(out) + 7, [[11, 0.25], [4, 0.15]])
+        fx([t.tmp('r.wav')], t.tmp('r2.wav'), 'fade', 'q', 0.06, len, 0.55, 'gain', 6)
+        synth(t.tmp('g.wav'), 'synth', len * 0.7, 'whitenoise', 'highpass', 600 + 100 * t.v, 'lowpass', 9000, 'equalizer', 3000 + 400 * t.v, '1q', 4)
+        turbulence(t.tmp('g.wav'), seedOf(out), [[24, 0.18], [7, 0.1]])
+        fx([t.tmp('g.wav')], t.tmp('g2.wav'), 'fade', 'q', 0.012, len * 0.7, 0.4, 'gain', -6)
+        synth(t.tmp('w.wav'), 'synth', 0.35, 'sine', `${95 + 8 * t.v}-45`, 'fade', 'q', 0.01, 0.35, 0.3, 'gain', -14)
+        fx([t.tmp('r2.wav'), t.tmp('g2.wav'), t.tmp('w.wav')], out, 'reverb', 35, 50, 80, 'gain', '-n', -2)
+      },
+    },
+    land: {
+      // Coming back down on its wheels: a thump through the suspension, a knock, and a short chirp of the tyres taking hold.
+      variants: 3,
+      make: (out, t) => {
+        synth(t.tmp('k.wav'), 'synth', 0.35, 'sine', `${82 + 6 * t.v}-40`, 'fade', 'q', 0.004, 0.35, 0.3)
+        synth(t.tmp('s.wav'), 'synth', 0.1, 'brownnoise', 'lowpass', 900, 'fade', 'q', 0.003, 0.1, 0.08)
+        synth(t.tmp('b.wav'), 'synth', 0.18, 'sine', `${190 + 12 * t.v}-95`, 'fade', 'q', 0.003, 0.18, 0.15, 'gain', -4)
+        synth(t.tmp('c.wav'), 'synth', 0.2, 'whitenoise', 'bandpass', 2100 + 250 * t.v, 260, 'fade', 'q', 0.008, 0.2, 0.12, 'gain', 4, 'pad', 0.025, 0)
+        fx([t.tmp('k.wav'), t.tmp('b.wav'), t.tmp('s.wav'), t.tmp('c.wav')], out, 'reverb', 30, 50, 60, 'gain', '-n', -2)
       },
     },
     horn: {

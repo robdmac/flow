@@ -1,4 +1,4 @@
-// REVISION: flow-v188-dry
+// REVISION: flow-v192-roadster
 //
 // Soundscapes. Claude Code's `$.audio.play` plays a clip (macOS `afplay`) at a
 // gain set when it starts; it can't loop smoothly or change a clip as it
@@ -113,6 +113,8 @@ export type SoundKind =
   | 'cease' // a gun fallen silent before its volley's clip ran out: that clip stops
   | 'streak' // a shooting star
   | 'comet' // a comet coming into the sky
+  | 'jets' // the Roadster's jets lifting it into a flip
+  | 'land' // the Roadster coming back down on its wheels
 export type SoundEvent = { kind: SoundKind; v: number }
 
 /** What a scene is doing now, for its bed: each 0..1 (a scene reports the ones it has). */
@@ -235,6 +237,7 @@ const MASTER: Record<string, (s: number) => number> = {
   train: s => 0.2 + 0.38 * Math.sqrt(s),
   earthrise: s => 0.8 + 1.5 * s - 0.6 * s * s,
   doom: s => 0.5 + 1.35 * s - 0.75 * s * s,
+  roadster: () => 0.57,
 }
 
 /** A scene that sounds as another does (doom3d is doom through his eyes): its bed and its master. */
@@ -353,6 +356,16 @@ export const LAYERS: Record<string, Layer[]> = {
     { clip: 'train/drone2', variants: BED_TAKES, gain: (s, m) => 0.35 * Math.max(0, 1 - Math.abs((m.amb.wind ?? s) - 0.42) / 0.32) },
     { clip: 'train/drone3', variants: BED_TAKES, gain: (s, m) => 0.35 * Math.max(0, 1 - Math.abs((m.amb.wind ?? s) - 0.88) / 0.3) },
   ],
+  roadster: [
+    // Parked, the city's distant traffic; moving, the tyres' roar and the motor's whine rising with its speed (three
+    // pitches, crossfading), the wind on the freeway (the jets and the landings are events).
+    { clip: 'roadster/city', variants: BED_TAKES, gain: (s, m) => 0.5 * (1 - (m.amb.wind ?? s)) ** 2 + 0.04 },
+    { clip: 'roadster/tyres', variants: BED_TAKES, gain: (s, m) => ((m.amb.wind ?? s) > 0 ? 0.12 + 0.7 * (m.amb.wind ?? s) : 0) },
+    { clip: 'roadster/wind', variants: BED_TAKES, gain: (s, m) => 0.6 * Math.max(0, (m.amb.wind ?? s) - 0.4) ** 2 / 0.36 },
+    { clip: 'roadster/motor1', variants: BED_TAKES, gain: (s, m) => ((m.amb.wind ?? s) > 0 ? 0.3 * Math.max(0, 1 - Math.abs((m.amb.wind ?? s) - 0.15) / 0.3) : 0) },
+    { clip: 'roadster/motor2', variants: BED_TAKES, gain: (s, m) => 0.25 * Math.max(0, 1 - Math.abs((m.amb.wind ?? s) - 0.5) / 0.3) },
+    { clip: 'roadster/motor3', variants: BED_TAKES, gain: (s, m) => 0.25 * Math.max(0, 1 - Math.abs((m.amb.wind ?? s) - 0.88) / 0.3) },
+  ],
   earthrise: [
     // No air on the moon: no noise or wind, only steady low tones in one key: a deep drone, its fifth, and a
     // chord above them filling in with the work (each shooting star and comet is an event).
@@ -406,6 +419,8 @@ export const EVENTS: Partial<Record<SoundKind, { clip: string; variants: number;
   teleport: { clip: 'events/teleport', variants: 1, gain: () => 0.7 },
   streak: { clip: 'events/streak', variants: 3, gain: v => 0.2 + 0.45 * v },
   comet: { clip: 'events/comet', variants: 1, gain: () => 0.6 },
+  jets: { clip: 'events/jets', variants: 3, gain: v => 0.5 + 1.4 * v },
+  land: { clip: 'events/land', variants: 3, gain: v => 0.6 + 1.4 * v },
 }
 
 /** A clip's file: one of its variants, picked by a hash of the moment and the clip (no fixed rotation to fall in step with). */
@@ -446,6 +461,14 @@ const rocketMood = (m: SoundMood): BedMood => {
   return { key: `r${r}s${sp}v${v}w${w}e${e}`, s: 0.5, amb: { roar: r, space: sp, vent: v, wind: [0, 0.45, 1][w], sea: e } }
 }
 
+/** A vehicle by its speed (amb.wind: the level that runs at it), standing still its own mood: the train, the Roadster. */
+const bySpeed = (m: SoundMood): BedMood => {
+  const w = m.amb.wind ?? m.level / 10
+  if (w < 0.02) return { key: 'v0', s: 0, amb: { wind: 0 } }
+  const b = band(10 * w)
+  return { key: `v${b + 1}`, s: BAND_S[b]!, amb: { wind: BAND_S[b] } }
+}
+
 /** Each scene's moods: which one this moment is in (scripts/make-sounds.ts mixes a bed for every one a scene reaches). */
 export const MOODS: Record<string, (m: SoundMood) => BedMood> = {
   fire: byLevel,
@@ -458,13 +481,7 @@ export const MOODS: Record<string, (m: SoundMood) => BedMood> = {
     const b = band(10 * (m.amb.wind ?? m.level / 10))
     return { key: `w${b}`, s: BAND_S[b]!, amb: { wind: BAND_S[b] } }
   },
-  // The train by its speed (amb.wind: the level that runs at it), standing still its own mood.
-  train: m => {
-    const w = m.amb.wind ?? m.level / 10
-    if (w < 0.02) return { key: 'v0', s: 0, amb: { wind: 0 } }
-    const b = band(10 * w)
-    return { key: `v${b + 1}`, s: BAND_S[b]!, amb: { wind: BAND_S[b] } }
-  },
+  train: bySpeed,
   balloon: m => {
     const b = band(m.level)
     const u = on(m.amb.burner)
@@ -474,6 +491,7 @@ export const MOODS: Record<string, (m: SoundMood) => BedMood> = {
   starship: rocketMood,
   earthrise: byLevel,
   doom: byLevel,
+  roadster: bySpeed,
 }
 
 /** A layer's gain in a mood's mix (the mix is made at these, before the scene's master volume). */
