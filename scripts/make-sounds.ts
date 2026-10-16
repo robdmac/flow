@@ -1055,17 +1055,21 @@ const RECIPES: Record<string, Record<string, Recipe>> = {
       },
     },
     jets: {
-      // The Roadster's jets lifting it into a flip (its cold-gas thrusters, as in
-      // Tesla's film of it): a hard hiss of gas bursting on, held for half a
-      // second and dying away, a low whump as it lifts, out in the open.
+      // The Roadster's jets lifting it into a flip, matched to a recording of
+      // the car's jump: a deep roar (most of it at 125-250 Hz) swelling on and
+      // carrying it through the air, a hard hiss of gas over it at lift-off
+      // dying sooner, a low whump as it lifts, out in the open.
       variants: 3,
       make: (out, t) => {
-        const len = 0.75 + 0.1 * t.v
-        synth(t.tmp('g.wav'), 'synth', len, 'whitenoise', 'highpass', 900 + 150 * t.v, 'lowpass', 9000, 'equalizer', 3000 + 400 * t.v, '1q', 4)
+        const len = 1.1 + 0.1 * t.v
+        synth(t.tmp('r.wav'), 'synth', len, 'pinknoise', 'highpass', 85, 'lowpass', 450, 'equalizer', 150 + 15 * t.v, '1q', 6)
+        turbulence(t.tmp('r.wav'), seedOf(out) + 7, [[11, 0.25], [4, 0.15]])
+        fx([t.tmp('r.wav')], t.tmp('r2.wav'), 'fade', 'q', 0.06, len, 0.55, 'gain', 6)
+        synth(t.tmp('g.wav'), 'synth', len * 0.7, 'whitenoise', 'highpass', 600 + 100 * t.v, 'lowpass', 9000, 'equalizer', 3000 + 400 * t.v, '1q', 4)
         turbulence(t.tmp('g.wav'), seedOf(out), [[24, 0.18], [7, 0.1]])
-        fx([t.tmp('g.wav')], t.tmp('g2.wav'), 'fade', 'q', 0.012, len, 0.4)
-        synth(t.tmp('w.wav'), 'synth', 0.35, 'sine', `${95 + 8 * t.v}-45`, 'fade', 'q', 0.01, 0.35, 0.3, 'gain', -4)
-        fx([t.tmp('g2.wav'), t.tmp('w.wav')], out, 'reverb', 35, 50, 80, 'gain', '-n', -2)
+        fx([t.tmp('g.wav')], t.tmp('g2.wav'), 'fade', 'q', 0.012, len * 0.7, 0.4, 'gain', -6)
+        synth(t.tmp('w.wav'), 'synth', 0.35, 'sine', `${95 + 8 * t.v}-45`, 'fade', 'q', 0.01, 0.35, 0.3, 'gain', -14)
+        fx([t.tmp('r2.wav'), t.tmp('g2.wav'), t.tmp('w.wav')], out, 'reverb', 35, 50, 80, 'gain', '-n', -2)
       },
     },
     land: {
